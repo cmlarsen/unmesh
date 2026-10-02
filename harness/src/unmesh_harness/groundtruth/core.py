@@ -19,6 +19,7 @@ class GroundTruth:
     solid: Shape
     parameters: dict[str, Any]
     features: list[dict[str, Any]] = field(default_factory=list)
+    face_tags: dict[str, Any] | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -71,12 +72,12 @@ def fingerprint(shape: Shape) -> dict[str, Any]:
     }
 
 
-def validity_problems(shape: Shape) -> list[str]:
+def validity_problems(shape: Shape, solids: int = 1, shells: int = 1) -> list[str]:
     problems = []
-    if len(shape.solids()) != 1:
-        problems.append(f"expected 1 solid, found {len(shape.solids())}")
-    if len(shape.shells()) != 1:
-        problems.append(f"expected 1 shell, found {len(shape.shells())}")
+    if len(shape.solids()) != solids:
+        problems.append(f"expected {solids} solid(s), found {len(shape.solids())}")
+    if len(shape.shells()) != shells:
+        problems.append(f"expected {shells} shell(s), found {len(shape.shells())}")
     if not BRepCheck_Analyzer(shape.wrapped).IsValid():
         problems.append("BRepCheck_Analyzer reports invalid")
     if not shape.volume > 0:

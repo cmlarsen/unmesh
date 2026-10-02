@@ -8,9 +8,11 @@ from .corpus import (
     GRID_ORDER,
     build_grid,
     default_cache_dir,
-    default_manifest,
+    empty_manifest,
     find_manifest,
     load_manifest,
+    planar_entries,
+    sync_manifest,
 )
 
 
@@ -24,8 +26,10 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--out", type=Path, default=None)
     build.add_argument("--manifest", type=Path, default=None)
 
-    gen = corpus.add_parser("manifest", help="print the canonical generated manifest")
-    gen.add_argument("--write", action="store_true", help="overwrite corpus/v0.json")
+    pin = corpus.add_parser(
+        "pin", help="append planned entries and fingerprints missing from corpus/v0.json"
+    )
+    pin.add_argument("--manifest", type=Path, default=None)
 
     args = parser.parse_args(argv)
     if args.action == "build":
@@ -34,9 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         count = build_grid(manifest, args.grid, out)
         print(f"built {count} entries into {out}")
         return 0
-    text = json.dumps(default_manifest(), indent=2) + "\n"
-    if args.write:
-        find_manifest().write_text(text)
-    else:
-        print(text, end="")
+    path = args.manifest or find_manifest()
+    manifest = json.loads(path.read_text()) if path.exists() else empty_manifest()
+    manifest = sync_manifest(manifest, planar_entries())
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    print(f"pinned {len(manifest['entries'])} entries in {path}")
     return 0

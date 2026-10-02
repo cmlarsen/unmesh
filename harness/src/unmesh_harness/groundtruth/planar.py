@@ -5,7 +5,7 @@ import math
 import numpy as np
 from build123d import Box, Polygon, Pos, Shape, extrude
 
-from .core import rect_extent, register
+from .core import register
 
 Cell = tuple[float, float, float, float]
 
@@ -27,6 +27,10 @@ def _rect_points(cx: float, cy: float, length: float, width: float, angle_deg: f
 def _prism(points, height: float, z0: float) -> Shape:
     sketch = Polygon(*points, align=None)
     return Pos(0, 0, z0) * extrude(sketch, amount=height)
+
+
+def _fl(x: float) -> float:
+    return math.floor(float(x) * 1000) / 1000
 
 
 def _plate(length: float, width: float, thickness: float) -> Shape:
@@ -135,15 +139,18 @@ def square_slots(rng):
     margin = float(rng.uniform(3.0, 5.0))
     pitch = (width - 2 * margin) / n
     angle = _r(rng.choice([0.0, rng.uniform(5, 30)]))
+    ca, sa = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+    gap = 1.0
     features = []
     for i in range(n):
-        cy = -width / 2 + margin + pitch * (i + 0.5)
-        slot_w = _r(rng.uniform(0.2, 0.55) * pitch)
+        cy = _r(-width / 2 + margin + pitch * (i + 0.5))
+        slot_w = float(rng.uniform(0.2, 0.55)) * pitch
         slot_l = float(rng.uniform(0.4, 0.9)) * (length - 2 * margin)
-        _, ey = rect_extent(slot_l, slot_w, angle)
-        if angle and pitch - ey < 1.0:
-            slot_l = max(slot_l * 0.5, 3 * slot_w)
-        slot_l = _r(slot_l)
+        if sa > 0:
+            slot_w = min(slot_w, (pitch - gap) / (ca + 3 * sa))
+            slot_l = min(slot_l, (pitch - gap - slot_w * ca) / sa)
+        slot_l = min(slot_l, (length - 2 * margin - slot_w * sa) / ca)
+        slot_w, slot_l = _fl(slot_w), _fl(slot_l)
         through = bool(rng.random() < 0.5)
         depth = _r(t if through else rng.uniform(0.3, 0.8) * t)
         solid = _cut_rect(
@@ -152,7 +159,7 @@ def square_slots(rng):
         features.append(
             {
                 "type": "square_slot",
-                "center": [0.0, _r(cy)],
+                "center": [0.0, cy],
                 "size": [slot_l, slot_w],
                 "angle_deg": angle,
                 "depth": depth,
@@ -172,7 +179,12 @@ def stepped_block(rng):
     n = int(rng.integers(1, 4))
     xs = np.sort(rng.uniform(0.15, 0.85, size=n)) * length - length / 2
     xs = np.maximum.accumulate(xs + np.arange(n) * 3.0)
-    hs = np.sort(rng.uniform(0.15, 0.85, size=n))[::-1] * height
+    hs = [float(rng.uniform(0.5, 0.85)) * height]
+    for _ in range(n - 1):
+        prev = hs[-1]
+        hs.append(prev - float(rng.uniform(1.0, max(1.01, 0.4 * prev))))
+    hs = [h for h in hs if h >= 1.0]
+    xs = xs[: len(hs)]
     features = []
     for x, h in zip(xs, hs, strict=True):
         x, h = _r(x), _r(h)
@@ -180,7 +192,16 @@ def stepped_block(rng):
             continue
         pts = [(x, -width), (length, -width), (length, width), (x, width)]
         solid = solid - _prism(pts, height - h + 1, h)
-        features.append({"type": "step", "x_start": x, "top_z": h, "axis": [1, 0, 0]})
+        features.append(
+            {
+                "type": "step",
+                "x_start": x,
+                "x_end": _r(length / 2),
+                "y_range": [_r(-width / 2), _r(width / 2)],
+                "top_z": h,
+                "axis": [1, 0, 0],
+            }
+        )
     return _clean(solid), {"block": [length, width, height]}, features
 
 
@@ -208,12 +229,13 @@ def boss_plate(rng):
             )
     if not features:
         h = _r(rng.uniform(2, 10))
-        solid = solid + _prism(_rect_points(0, 0, length / 3, width / 3, 0), h, t)
+        bl, bw = _r(length / 3), _r(width / 3)
+        solid = solid + _prism(_rect_points(0, 0, bl, bw, 0), h, t)
         features.append(
             {
                 "type": "rect_boss",
                 "center": [0.0, 0.0],
-                "size": [_r(length / 3), _r(width / 3)],
+                "size": [bl, bw],
                 "angle_deg": 0.0,
                 "height": h,
                 "base_z": t,
@@ -261,7 +283,14 @@ def polygon_prism(rng):
     h = _r(rng.uniform(5, 25))
     pts = _convex_outline(rng, n, rx, ry)
     solid = _prism(pts, h, 0.0)
-    features = [{"type": "polygon_outline", "points": [list(p) for p in pts], "height": h}]
+    features = [
+        {
+            "type": "polygon_outline",
+            "points": [list(p) for p in pts],
+            "height": h,
+            "axis": [0, 0, 1],
+        }
+    ]
     return _clean(solid), {"n": n, "radii": [rx, ry], "height": h}, features
 
 
@@ -278,8 +307,13 @@ def lshape_outline(rng):
     pts = [(_r(x * ca - y * sa), _r(x * sa + y * ca)) for x, y in pts]
     solid = _prism(pts, h, 0.0)
     features = [
-        {"type": "polygon_outline", "points": [list(p) for p in pts], "height": h},
-        {"type": "concave_corner", "count": 1},
+        {
+            "type": "polygon_outline",
+            "points": [list(p) for p in pts],
+            "height": h,
+            "axis": [0, 0, 1],
+        },
+        {"type": "concave_corner", "count": 1, "axis": [0, 0, 1]},
     ]
     return _clean(solid), {"legs": [a, b], "thickness": [ta, tb], "angle_deg": angle}, features
 
@@ -303,13 +337,26 @@ def thin_walls(rng):
             "angle_deg": 0.0,
             "depth": _r(height - floor),
             "floor_z": floor,
+            "floor_faces": 1,
             "axis": [0, 0, 1],
         },
-        {"type": "thin_wall", "thickness": wall},
+        {"type": "thin_wall", "thickness": wall, "location": "perimeter"},
     ]
     if rng.random() < 0.6:
         rib = _r(rng.uniform(0.3, 0.8))
         rib_h = _r(rng.uniform(0.4, 0.9) * (height - floor))
-        solid = solid + _prism(_rect_points(0, 0, length - 2 * wall + 0.4, rib, 0), rib_h, floor)
-        features.append({"type": "thin_rib", "thickness": rib, "height": rib_h, "base_z": floor})
+        rib_l = _r(length - 2 * wall)
+        solid = solid + _prism(_rect_points(0, 0, rib_l + wall, rib, 0), rib_h, floor)
+        features[0]["floor_faces"] = 2
+        features.append(
+            {
+                "type": "thin_rib",
+                "center": [0.0, 0.0],
+                "length": rib_l,
+                "direction": [1, 0],
+                "thickness": rib,
+                "height": rib_h,
+                "base_z": floor,
+            }
+        )
     return _clean(solid), {"block": [length, width, height], "wall": wall}, features

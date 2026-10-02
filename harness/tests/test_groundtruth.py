@@ -6,20 +6,26 @@ import pytest
 from unmesh_harness.corpus import (
     GRID_SIZES,
     build_grid,
-    default_manifest,
-    find_manifest,
     load_manifest,
+    pinned_fingerprint,
+    planar_entries,
     select,
 )
 from unmesh_harness.groundtruth import families, fingerprint, generate, validity_problems
+
+from .volumes import expected_volume
 
 
 def _entries(grid):
     return [(e["family"], e["seed"]) for e in select(load_manifest(), grid)]
 
 
-def test_manifest_is_canonical():
-    assert json.loads(find_manifest().read_text()) == default_manifest()
+def test_manifest_contains_planned_entries_unchanged():
+    ids = {e["id"]: e for e in load_manifest()["entries"]}
+    for planned in planar_entries():
+        entry = ids[planned["id"]]
+        assert all(entry[k] == v for k, v in planned.items())
+        assert "fingerprint" in entry
 
 
 @pytest.mark.parametrize("grid", ["smoke", "standard"])
@@ -49,10 +55,35 @@ def test_smoke_valid_and_deterministic(family, seed):
     assert a.features and a.metadata()["family"] == family
 
 
+def _check_pinned(entry):
+    gt = generate(entry["family"], entry["seed"])
+    assert validity_problems(gt.solid) == []
+    pinned, now = entry["fingerprint"], pinned_fingerprint(gt.solid)
+    assert now["volume"] == pytest.approx(pinned["volume"], rel=1e-9)
+    assert now["face_count"] == pinned["face_count"]
+    assert now["bbox_min"] == pytest.approx(pinned["bbox_min"], abs=1e-6)
+    assert now["bbox_max"] == pytest.approx(pinned["bbox_max"], abs=1e-6)
+    assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9)
+
+
+@pytest.mark.parametrize("entry", select(load_manifest(), "smoke"), ids=lambda e: e["id"])
+def test_smoke_matches_pinned_fingerprint_and_metadata(entry):
+    _check_pinned(entry)
+
+
 @pytest.mark.slow
-@pytest.mark.parametrize(("family", "seed"), _entries("standard"))
-def test_standard_valid(family, seed):
-    assert validity_problems(generate(family, seed).solid) == []
+@pytest.mark.parametrize("entry", select(load_manifest(), "standard"), ids=lambda e: e["id"])
+def test_standard_matches_pinned_fingerprint_and_metadata(entry):
+    _check_pinned(entry)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("family", families())
+def test_seed_sweep_volume_matches_metadata(family):
+    for seed in range(300):
+        gt = generate(family, seed)
+        assert validity_problems(gt.solid) == [], seed
+        assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9), seed
 
 
 def test_seeds_differ():

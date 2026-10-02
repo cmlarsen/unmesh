@@ -7,7 +7,7 @@ from typing import Any
 
 from build123d import export_step
 
-from .groundtruth import families, generate
+from .groundtruth import fingerprint, generate
 
 MANIFEST_VERSION = 0
 GRID_SIZES = {"smoke": 20, "standard": 100}
@@ -18,11 +18,23 @@ def entry_id(family: str, seed: int) -> str:
     return f"{family}-{seed:04d}"
 
 
+PLANAR_FAMILIES = (
+    "boss_plate",
+    "lshape_outline",
+    "plate_pockets",
+    "polygon_prism",
+    "rotated_pockets",
+    "square_slots",
+    "stepped_block",
+    "thin_walls",
+    "through_cuts",
+)
+
+
 def planar_entries(count: int = GRID_SIZES["standard"]) -> list[dict[str, Any]]:
-    names = [f for f in families() if f in PLANAR_FAMILIES]
     entries = []
     for i in range(count):
-        family, seed = names[i % len(names)], i // len(names)
+        family, seed = PLANAR_FAMILIES[i % len(PLANAR_FAMILIES)], i // len(PLANAR_FAMILIES)
         grids = [g for g in GRID_ORDER if i < GRID_SIZES[g]]
         entries.append(
             {
@@ -30,43 +42,49 @@ def planar_entries(count: int = GRID_SIZES["standard"]) -> list[dict[str, Any]]:
                 "tier": "generated",
                 "family": family,
                 "seed": seed,
-                "strata": {"complexity": "planar"},
+                "strata": {"category": "planar"},
                 "grids": grids,
             }
         )
     return entries
 
 
-PLANAR_FAMILIES = {
-    "plate_pockets",
-    "rotated_pockets",
-    "square_slots",
-    "stepped_block",
-    "boss_plate",
-    "through_cuts",
-    "polygon_prism",
-    "lshape_outline",
-    "thin_walls",
-}
+def pinned_fingerprint(shape) -> dict[str, Any]:
+    fp = fingerprint(shape)
+    return {
+        "volume": round(fp["volume"], 9),
+        "face_count": fp["face_count"],
+        "bbox_min": [round(v, 6) for v in fp["bbox_min"]],
+        "bbox_max": [round(v, 6) for v in fp["bbox_max"]],
+    }
 
 
-def default_manifest() -> dict[str, Any]:
+def sync_manifest(manifest: dict[str, Any], planned: list[dict[str, Any]]) -> dict[str, Any]:
+    known = {e["id"] for e in manifest["entries"]}
+    manifest["entries"] += [e for e in planned if e["id"] not in known]
+    for entry in manifest["entries"]:
+        if "fingerprint" not in entry and entry["tier"] == "generated":
+            gt = generate(entry["family"], entry["seed"])
+            entry["fingerprint"] = pinned_fingerprint(gt.solid)
+    return manifest
+
+
+def empty_manifest() -> dict[str, Any]:
     return {
         "version": MANIFEST_VERSION,
         "grids": {
             "smoke": "Fast PR gate, subset of standard.",
             "standard": "Nightly corpus.",
         },
-        "entries": planar_entries(),
+        "entries": [],
     }
 
 
 def find_manifest() -> Path:
     for parent in Path(__file__).resolve().parents:
-        candidate = parent / "corpus" / "v0.json"
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("corpus/v0.json not found; pass --manifest")
+        if (parent / "corpus").is_dir() or (parent / "Cargo.toml").is_file():
+            return parent / "corpus" / "v0.json"
+    raise FileNotFoundError("repo root not found; pass --manifest")
 
 
 def load_manifest(path: Path | None = None) -> dict[str, Any]:
