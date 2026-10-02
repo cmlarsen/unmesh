@@ -1,0 +1,116 @@
+use super::fit::{Region, offset_fit, residual};
+use super::linalg::{V3, dot, scale, sub, unit};
+
+pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap_deg: f64) {
+    let rms_limit = (2.5 * sigma).max(0.5e-3);
+    let n = regions.len();
+    let mut done = vec![false; n];
+    let mut classes: Vec<V3> = Vec::new();
+
+    let allow = |r: &Region| -> f64 {
+        (snap_deg.to_radians() + (2.0 * tol).atan2(r.width.max(1e-300)))
+            .min(std::f64::consts::FRAC_PI_2)
+    };
+    let allow_cos = |r: &Region| -> f64 { allow(r).cos() };
+    let try_normal = |r: &Region, cand: V3| -> Option<(f64, f64, f64)> {
+        let d = offset_fit(v, &r.verts, cand, tol);
+        let (rms, max) = residual(v, &r.verts, cand, d);
+        (max <= tol && rms <= rms_limit).then_some((d, rms, max))
+    };
+    let adopt = |r: &mut Region, cand: V3, res: (f64, f64, f64)| {
+        r.n = cand;
+        r.d = res.0;
+        r.rms = res.1;
+        r.max = res.2;
+    };
+
+    let mut used_axis = [false; 3];
+    for (i, r) in regions.iter_mut().enumerate() {
+        if r.area <= 0.0 {
+            continue;
+        }
+        for a in 0..3 {
+            let mut e = [0.0; 3];
+            e[a] = if r.n[a] >= 0.0 { 1.0 } else { -1.0 };
+            if dot(r.n, e) >= allow_cos(r) {
+                if let Some(res) = try_normal(r, e) {
+                    adopt(r, e, res);
+                    done[i] = true;
+                    used_axis[a] = true;
+                }
+                break;
+            }
+        }
+    }
+    for (a, used) in used_axis.iter().enumerate() {
+        if *used {
+            let mut e = [0.0; 3];
+            e[a] = 1.0;
+            classes.push(e);
+        }
+    }
+
+    let mut order: Vec<usize> = (0..n)
+        .filter(|&i| !done[i] && regions[i].area > 0.0)
+        .collect();
+    order.sort_by(|&a, &b| regions[b].area.total_cmp(&regions[a].area).then(a.cmp(&b)));
+    for i in order {
+        let ni = regions[i].n;
+        let cos_r = allow_cos(&regions[i]);
+        if let Some(u) = classes.iter().find(|u| dot(ni, **u).abs() >= cos_r) {
+            let s = if dot(ni, *u) >= 0.0 { 1.0 } else { -1.0 };
+            let cand = scale(*u, s);
+            if let Some(res) = try_normal(&regions[i], cand) {
+                adopt(&mut regions[i], cand, res);
+            }
+            continue;
+        }
+        let sin_snap = allow(&regions[i]).sin();
+        let mut u = ni;
+        for e in &classes {
+            let c = dot(u, *e);
+            if c.abs() <= sin_snap {
+                u = unit(sub(u, scale(*e, c)));
+            }
+        }
+        if u != ni
+            && let Some(res) = try_normal(&regions[i], u)
+        {
+            adopt(&mut regions[i], u, res);
+            classes.push(u);
+            continue;
+        }
+        classes.push(ni);
+    }
+}
+
+pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
+    let mut stats: Vec<(f64, f64, f64)> = Vec::new();
+    for r in regions {
+        let n = r.verts.len();
+        if r.area <= 0.0 || n < 4 {
+            continue;
+        }
+        let ss: f64 = r
+            .verts
+            .iter()
+            .map(|&(vi, _)| (dot(r.n, v[vi as usize]) - r.d).powi(2))
+            .sum();
+        let dof = (n - 3) as f64;
+        stats.push(((ss / dof).sqrt(), ss, dof));
+    }
+    if stats.is_empty() {
+        return 0.0;
+    }
+    stats.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let median = stats[stats.len() / 2].0;
+    let keep = stats
+        .iter()
+        .take_while(|x| x.0 <= 10.0 * median + 1e-9)
+        .count()
+        .max(1);
+    let (ss, dof) = stats[..keep]
+        .iter()
+        .fold((0.0, 0.0), |(s, d), x| (s + x.1, d + x.2));
+    (ss / dof).sqrt()
+}

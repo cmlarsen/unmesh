@@ -1,6 +1,9 @@
+use rustc_hash::FxHashMap;
+
 use super::linalg::{V3, dot, scale, sub, sym_eigen, unit};
-use super::segment::TriInfo;
-use super::topology::NONE;
+use super::segment::{TriInfo, segment};
+use super::surface::Surface;
+use super::topology::{CompKind, NONE, Topology};
 
 pub struct Region {
     pub faces: Vec<u32>,
@@ -327,116 +330,142 @@ pub fn merge_coplanar(
     (0..n as u32).map(|i| dsu.find(i)).collect()
 }
 
-pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap_deg: f64) {
-    let rms_limit = (2.5 * sigma).max(0.5e-3);
-    let n = regions.len();
-    let mut done = vec![false; n];
-    let mut classes: Vec<V3> = Vec::new();
-
-    let allow = |r: &Region| -> f64 {
-        (snap_deg.to_radians() + (2.0 * tol).atan2(r.width.max(1e-300)))
-            .min(std::f64::consts::FRAC_PI_2)
-    };
-    let allow_cos = |r: &Region| -> f64 { allow(r).cos() };
-    let try_normal = |r: &Region, cand: V3| -> Option<(f64, f64, f64)> {
-        let d = offset_fit(v, &r.verts, cand, tol);
-        let (rms, max) = residual(v, &r.verts, cand, d);
-        (max <= tol && rms <= rms_limit).then_some((d, rms, max))
-    };
-    let adopt = |r: &mut Region, cand: V3, res: (f64, f64, f64)| {
-        r.n = cand;
-        r.d = res.0;
-        r.rms = res.1;
-        r.max = res.2;
-    };
-
-    let mut used_axis = [false; 3];
-    for (i, r) in regions.iter_mut().enumerate() {
-        if r.area <= 0.0 {
-            continue;
-        }
-        for a in 0..3 {
-            let mut e = [0.0; 3];
-            e[a] = if r.n[a] >= 0.0 { 1.0 } else { -1.0 };
-            if dot(r.n, e) >= allow_cos(r) {
-                if let Some(res) = try_normal(r, e) {
-                    adopt(r, e, res);
-                    done[i] = true;
-                    used_axis[a] = true;
-                }
-                break;
-            }
-        }
-    }
-    for (a, used) in used_axis.iter().enumerate() {
-        if *used {
-            let mut e = [0.0; 3];
-            e[a] = 1.0;
-            classes.push(e);
-        }
-    }
-
-    let mut order: Vec<usize> = (0..n)
-        .filter(|&i| !done[i] && regions[i].area > 0.0)
-        .collect();
-    order.sort_by(|&a, &b| regions[b].area.total_cmp(&regions[a].area).then(a.cmp(&b)));
-    for i in order {
-        let ni = regions[i].n;
-        let cos_r = allow_cos(&regions[i]);
-        if let Some(u) = classes.iter().find(|u| dot(ni, **u).abs() >= cos_r) {
-            let s = if dot(ni, *u) >= 0.0 { 1.0 } else { -1.0 };
-            let cand = scale(*u, s);
-            if let Some(res) = try_normal(&regions[i], cand) {
-                adopt(&mut regions[i], cand, res);
-            }
-            continue;
-        }
-        let sin_snap = allow(&regions[i]).sin();
-        let mut u = ni;
-        for e in &classes {
-            let c = dot(u, *e);
-            if c.abs() <= sin_snap {
-                u = unit(sub(u, scale(*e, c)));
-            }
-        }
-        if u != ni
-            && let Some(res) = try_normal(&regions[i], u)
-        {
-            adopt(&mut regions[i], u, res);
-            classes.push(u);
-            continue;
-        }
-        classes.push(ni);
-    }
+pub struct Final {
+    pub faces: Vec<u32>,
+    pub surface: Surface,
+    pub rms: f64,
+    pub max: f64,
+    pub comp: usize,
 }
 
-pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
-    let mut stats: Vec<(f64, f64, f64)> = Vec::new();
-    for r in regions {
-        let n = r.verts.len();
-        if r.area <= 0.0 || n < 4 {
+pub struct FitArgs<'a> {
+    pub vc: &'a [V3],
+    pub faces: &'a [[u32; 3]],
+    pub nbr: &'a [[u32; 3]],
+    pub info: &'a [TriInfo],
+    pub eligible: &'a [bool],
+    pub tol: f64,
+    pub snap_deg: f64,
+    pub scratch: &'a mut Scratch,
+}
+
+pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
+    let FitArgs {
+        vc,
+        faces,
+        nbr,
+        info,
+        eligible,
+        tol,
+        snap_deg,
+        scratch,
+    } = args;
+    let (label, n_seg) = segment(vc, faces, nbr, info, eligible, tol);
+    let regions0 = build_regions(vc, faces, info, &label, n_seg, tol, scratch);
+    let pairs0 = region_pairs(nbr, &label);
+    let root = merge_coplanar(vc, &regions0, &pairs0, tol, snap_deg);
+    let mut compact = vec![NONE; n_seg];
+    let mut n_merged = 0u32;
+    for r in 0..n_seg {
+        if root[r] as usize == r {
+            compact[r] = n_merged;
+            n_merged += 1;
+        }
+    }
+    let label2: Vec<u32> = label
+        .iter()
+        .map(|&l| {
+            if l == NONE {
+                NONE
+            } else {
+                compact[root[l as usize] as usize]
+            }
+        })
+        .collect();
+    let regions = build_regions(vc, faces, info, &label2, n_merged as usize, tol, scratch);
+    (label2, regions)
+}
+
+pub fn finalize(
+    regions: &[Region],
+    pairs: &[(u32, u32)],
+    comp_of: &[u32],
+    topo: &Topology,
+    tol: f64,
+) -> (Vec<Final>, Vec<u32>) {
+    let is_analytic: Vec<bool> = regions
+        .iter()
+        .map(|r| r.area > 0.0 && r.max <= tol)
+        .collect();
+    let mut fdsu: Vec<u32> = (0..regions.len() as u32).collect();
+    fn find(d: &mut [u32], mut x: u32) -> u32 {
+        while d[x as usize] != x {
+            d[x as usize] = d[d[x as usize] as usize];
+            x = d[x as usize];
+        }
+        x
+    }
+    for &(a, b) in pairs {
+        if !is_analytic[a as usize] && !is_analytic[b as usize] {
+            let (ra, rb) = (find(&mut fdsu, a), find(&mut fdsu, b));
+            if ra != rb {
+                fdsu[ra.max(rb) as usize] = ra.min(rb);
+            }
+        }
+    }
+    let mut finals: Vec<Final> = Vec::new();
+    let mut group_of: FxHashMap<u32, usize> = FxHashMap::default();
+    for (ri, r) in regions.iter().enumerate() {
+        if r.faces.is_empty() {
             continue;
         }
-        let ss: f64 = r
-            .verts
-            .iter()
-            .map(|&(vi, _)| (dot(r.n, v[vi as usize]) - r.d).powi(2))
-            .sum();
-        let dof = (n - 3) as f64;
-        stats.push(((ss / dof).sqrt(), ss, dof));
+        if is_analytic[ri] {
+            finals.push(Final {
+                faces: r.faces.clone(),
+                surface: Surface::Plane {
+                    normal: r.n,
+                    offset: r.d,
+                },
+                rms: r.rms,
+                max: r.max,
+                comp: comp_of[r.faces[0] as usize] as usize,
+            });
+        } else {
+            let g = find(&mut fdsu, ri as u32);
+            let idx = *group_of.entry(g).or_insert_with(|| {
+                finals.push(Final {
+                    faces: Vec::new(),
+                    surface: Surface::Facets,
+                    rms: 0.0,
+                    max: 0.0,
+                    comp: comp_of[r.faces[0] as usize] as usize,
+                });
+                finals.len() - 1
+            });
+            finals[idx].faces.extend_from_slice(&r.faces);
+        }
     }
-    if stats.is_empty() {
-        return 0.0;
+    for (ci, c) in topo.comps.iter().enumerate() {
+        if c.kind != CompKind::Closed {
+            finals.push(Final {
+                faces: c.faces.clone(),
+                surface: Surface::Facets,
+                rms: 0.0,
+                max: 0.0,
+                comp: ci,
+            });
+        }
     }
-    stats.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let median = stats[stats.len() / 2].0;
-    let keep = stats
-        .iter()
-        .take_while(|x| x.0 <= 10.0 * median + 1e-9)
-        .count()
-        .max(1);
-    let (ss, dof) = stats[..keep]
-        .iter()
-        .fold((0.0, 0.0), |(s, d), x| (s + x.1, d + x.2));
-    (ss / dof).sqrt()
+    for fr in finals.iter_mut() {
+        fr.faces.sort_unstable();
+    }
+    finals.sort_by_key(|f| f.faces[0]);
+
+    let mut flabel = vec![NONE; comp_of.len()];
+    for (i, fr) in finals.iter().enumerate() {
+        for &f in &fr.faces {
+            flabel[f as usize] = i as u32;
+        }
+    }
+    (finals, flabel)
 }

@@ -289,7 +289,9 @@ region is in exactly one shell, and an adjacency never crosses shells.
 - An open shell (`closed: false`) is always `outer`.
 
 A multi-body input is several outer shells, which the writer emits as a compound of solids. Bodies that
-only touch at a vertex or along an edge are separate shells; no adjacency joins them.
+only touch at a vertex are separate shells; no adjacency joins them. Bodies that touch along an edge
+share that edge between four triangles, so the edge is non-manifold and the bodies form one
+edge-connected component, kept as a single open facets shell as the table above requires.
 
 ## Non-manifold and open input
 
