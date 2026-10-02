@@ -15,6 +15,8 @@ NORMAL_TOL_DEG = 0.2
 OFFSET_TOL_MM = 0.01
 IOU_MIN = 0.8
 VOLUME_REL_TOL = 0.01
+STEP_TESSELLATION_MM = 0.005
+STEP_TESSELLATION_ANGLE = 0.1
 
 
 def _face_centroid(tris: np.ndarray) -> np.ndarray:
@@ -82,16 +84,41 @@ def face_recovery(
     }
 
 
-def step_problems(path: str | Path | None, truth_volume: float) -> list[str]:
-    if path is None or not Path(path).is_file():
+def step_problems(
+    path: str | Path | None,
+    truth_volume: float,
+    input_tris: np.ndarray | None = None,
+    bound: float | None = None,
+    samples_per_mm2: float = 1.0,
+) -> list[str]:
+    if path is None or not Path(path).is_file() or Path(path).stat().st_size == 0:
         return ["no STEP file written"]
+    try:
+        return _step_problems(path, truth_volume, input_tris, bound, samples_per_mm2)
+    except Exception as e:
+        return [f"STEP check failed: {type(e).__name__}: {e}"]
+
+
+def _step_problems(path, truth_volume, input_tris, bound, samples_per_mm2) -> list[str]:
     from build123d import import_step
 
-    try:
-        shape = import_step(str(path))
-    except Exception as e:
-        return [f"STEP unreadable: {type(e).__name__}: {e}"]
+    from ..judge import judge
+    from .converters import faceted_ir
+
+    shape = import_step(str(path))
     problems = validity_problems(shape)
-    if abs(shape.volume - truth_volume) > VOLUME_REL_TOL * truth_volume:
+    if not math.isfinite(shape.volume) or abs(shape.volume - truth_volume) > (
+        VOLUME_REL_TOL * truth_volume
+    ):
         problems.append(f"volume {shape.volume:.4f} differs from truth {truth_volume:.4f}")
+    if input_tris is not None and bound is not None and not problems:
+        verts, faces = shape.tessellate(STEP_TESSELLATION_MM, STEP_TESSELLATION_ANGLE)
+        v = np.array([[p.X, p.Y, p.Z] for p in verts], dtype=np.float64)
+        tris = v[np.array(faces, dtype=np.int64)]
+        result = judge(faceted_ir(tris), tris, input_tris, None, samples_per_mm2=samples_per_mm2)
+        if not result.truth.max <= bound:
+            problems.append(
+                f"STEP deviates {result.truth.max * 1000:.1f} um from the input, "
+                f"reported bound {bound * 1000:.1f} um"
+            )
     return problems

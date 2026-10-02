@@ -23,7 +23,13 @@
       "steps": [],
       "seeds": [
         0
-      ]
+      ],
+      "floors": {
+        "f1_cell": 1.0,
+        "regions_equal_faces": true,
+        "dev_input_max": 0.001,
+        "fallback_max": 0
+      }
     },
     {
       "operator": "float32",
@@ -36,7 +42,13 @@
       ],
       "seeds": [
         0
-      ]
+      ],
+      "floors": {
+        "f1_cell": 1.0,
+        "regions_equal_faces": true,
+        "dev_input_max": 0.001,
+        "fallback_max": 0
+      }
     },
     {
       "operator": "rotation",
@@ -46,7 +58,13 @@
           "rotation",
           0.5
         ]
-      ]
+      ],
+      "floors": {
+        "f1_cell": 1.0,
+        "regions_equal_faces": true,
+        "dev_input_max": 0.001,
+        "fallback_max": 0
+      }
     },
     {
       "operator": "refine+noise_off_plane",
@@ -60,7 +78,13 @@
           "noise_off_plane",
           0.02
         ]
-      ]
+      ],
+      "floors": {
+        "f1_row": 0.98,
+        "f1_cell": 0.9,
+        "fallback_max": 0,
+        "dev_input_max": 0.004
+      }
     },
     {
       "operator": "refine+noise_off_plane",
@@ -74,7 +98,13 @@
           "noise_off_plane",
           0.1
         ]
-      ]
+      ],
+      "floors": {
+        "f1_row": 0.98,
+        "f1_cell": 0.9,
+        "fallback_max": 0,
+        "dev_input_max": 0.016
+      }
     },
     {
       "operator": "refine+noise_off_plane",
@@ -88,7 +118,15 @@
           "noise_off_plane",
           0.2
         ]
-      ]
+      ],
+      "judge_truth": true,
+      "floors": {
+        "f1_row": 0.98,
+        "f1_cell": 0.9,
+        "fallback_max": 0,
+        "dev_input_max": 0.031,
+        "dev_truth_max": 0.02
+      }
     },
     {
       "operator": "noise_isotropic",
@@ -98,9 +136,16 @@
           "noise_isotropic",
           0.1
         ]
-      ]
+      ],
+      "judge_truth": true,
+      "floors": {
+        "f1_row": 0.98,
+        "f1_cell": 0.9,
+        "fallback_max": 0,
+        "dev_input_max": 0.016,
+        "dev_truth_max": 0.01
+      }
     }
   ],
-  "judge_samples_per_mm2": 1.0,
-  "judge_truth": false
+  "judge_samples_per_mm2": 1.0
 }

@@ -16,11 +16,11 @@ from .corpus import (
 )
 
 
-def _finish(records: list[dict], gate_enabled: bool) -> int:
+def _finish(records: list[dict], gate_enabled: bool, grid, converters, sha) -> int:
     from .runner import gate, summarize
 
     print(summarize(records))
-    verdict = gate(records)
+    verdict = gate(records, grid, converters, sha)
     for v in verdict.violations:
         print(f"GATE: {v}")
     if gate_enabled and not verdict.passed:
@@ -37,14 +37,18 @@ def _run(args) -> int:
     summary = run_grid(grid, converters, args.out, args.jobs, timeout=args.timeout)
     print(f"{summary.ran} ran, {summary.skipped} skipped, {summary.seconds:.1f} s")
     print(f"results: {summary.results_path}")
-    return _finish(summary.records, args.gate)
+    return _finish(summary.records, args.gate, grid, converters, summary.sha)
 
 
 def _report(args) -> int:
+    from .runner import load_grid
     from .runner.results import latest, read_results
 
-    records = list(latest(read_results(args.results), args.git_sha).values())
-    return _finish(records, args.gate)
+    all_records = read_results(args.results)
+    sha = args.git_sha or (all_records[-1]["git_sha"] if all_records else "")
+    records = list(latest(all_records, sha).values())
+    converters = sorted({r["converter"] for r in records})
+    return _finish(records, args.gate, load_grid(args.grid), converters, sha)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     report = sub.add_parser("report", help="summarize a results file")
     report.add_argument("results", type=Path)
     report.add_argument("--git-sha", default=None)
+    report.add_argument("--grid", default="smoke")
     report.add_argument("--gate", action="store_true")
 
     args = parser.parse_args(argv)

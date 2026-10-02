@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from typing import Any
 
 from ..corpus import find_manifest, load_manifest, select
 
-Key = tuple[str, str, float, int, str, str]
+Key = tuple[str, str, float, int, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -19,10 +20,19 @@ class Cell:
     seed: int
     converter: str
     git_sha: str
+    grid_hash: str
 
     @property
     def key(self) -> Key:
-        return (self.part, self.operator, self.severity, self.seed, self.converter, self.git_sha)
+        return (
+            self.part,
+            self.operator,
+            self.severity,
+            self.seed,
+            self.converter,
+            self.git_sha,
+            self.grid_hash,
+        )
 
 
 @dataclass
@@ -35,8 +45,18 @@ class Grid:
     truth_deflection: tuple[float, float]
     cells: list[dict[str, Any]]
     judge_samples_per_mm2: float
-    judge_truth: bool
+    grid_hash: str
     entries: list[dict[str, Any]]
+
+    @property
+    def need_truth(self) -> bool:
+        return any(c.get("judge_truth") for c in self.cells)
+
+    def row(self, operator: str, severity: float) -> dict[str, Any]:
+        for spec in self.cells:
+            if spec["operator"] == operator and float(spec["severity"]) == float(severity):
+                return spec
+        raise KeyError((operator, severity))
 
     def expand(self, converters: list[str], git_sha: str) -> list[tuple[Cell, dict[str, Any]]]:
         out = []
@@ -51,6 +71,7 @@ class Grid:
                             seed,
                             converter,
                             git_sha,
+                            self.grid_hash,
                         )
                         out.append((cell, spec))
         return out
@@ -79,26 +100,44 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         tuple(raw["truth_deflection"]),
         raw["cells"],
         float(raw.get("judge_samples_per_mm2", 10.0)),
-        bool(raw.get("judge_truth", True)),
+        hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:12],
         entries,
     )
 
 
 def git_sha() -> str:
     root = repo_root()
+
+    def git(*args: str) -> bytes:
+        return subprocess.run(
+            ["git", "-C", str(root), *args], capture_output=True, check=True
+        ).stdout
+
     try:
-        sha = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+        sha = git("rev-parse", "--short=12", "HEAD").decode().strip()
+        diff = git("diff", "HEAD", "--binary")
+        untracked = git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
-    return f"{sha}+dirty" if dirty else sha
+    digest = hashlib.sha256(diff)
+    for name in sorted(n for n in untracked if n):
+        digest.update(name)
+        try:
+            digest.update((root / name.decode()).read_bytes())
+        except OSError:
+            pass
+    if not diff and not any(untracked):
+        return sha
+    return f"{sha}+{digest.hexdigest()[:12]}"
+
+
+def prep_hash(grid: Grid, manifest_path: Path | None = None) -> str:
+    base = Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256((manifest_path or find_manifest()).read_bytes())
+    digest.update(
+        json.dumps([grid.input_deflection, grid.truth_deflection, grid.need_truth]).encode()
+    )
+    files = sorted((base / "groundtruth").glob("*.py")) + [base / "labels.py", base / "corpus.py"]
+    for f in files:
+        digest.update(f.read_bytes())
+    return digest.hexdigest()[:16]

@@ -67,7 +67,7 @@ def test_run_keys_and_resume(tmp_path):
     assert len(set(keys)) == len(keys)
     assert all(set(KEY_FIELDS) <= set(r) and r["git_sha"] == "testsha" for r in records)
     assert {r["converter"] for r in records} == {"unmesh", "faceted"}
-    assert gate(records).passed
+    assert gate(records, grid, ["unmesh", "faceted"], "testsha").passed
 
     again = run_grid(
         grid, ["unmesh", "faceted"], tmp_path, jobs=2, sha="testsha", log=lambda *_: None
@@ -110,36 +110,175 @@ def test_broken_converters_are_reported_not_fatal(tmp_path, monkeypatch):
     assert "broken_plugins:boom" in summarize(summary.records)
 
 
-def record(**kw):
-    base = {
-        "part": "p",
-        "operator": "o",
-        "severity": 0.5,
-        "seed": 0,
-        "converter": "unmesh",
-        "git_sha": "s",
-        "status": "ok",
-        "f1": 1.0,
-        "valid": True,
-        "under_report": False,
-        "calibration": 0.0,
-        "step_problems": [],
-        "fallback": False,
-        "seconds": 0.1,
-        "dev_input_max": 0.0,
-    }
-    return base | kw
+ADVERSARIES = """
+import json
+from pathlib import Path
+
+import numpy as np
+
+from unmesh.ir import Ir, Plane
+from unmesh_harness.runner.converters import convert_unmesh
+
+
+def _report(report, **changes):
+    r = json.loads(report)
+    r.update(changes)
+    return json.dumps(r)
+
+
+def halved(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, step, _report(rep, max_deviation=json.loads(rep)["max_deviation"] / 2)
+
+
+def zero(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, step, _report(rep, max_deviation=0.0)
+
+
+def nan_report(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, step, _report(rep, max_deviation=float("nan"))
+
+
+def no_report(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, step, None
+
+
+def skip_step(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, None, _report(rep, write={"skipped": True})
+
+
+def empty_step(p):
+    ir, step, rep = convert_unmesh(p)
+    Path(step).write_text("")
+    return ir, step, rep
+
+
+def other_step(p):
+    ir, step, rep = convert_unmesh(p)
+    return ir, step, _report(rep, write={"valid": True})
+
+
+def shifted(p):
+    ir, step, rep = convert_unmesh(p)
+    parsed = Ir.loads(ir)
+    for region in parsed.regions:
+        s = region.surface
+        if isinstance(s, Plane):
+            n = np.asarray(s.normal)
+            s.origin = tuple((np.asarray(s.origin) + 0.05 * n).tolist())
+    return parsed.dumps(), step, _report(rep, max_deviation=json.loads(rep)["max_deviation"] + 0.06)
+
+
+def bad_ir(p):
+    ir, step, rep = convert_unmesh(p)
+    d = json.loads(ir)
+    d["regions"][0]["triangles"].append(10**9)
+    return json.dumps(d), step, rep
+"""
+
+ADVERSARY_NAMES = [
+    "halved",
+    "zero",
+    "nan_report",
+    "no_report",
+    "skip_step",
+    "empty_step",
+    "shifted",
+    "bad_ir",
+]
+
+
+def test_adversarial_plugins_fail_the_gate(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "adversaries.py").write_text(ADVERSARIES)
+    monkeypatch.syspath_prepend(str(plugins))
+    grid = small_grid(parts=1, cells=("identity",))
+    converters = ["unmesh"] + [f"adversaries:{n}" for n in ADVERSARY_NAMES]
+    summary = run_grid(
+        grid, converters, tmp_path / "out", jobs=3, sha="s", timeout=60, log=lambda *_: None
+    )
+    verdict = gate(summary.records, grid, converters, "s")
+    flagged = {v.split(" ")[0] for v in verdict.violations}
+    assert "unmesh" not in flagged
+    assert flagged == {f"adversaries:{n}" for n in ADVERSARY_NAMES}, verdict.violations
+
+
+def row_records(grid, **changes):
+    out = []
+    for cell, _ in grid.expand(["unmesh"], "s"):
+        r = {
+            "part": cell.part,
+            "operator": cell.operator,
+            "severity": cell.severity,
+            "seed": cell.seed,
+            "converter": "unmesh",
+            "git_sha": "s",
+            "grid_hash": cell.grid_hash,
+            "status": "ok",
+            "f1": 1.0,
+            "faces": 10,
+            "regions": 10,
+            "matched": 10,
+            "valid": True,
+            "under_report": False,
+            "calibration": 0.0,
+            "step_problems": [],
+            "fallback": False,
+            "dev_input_max": 0.0,
+            "dev_truth_max": 0.0,
+        }
+        out.append(r | changes)
+    return out
 
 
 def test_gate_rules():
-    good = [record(), record(converter="faceted", f1=0.0)]
-    assert gate(good).passed
-    assert not gate([record(under_report=True, calibration=-0.01), good[1]]).passed
-    assert not gate([record(valid=False, step_problems=["bad"]), good[1]]).passed
-    assert not gate([record(f1=0.0), good[1]]).passed
-    assert not gate([record(status="timeout", error="slow"), good[1]]).passed
-    assert not gate([record()]).passed
-    assert gate([record(), record(converter="faceted", f1=0.0, valid=None)]).passed
+    grid = small_grid(parts=2, cells=("identity",))
+    ok = row_records(grid)
+    assert gate(ok, grid, ["unmesh"], "s").passed
+    for changes in (
+        {"under_report": True},
+        {"under_report": None},
+        {"valid": False, "step_problems": ["bad"]},
+        {"valid": None},
+        {"f1": 0.99},
+        {"regions": 11},
+        {"fallback": True},
+        {"dev_input_max": 0.002},
+        {"dev_input_max": float("nan")},
+        {"status": "timeout", "error": "slow"},
+        {"status": "invalid_ir", "error": "bad"},
+    ):
+        assert not gate(row_records(grid, **changes), grid, ["unmesh"], "s").passed, changes
+    assert not gate(ok[:-1], grid, ["unmesh"], "s").passed
+    assert not gate([], grid, ["faceted"], "s").passed
+
+
+def test_gate_row_floors_and_truth():
+    grid = load_grid("smoke")
+    grid = dataclasses.replace(grid, entries=grid.entries[:2], seeds=[0])
+    noisy = [c for c in grid.cells if c["operator"] == "noise_isotropic"][0]
+    grid = dataclasses.replace(grid, cells=[noisy])
+    assert noisy["judge_truth"] and noisy["floors"]["dev_truth_max"] > 0
+    assert gate(row_records(grid), grid, ["unmesh"], "s").passed
+    assert not gate(row_records(grid, dev_truth_max=None), grid, ["unmesh"], "s").passed
+    assert not gate(row_records(grid, dev_truth_max=0.05), grid, ["unmesh"], "s").passed
+    weak = row_records(grid, f1=0.95, matched=9, regions=10, faces=10)
+    assert not gate(weak, grid, ["unmesh"], "s").passed
+
+
+def test_under_reports_rejects_non_finite():
+    from unmesh_harness.judge import Comparison, Stats, under_reports
+
+    stats = Stats(1, 0.001, 0.001, 0.001, 0.001)
+    cmp = Comparison(stats, stats)
+    assert under_reports(float("nan"), cmp)
+    assert under_reports(float("inf"), cmp)
+    assert not under_reports(0.002, cmp)
 
 
 @pytest.fixture(scope="module")

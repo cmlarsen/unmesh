@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .execute import run_pool
-from .grid import Grid, git_sha
+from .grid import Grid, git_sha, prep_hash
 from .results import append_result, completed_keys, latest, read_results
 
 PREP_TIMEOUT_S = 120.0
@@ -21,6 +21,7 @@ class RunSummary:
     skipped: int
     ran: int
     seconds: float
+    sha: str = ""
 
 
 def results_path(out: Path, grid: Grid) -> Path:
@@ -47,16 +48,29 @@ def run_grid(
     skipped = len(grid.expand(converters, sha)) - len(cells)
     if not cells:
         log(f"nothing to run: {skipped} cells already complete in {path}")
-        return RunSummary(path, list(latest(read_results(path), sha).values()), skipped, 0, 0.0)
+        return RunSummary(
+            path, list(latest(read_results(path), sha).values()), skipped, 0, 0.0, sha
+        )
 
     cache = out / "cache"
     work = out / "work"
-    shutil.rmtree(cache, ignore_errors=True)
     shutil.rmtree(work, ignore_errors=True)
-    cache.mkdir()
     work.mkdir()
+    stamp = cache / "STAMP"
+    wanted = prep_hash(grid)
+    if not stamp.is_file() or stamp.read_text() != wanted:
+        shutil.rmtree(cache, ignore_errors=True)
+        cache.mkdir()
+        stamp.write_text(wanted)
 
-    needed = sorted({c.part for c, _ in cells})
+    needed = sorted(
+        {c.part for c, _ in cells if not (cache / f"{c.part}.labeled.npz").is_file()}
+        | (
+            {c.part for c, _ in cells if not (cache / f"{c.part}.truth.npy").is_file()}
+            if grid.need_truth
+            else set()
+        )
+    )
     entries = {e["id"]: e for e in grid.entries}
     prep_jobs = [
         (
@@ -65,13 +79,14 @@ def run_grid(
                 "kind": "prep",
                 "entry": entries[part],
                 "cache": str(cache),
+                "need_truth": grid.need_truth,
                 "input_deflection": grid.input_deflection,
                 "truth_deflection": grid.truth_deflection,
             },
         )
         for part in needed
     ]
-    ready: set[str] = set()
+    ready: set[str] = {c.part for c, _ in cells} - set(needed)
     for part, result in run_pool(prep_jobs, jobs, max(timeout, PREP_TIMEOUT_S)):
         if result["status"] != "ok":
             log(f"prep failed for {part}: {result.get('error')}")
@@ -88,7 +103,7 @@ def run_grid(
             "work": str(work),
             "steps": spec["steps"],
             "samples_per_mm2": grid.judge_samples_per_mm2,
-            "judge_truth": grid.judge_truth,
+            "judge_truth": bool(spec.get("judge_truth")),
             "seed": cell.seed,
             "converter": cell.converter,
         }
@@ -112,4 +127,5 @@ def run_grid(
         skipped,
         ran + len(failed_prep),
         time.perf_counter() - started,
+        sha,
     )

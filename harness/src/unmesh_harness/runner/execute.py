@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing as mp
 import os
 import shutil
@@ -30,9 +31,10 @@ def prep_part(task: dict[str, Any]) -> dict[str, Any]:
     labeled_path, truth_path = _cache_paths(Path(task["cache"]), entry["id"])
     gt = generate(entry["family"], entry["seed"])
     labeled = tessellate(gt.solid, *task["input_deflection"])
-    truth = tessellate(gt.solid, *task["truth_deflection"])
+    if task["need_truth"]:
+        truth = tessellate(gt.solid, *task["truth_deflection"])
+        np.save(truth_path, truth.tris)
     labeled.save(labeled_path)
-    np.save(truth_path, truth.tris)
     return {"part": entry["id"]}
 
 
@@ -41,37 +43,59 @@ def _load_part(cache: str, part: str):
 
     if part not in _PARTS:
         labeled_path, truth_path = _cache_paths(Path(cache), part)
-        _PARTS[part] = (LabeledMesh.load(labeled_path), np.load(truth_path))
+        truth = np.load(truth_path) if truth_path.is_file() else None
+        _PARTS[part] = (LabeledMesh.load(labeled_path), truth)
     return _PARTS[part]
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 def _score(
     task: dict[str, Any], degraded, tris, stl_path: Path, phases: dict[str, float]
 ) -> dict[str, Any]:
-    from unmesh.ir import Ir
+    from unmesh.ir import Ir, IrError
 
     from ..degrade import to_original
     from ..judge import judge, under_reports
     from .converters import BASELINES, get_converter
     from .score import face_recovery, step_problems
 
+    baseline = task["converter"] in BASELINES
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
     started = time.perf_counter()
     ir_json, step_path, report_json = get_converter(task["converter"])(stl_path)
     seconds = time.perf_counter() - started
     record: dict[str, Any] = {"seconds": seconds, "triangles": len(tris), "phases": phases}
+    phases["convert"] = seconds
     report = json.loads(report_json) if report_json else None
+    if report is not None and not isinstance(report, dict):
+        raise TypeError("report_json must be a JSON object")
     write = (report or {}).get("write") or {}
     record["writer_valid"] = write.get("valid")
     record["fallback"] = write.get("fallback") is not None
-    phases["convert"] = seconds
+    reported = _finite((report or {}).get("max_deviation"))
     mark = time.perf_counter()
-    if write.get("skipped"):
+    skipped = bool(write.get("skipped")) and baseline
+    if skipped:
         record["valid"] = None
         record["step_problems"] = []
     else:
-        problems = step_problems(step_path, task["entry"]["fingerprint"]["volume"])
-        record["valid"] = not problems and write.get("valid", True) is not False
+        problems = step_problems(
+            step_path,
+            task["entry"]["fingerprint"]["volume"],
+            tris,
+            None if reported is None else reported + STEP_TOLERANCE_MM,
+            task["samples_per_mm2"],
+        )
+        if write.get("skipped"):
+            problems.append("STEP write skipped by a non-baseline converter")
+        if write.get("valid") is False:
+            problems.append("writer reports invalid")
+        record["valid"] = not problems
         record["step_problems"] = problems
     phases["validity"] = time.perf_counter() - mark
     mark = time.perf_counter()
@@ -79,20 +103,23 @@ def _score(
         record["status"] = "error"
         record["error"] = "converter returned no IR"
         return record
-    ir = Ir.loads(ir_json)
+    try:
+        ir = Ir.loads(ir_json)
+    except (IrError, ValueError, KeyError, TypeError) as e:
+        record["status"] = "invalid_ir"
+        record["error"] = f"{type(e).__name__}: {e}"
+        return record
     frame = to_original(degraded)
-    truth_in_input = (truth_tris.reshape(-1, 3) - frame[:3, 3]) @ frame[:3, :3]
-    reported = None if report is None else report.get("max_deviation")
-    if task["converter"] in BASELINES:
+    use_truth = task["judge_truth"] and truth_tris is not None
+    truth_in_input = None
+    if use_truth:
+        truth_in_input = ((truth_tris.reshape(-1, 3) - frame[:3, 3]) @ frame[:3, :3]).reshape(
+            truth_tris.shape
+        )
+    if baseline:
         record.update(dict.fromkeys(JUDGE_FIELDS))
     else:
-        result = judge(
-            ir,
-            tris,
-            truth_in_input.reshape(truth_tris.shape) if task["judge_truth"] else None,
-            reported,
-            samples_per_mm2=task["samples_per_mm2"],
-        )
+        result = judge(ir, tris, truth_in_input, reported, samples_per_mm2=task["samples_per_mm2"])
         record.update(
             {
                 "dev_input_max": result.input.max,
@@ -100,7 +127,7 @@ def _score(
                 "dev_truth_max": None if result.truth is None else result.truth.max,
                 "reported_deviation": reported,
                 "calibration": result.calibration,
-                "under_report": None if reported is None else under_reports(reported, result.input),
+                "under_report": True if reported is None else under_reports(reported, result.input),
             }
         )
     phases["judge"] = time.perf_counter() - mark
@@ -152,6 +179,7 @@ def run_prep(task: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok"}
 
 
+STEP_TOLERANCE_MM = 0.006
 JUDGE_FIELDS = (
     "dev_input_max",
     "dev_input_p99",

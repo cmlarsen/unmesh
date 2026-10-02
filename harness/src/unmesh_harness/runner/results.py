@@ -10,7 +10,7 @@ import numpy as np
 
 from .grid import Cell
 
-KEY_FIELDS = ("part", "operator", "severity", "seed", "converter", "git_sha")
+KEY_FIELDS = ("part", "operator", "severity", "seed", "converter", "git_sha", "grid_hash")
 
 
 def record_key(record: dict[str, Any]) -> tuple:
@@ -35,6 +35,7 @@ def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, A
         "seed": cell.seed,
         "converter": cell.converter,
         "git_sha": cell.git_sha,
+        "grid_hash": cell.grid_hash,
         **result,
     }
     with path.open("a") as f:
@@ -106,28 +107,87 @@ class Gate:
         return not self.violations
 
 
-def gate(records: list[dict[str, Any]], target: str = "unmesh", baseline: str = "faceted") -> Gate:
+def _label(r: dict[str, Any]) -> str:
+    return f"{r['converter']} {r['part']} {r['operator']}@{r['severity']:g} seed {r['seed']}"
+
+
+def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
+    label = _label(r)
+    out = []
+
+    def bad(msg: str) -> None:
+        out.append(f"{label}: {msg}")
+
+    if r.get("under_report") is not False:
+        calib = r.get("calibration")
+        detail = "no usable reported max_deviation" if calib is None else f"{calib * 1000:.3f} um"
+        bad(f"under-reports ({detail})")
+    if r.get("valid") is not True:
+        bad(f"invalid STEP: {'; '.join(r.get('step_problems') or ['not checked'])}")
+    if "f1_cell" in floors and r["f1"] < floors["f1_cell"]:
+        bad(f"F1 {r['f1']:.3f} below floor {floors['f1_cell']}")
+    if floors.get("regions_equal_faces") and r["regions"] != r["faces"]:
+        bad(f"{r['regions']} regions for {r['faces']} ground-truth faces")
+    if "fallback_max" in floors and int(r["fallback"]) > floors["fallback_max"]:
+        bad("writer fell back to faceted")
+    if "dev_input_max" in floors and not r["dev_input_max"] <= floors["dev_input_max"]:
+        bad(
+            f"deviation to input {r['dev_input_max'] * 1000:.2f} um above "
+            f"{floors['dev_input_max'] * 1000:.2f} um"
+        )
+    if "dev_truth_max" in floors:
+        truth = r.get("dev_truth_max")
+        if truth is None or not truth <= floors["dev_truth_max"]:
+            shown = "not measured" if truth is None else f"{truth * 1000:.2f} um"
+            bad(f"deviation to truth {shown} above {floors['dev_truth_max'] * 1000:.2f} um")
+    return out
+
+
+def gate(records: list[dict[str, Any]], grid, converters: list[str], sha: str | None = None):
+    from .converters import BASELINES
+
     result = Gate()
     by_key = {record_key(r): r for r in records}
-    for r in records:
-        if r["converter"] != target:
-            continue
-        label = f"{r['part']} {r['operator']}@{r['severity']:g} seed {r['seed']}"
-        if r["status"] != "ok":
-            result.violations.append(f"{label}: {r['status']}: {r.get('error')}")
-            continue
-        if r.get("under_report"):
+    gated = [c for c in converters if c not in BASELINES]
+    if not gated:
+        result.violations.append("no gated converter in this run")
+    for cell, spec in grid.expand(converters, sha if sha is not None else _sha_of(records)):
+        r = by_key.get(cell.key)
+        if r is None:
             result.violations.append(
-                f"{label}: under-reports (calibration {r['calibration'] * 1000:.3f} um)"
+                f"{cell.converter} {cell.part} {cell.operator}@{cell.severity:g} "
+                f"seed {cell.seed}: no result"
             )
-        if r["valid"] is False:
-            result.violations.append(f"{label}: invalid STEP: {'; '.join(r['step_problems'])}")
-        base_key = record_key({**r, "converter": baseline})
-        base = by_key.get(base_key)
-        if base is None:
-            result.violations.append(f"{label}: no {baseline} result to compare against")
-        elif base["status"] == "ok" and r["f1"] <= base["f1"]:
-            result.violations.append(
-                f"{label}: F1 {r['f1']:.3f} does not beat {baseline} F1 {base['f1']:.3f}"
-            )
+        elif r["status"] != "ok":
+            result.violations.append(f"{_label(r)}: {r['status']}: {r.get('error')}")
+        elif cell.converter in gated:
+            result.violations += _cell_violations(r, spec.get("floors", {}))
+    for converter in gated:
+        for spec in grid.cells:
+            floor = spec.get("floors", {}).get("f1_row")
+            if floor is None:
+                continue
+            rows = [
+                r
+                for r in records
+                if r["converter"] == converter
+                and r["status"] == "ok"
+                and r["operator"] == spec["operator"]
+                and float(r["severity"]) == float(spec["severity"])
+            ]
+            matched = sum(r["matched"] for r in rows)
+            faces = sum(r["faces"] for r in rows)
+            regions = sum(r["regions"] for r in rows)
+            precision = matched / regions if regions else 0.0
+            recall = matched / faces if faces else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+            if f1 < floor:
+                result.violations.append(
+                    f"{converter} {spec['operator']}@{spec['severity']:g}: "
+                    f"row micro-F1 {f1:.4f} below floor {floor}"
+                )
     return result
+
+
+def _sha_of(records: list[dict[str, Any]]) -> str:
+    return records[-1]["git_sha"] if records else ""
