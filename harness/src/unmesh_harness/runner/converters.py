@@ -92,3 +92,15 @@ def get_converter(name: str) -> Converter:
         module, attr = name.split(":", 1)
         return getattr(importlib.import_module(module), attr)
     raise KeyError(f"unknown converter {name!r}; known: {sorted(CONVERTERS)} or module:function")
+
+
+def plugin_hash(name: str) -> str:
+    import hashlib
+    import importlib.util
+
+    if name in CONVERTERS or ":" not in name:
+        return ""
+    spec = importlib.util.find_spec(name.split(":", 1)[0])
+    if spec is None or not spec.origin or not Path(spec.origin).is_file():
+        return "unresolved"
+    return hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest()[:12]

@@ -79,26 +79,6 @@ def _score(
     record["fallback"] = write.get("fallback") is not None
     reported = _finite((report or {}).get("max_deviation"))
     mark = time.perf_counter()
-    skipped = bool(write.get("skipped")) and baseline
-    if skipped:
-        record["valid"] = None
-        record["step_problems"] = []
-    else:
-        problems = step_problems(
-            step_path,
-            task["entry"]["fingerprint"]["volume"],
-            tris if task["step_deviation"] else None,
-            None if reported is None else reported + STEP_TOLERANCE_MM,
-            task["samples_per_mm2"],
-        )
-        if write.get("skipped"):
-            problems.append("STEP write skipped by a non-baseline converter")
-        if write.get("valid") is False:
-            problems.append("writer reports invalid")
-        record["valid"] = not problems
-        record["step_problems"] = problems
-    phases["validity"] = time.perf_counter() - mark
-    mark = time.perf_counter()
     if ir_json is None:
         record["status"] = "error"
         record["error"] = "converter returned no IR"
@@ -131,6 +111,39 @@ def _score(
             }
         )
     phases["judge"] = time.perf_counter() - mark
+    mark = time.perf_counter()
+    skipped = bool(write.get("skipped")) and baseline
+    if skipped:
+        record["valid"] = None
+        record["step_problems"] = []
+    else:
+        bound = None
+        if not baseline and task["step_deviation"]:
+            bound = min(result.input.max, task["dev_input_floor"]) + STEP_TOLERANCE_MM
+        problems, step_faces = step_problems(
+            step_path,
+            task["entry"]["fingerprint"]["volume"],
+            tris if bound is not None else None,
+            bound,
+            task["samples_per_mm2"],
+        )
+        if write.get("skipped"):
+            problems.append("STEP write skipped by a non-baseline converter")
+        if write.get("valid") is False:
+            problems.append("writer reports invalid")
+        facets = [r for r in ir.regions if r.surface.type == "facets"]
+        if step_faces is not None:
+            if facets:
+                limit = len(ir.regions) - len(facets) + sum(len(r.triangles) for r in facets)
+                mismatch = step_faces > limit
+            else:
+                mismatch = step_faces != len(ir.regions)
+            if mismatch:
+                record["fallback"] = True
+                problems.append(f"STEP has {step_faces} faces for {len(ir.regions)} IR regions")
+        record["valid"] = not problems
+        record["step_problems"] = problems
+    phases["validity"] = time.perf_counter() - mark
     mark = time.perf_counter()
     record.update(face_recovery(clean, degraded.face_id, ir, frame))
     phases["f1"] = time.perf_counter() - mark

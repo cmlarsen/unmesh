@@ -39,6 +39,7 @@ def small_grid(parts=2, cells=("identity", "float32")):
         entries=grid.entries[:parts],
         cells=[c for c in grid.cells if c["operator"] in cells],
         seeds=[0],
+        step_deviation_sample=(1, 1),
     )
 
 
@@ -228,6 +229,7 @@ def row_records(grid, **changes):
             "converter": "unmesh",
             "git_sha": "s",
             "grid_hash": cell.grid_hash,
+            "plugin_hash": cell.plugin_hash,
             "status": "ok",
             "f1": 1.0,
             "faces": 10,

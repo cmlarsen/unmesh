@@ -10,7 +10,16 @@ import numpy as np
 
 from .grid import Cell
 
-KEY_FIELDS = ("part", "operator", "severity", "seed", "converter", "git_sha", "grid_hash")
+KEY_FIELDS = (
+    "part",
+    "operator",
+    "severity",
+    "seed",
+    "converter",
+    "git_sha",
+    "grid_hash",
+    "plugin_hash",
+)
 
 
 def record_key(record: dict[str, Any]) -> tuple:
@@ -36,6 +45,7 @@ def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, A
         "converter": cell.converter,
         "git_sha": cell.git_sha,
         "grid_hash": cell.grid_hash,
+        "plugin_hash": cell.plugin_hash,
         **result,
     }
     with path.open("a") as f:

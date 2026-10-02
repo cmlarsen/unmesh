@@ -24,6 +24,23 @@ class RunSummary:
     sha: str = ""
 
 
+def check_extension_fresh() -> None:
+    import unmesh._core as core
+
+    from .grid import repo_root
+
+    sources = list((repo_root() / "crates").rglob("*.rs")) + list(
+        (repo_root() / "crates").rglob("Cargo.toml")
+    )
+    built = Path(core.__file__).stat().st_mtime
+    stale = [p for p in sources if p.stat().st_mtime > built]
+    if stale:
+        raise RuntimeError(
+            f"the built extension is older than {stale[0]}; run `uv sync` (or `uv run`) to "
+            "rebuild it before scoring"
+        )
+
+
 def results_path(out: Path, grid: Grid) -> Path:
     return out / f"{grid.name}.jsonl"
 
@@ -38,6 +55,7 @@ def run_grid(
     log=print,
 ) -> RunSummary:
     started = time.perf_counter()
+    check_extension_fresh()
     sha = sha or git_sha()
     timeout = timeout or grid.timeout_s
     jobs = jobs or os.cpu_count() or 1
@@ -104,7 +122,8 @@ def run_grid(
             "steps": spec["steps"],
             "samples_per_mm2": grid.judge_samples_per_mm2,
             "judge_truth": bool(spec.get("judge_truth")),
-            "step_deviation": cell.seed in grid.step_deviation_seeds,
+            "step_deviation": grid.checks_step(cell),
+            "dev_input_floor": spec.get("floors", {}).get("dev_input_max", float("inf")),
             "seed": cell.seed,
             "converter": cell.converter,
         }

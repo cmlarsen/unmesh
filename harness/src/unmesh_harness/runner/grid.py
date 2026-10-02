@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from ..corpus import find_manifest, load_manifest, select
+from .converters import plugin_hash
 
-Key = tuple[str, str, float, int, str, str, str]
+Key = tuple[str, str, float, int, str, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class Cell:
     converter: str
     git_sha: str
     grid_hash: str
+    plugin_hash: str = ""
 
     @property
     def key(self) -> Key:
@@ -32,6 +34,7 @@ class Cell:
             self.converter,
             self.git_sha,
             self.grid_hash,
+            self.plugin_hash,
         )
 
 
@@ -46,7 +49,7 @@ class Grid:
     cells: list[dict[str, Any]]
     judge_samples_per_mm2: float
     grid_hash: str
-    step_deviation_seeds: list[int]
+    step_deviation_sample: tuple[int, int]
     entries: list[dict[str, Any]]
 
     @property
@@ -58,6 +61,11 @@ class Grid:
             if spec["operator"] == operator and float(spec["severity"]) == float(severity):
                 return spec
         raise KeyError((operator, severity))
+
+    def checks_step(self, cell: Cell) -> bool:
+        take, of = self.step_deviation_sample
+        label = f"{cell.part}|{cell.operator}|{cell.severity}|{cell.seed}|{cell.git_sha}"
+        return int(hashlib.sha256(label.encode()).hexdigest(), 16) % of < take
 
     def expand(self, converters: list[str], git_sha: str) -> list[tuple[Cell, dict[str, Any]]]:
         out = []
@@ -73,6 +81,7 @@ class Grid:
                             converter,
                             git_sha,
                             self.grid_hash,
+                            plugin_hash(converter),
                         )
                         out.append((cell, spec))
         return out
@@ -102,7 +111,7 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         raw["cells"],
         float(raw.get("judge_samples_per_mm2", 10.0)),
         hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:12],
-        [int(x) for x in raw.get("step_deviation_seeds", raw["seeds"])],
+        tuple(raw.get("step_deviation_sample", (1, 1))),
         entries,
     )
 
