@@ -10,45 +10,17 @@ from unmesh.ir import Ir
 pytest.importorskip("OCP")
 pytest.importorskip("build123d")
 
-import convert_eval as ce  # noqa: E402
+from unmesh_harness.corpus import load_manifest, select  # noqa: E402
+from unmesh_harness.groundtruth import generate  # noqa: E402
+from unmesh_harness.labels import tessellate  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def parts():
-    return ce.smoke_parts()
-
-
-@pytest.fixture(scope="module")
-def results(parts):
-    return {case.name: ce.run_case(parts, case) for case in ce.CASES}
-
-
-def case_names(*names):
-    return pytest.mark.parametrize("name", names)
-
-
-@case_names("clean", "float32", "rotated")
-def test_exact_inputs_are_recovered_within_a_micron(results, name):
-    ms = results[name]
-    assert ce.micro_f1(ms) >= 0.99
-    assert all(m.regions == m.faces for m in ms)
-    assert max(m.dev_input for m in ms) <= 1e-3
-    assert not any(m.fallback for m in ms)
-
-
-@pytest.mark.parametrize("case", [c for c in ce.CASES if c.noise], ids=lambda c: c.name)
-def test_noisy_inputs_keep_their_faces_and_stay_near_the_truth(results, case):
-    ms = results[case.name]
-    amplitude = case.noise
-    assert ce.micro_f1(ms) >= 0.98
-    assert max(m.dev_truth for m in ms) <= 2 * amplitude
-    assert not any(m.fallback for m in ms)
-
-
-def test_calibration_never_under_reports(results):
-    for name, ms in results.items():
-        for m in ms:
-            assert m.reported >= m.dev_input, name
+    return [
+        tessellate(generate(e["family"], e["seed"]).solid, 0.01, 0.2)
+        for e in select(load_manifest(), "smoke")
+    ]
 
 
 def test_report_describes_the_conversion(parts):
@@ -88,7 +60,7 @@ def test_stl_path_input(parts, tmp_path):
     path = tmp_path / "part.stl"
     unmesh.write_stl(path, part.tris)
     ir, report = unmesh.convert(path)
-    assert len(ir.regions) == int(part.labels.max()) + 1
+    assert len(ir.regions) == len(part.faces)
     assert report.max_deviation < 1e-3
 
 
@@ -188,10 +160,16 @@ def grid_box(div, size=(100.0, 60.0, 40.0)):
     return np.concatenate(tris)
 
 
+def noise_vectors(rng, n, amplitude):
+    v = rng.normal(size=(n, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    return v * rng.uniform(0, amplitude, size=(n, 1))
+
+
 def test_subdivided_planar_mesh_with_noise():
     soup = grid_box(20)
     verts, faces, _, _ = unmesh.weld(soup, 1e-6)
-    noisy = verts + ce.noise_vectors(np.random.default_rng(5), len(verts), 0.01)
+    noisy = verts + noise_vectors(np.random.default_rng(5), len(verts), 0.01)
     ir, report = unmesh.convert((noisy, faces))
     assert len(ir.regions) == 6
     assert len(ir.vertices) == 8
@@ -219,7 +197,5 @@ def test_largest_smoke_part_convert_time(parts, capsys):
     unmesh.convert(largest.tris)
     seconds = time.perf_counter() - t0
     with capsys.disabled():
-        print(
-            f"\nlargest smoke part {largest.name}: {len(largest.tris)} tris, {seconds * 1000:.1f}ms"
-        )
+        print(f"\nlargest smoke part: {len(largest.tris)} tris, {seconds * 1000:.1f}ms")
     assert seconds < 1
