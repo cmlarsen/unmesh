@@ -7,7 +7,10 @@ name = "unmesh-harness"
 version = "0.1.0"
 description = "Evaluation harness for unmesh."
 requires-python = ">=3.11"
-dependencies = ["unmesh"]
+dependencies = ["unmesh", "numpy>=1.26", "build123d>=0.10,<0.11", "cadquery-ocp>=7.8,<7.9", "ocp-gordon>=0.1.17,<0.2"]
+
+[project.scripts]
+unmesh-harness = "unmesh_harness.cli:main"
 
 [project.optional-dependencies]
 gpl = ["pymeshlab"]

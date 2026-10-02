@@ -1,0 +1,2629 @@
+{
+  "version": 0,
+  "grids": {
+    "smoke": "Fast PR gate, subset of standard.",
+    "standard": "Nightly corpus."
+  },
+  "entries": [
+    {
+      "id": "boss_plate-0000",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 32136.997886679,
+        "face_count": 26,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          14.058
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0000",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 32533.18310847,
+        "face_count": 8,
+        "bbox_min": [
+          -40.409,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          9.815,
+          72.915,
+          21.265
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0000",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 24418.632385053,
+        "face_count": 26,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0000",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5528.677094418,
+        "face_count": 11,
+        "bbox_min": [
+          -21.069,
+          -15.32,
+          0.0
+        ],
+        "bbox_max": [
+          24.395,
+          15.844,
+          5.331
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0000",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 26395.386392493,
+        "face_count": 26,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0000",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 24078.791525778,
+        "face_count": 11,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0000",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36636.475242121,
+        "face_count": 8,
+        "bbox_min": [
+          -39.109,
+          -15.3955,
+          0.0
+        ],
+        "bbox_max": [
+          39.109,
+          15.3955,
+          16.024
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0000",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 3519.95210142,
+        "face_count": 11,
+        "bbox_min": [
+          -30.0165,
+          -15.3955,
+          0.0
+        ],
+        "bbox_max": [
+          30.0165,
+          15.3955,
+          10.819
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0000",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 0,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 22514.520667772,
+        "face_count": 22,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0001",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 69306.517387752,
+        "face_count": 16,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          12.444
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0001",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36455.681220381,
+        "face_count": 8,
+        "bbox_min": [
+          -41.969,
+          0.0,
+          0.0
+        ],
+        "bbox_max": [
+          51.617,
+          77.186,
+          11.237
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0001",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50301.225666854,
+        "face_count": 21,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0001",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 52118.467663152,
+        "face_count": 8,
+        "bbox_min": [
+          -47.516,
+          -18.272,
+          0.0
+        ],
+        "bbox_max": [
+          48.218,
+          18.392,
+          23.973
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0001",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 59258.108785442,
+        "face_count": 21,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0001",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 52619.075016628,
+        "face_count": 23,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0001",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 51841.729166961,
+        "face_count": 12,
+        "bbox_min": [
+          -35.3545,
+          -29.0095,
+          0.0
+        ],
+        "bbox_max": [
+          35.3545,
+          29.0095,
+          18.604
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0001",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 4770.344570822,
+        "face_count": 15,
+        "bbox_min": [
+          -26.575,
+          -29.0095,
+          0.0
+        ],
+        "bbox_max": [
+          26.575,
+          29.0095,
+          12.883
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0001",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 1,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49828.022931528,
+        "face_count": 18,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0002",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 59329.902070794,
+        "face_count": 36,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          25.015
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0002",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 26251.11197282,
+        "face_count": 8,
+        "bbox_min": [
+          -38.185,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          21.953,
+          57.769,
+          17.002
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0002",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 44113.553157662,
+        "face_count": 36,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0002",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 14446.758975922,
+        "face_count": 11,
+        "bbox_min": [
+          -24.499,
+          -35.18,
+          0.0
+        ],
+        "bbox_max": [
+          25.1,
+          23.365,
+          6.838
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0002",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 46518.777653928,
+        "face_count": 36,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0002",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 46058.243897552,
+        "face_count": 14,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0002",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50449.18194627,
+        "face_count": 10,
+        "bbox_min": [
+          -27.8485,
+          -15.97,
+          0.0
+        ],
+        "bbox_max": [
+          27.8485,
+          15.97,
+          35.356
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0002",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 2597.08796795,
+        "face_count": 11,
+        "bbox_min": [
+          -19.6945,
+          -15.97,
+          0.0
+        ],
+        "bbox_max": [
+          19.6945,
+          15.97,
+          26.285
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0002",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 2,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 38671.699214613,
+        "face_count": 30,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0003",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 40410.933979652,
+        "face_count": 11,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          23.912
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0003",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 9125.747469248,
+        "face_count": 8,
+        "bbox_min": [
+          -24.83,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          34.423,
+          44.437,
+          6.883
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0003",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33036.254876977,
+        "face_count": 11,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0003",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 37496.712818576,
+        "face_count": 11,
+        "bbox_min": [
+          -22.684,
+          -30.501,
+          0.0
+        ],
+        "bbox_max": [
+          23.288,
+          34.605,
+          16.643
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0003",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 30447.712793822,
+        "face_count": 11,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0003",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33978.121670432,
+        "face_count": 24,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0003",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 25788.315600912,
+        "face_count": 12,
+        "bbox_min": [
+          -22.5695,
+          -14.736,
+          0.0
+        ],
+        "bbox_max": [
+          22.5695,
+          14.736,
+          35.032
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0003",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 2032.97783022,
+        "face_count": 15,
+        "bbox_min": [
+          -14.8555,
+          -14.736,
+          0.0
+        ],
+        "bbox_max": [
+          14.8555,
+          14.736,
+          26.025
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0003",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 3,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 27729.909478634,
+        "face_count": 10,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0004",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 152244.84672852,
+        "face_count": 11,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          23.063
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0004",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 54654.430405673,
+        "face_count": 8,
+        "bbox_min": [
+          -28.128,
+          0.0,
+          0.0
+        ],
+        "bbox_max": [
+          72.352,
+          73.421,
+          17.147
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0004",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 106416.989236272,
+        "face_count": 11,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0004",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 23895.223330206,
+        "face_count": 10,
+        "bbox_min": [
+          -32.338,
+          -38.236,
+          0.0
+        ],
+        "bbox_max": [
+          32.815,
+          38.765,
+          6.617
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0004",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 128635.921785948,
+        "face_count": 11,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0004",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 108509.419122977,
+        "face_count": 23,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0004",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 99120.130624288,
+        "face_count": 12,
+        "bbox_min": [
+          -48.2915,
+          -20.2265,
+          0.0
+        ],
+        "bbox_max": [
+          48.2915,
+          20.2265,
+          39.406
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0004",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 6645.657586312,
+        "face_count": 15,
+        "bbox_min": [
+          -38.434,
+          -20.2265,
+          0.0
+        ],
+        "bbox_max": [
+          38.434,
+          20.2265,
+          29.525
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0004",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 4,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 121772.038267204,
+        "face_count": 10,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0005",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 166048.456093595,
+        "face_count": 11,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          23.008
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0005",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 20216.431198902,
+        "face_count": 8,
+        "bbox_min": [
+          -35.3,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          66.134,
+          68.891,
+          6.079
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0005",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 100035.6264567,
+        "face_count": 11,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0005",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33611.47428807,
+        "face_count": 10,
+        "bbox_min": [
+          -43.278,
+          -26.267,
+          0.0
+        ],
+        "bbox_max": [
+          41.907,
+          27.833,
+          10.716
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0005",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 108425.051013456,
+        "face_count": 11,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0005",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 92670.392420307,
+        "face_count": 19,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0005",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 88217.40148466,
+        "face_count": 10,
+        "bbox_min": [
+          -44.15,
+          -26.159,
+          0.0
+        ],
+        "bbox_max": [
+          44.15,
+          26.159,
+          27.883
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0005",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 3892.685380626,
+        "face_count": 15,
+        "bbox_min": [
+          -34.6375,
+          -26.159,
+          0.0
+        ],
+        "bbox_max": [
+          34.6375,
+          26.159,
+          20.307
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0005",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 5,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 78649.27553526,
+        "face_count": 10,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0006",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 52355.975668439,
+        "face_count": 11,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          20.997
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0006",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 47337.275858763,
+        "face_count": 8,
+        "bbox_min": [
+          -36.654,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          36.492,
+          65.877,
+          24.749
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0006",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 42714.684706362,
+        "face_count": 16,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0006",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 19701.849295035,
+        "face_count": 8,
+        "bbox_min": [
+          -24.62,
+          -19.612,
+          0.0
+        ],
+        "bbox_max": [
+          25.79,
+          23.366,
+          12.49
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0006",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 45650.467842028,
+        "face_count": 16,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0006",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 45167.457597209,
+        "face_count": 20,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0006",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 51862.178902051,
+        "face_count": 10,
+        "bbox_min": [
+          -36.145,
+          -16.8655,
+          0.0
+        ],
+        "bbox_max": [
+          36.145,
+          16.8655,
+          24.227
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0006",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 4593.017239489,
+        "face_count": 11,
+        "bbox_min": [
+          -27.2995,
+          -16.8655,
+          0.0
+        ],
+        "bbox_max": [
+          27.2995,
+          16.8655,
+          17.381
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0006",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 6,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 35031.935610373,
+        "face_count": 14,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0007",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 150203.324489406,
+        "face_count": 16,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          22.421
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0007",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36391.590315603,
+        "face_count": 8,
+        "bbox_min": [
+          -64.594,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          14.06,
+          76.78,
+          11.003
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0007",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 120357.40614752,
+        "face_count": 16,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0007",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 42796.516224528,
+        "face_count": 12,
+        "bbox_min": [
+          -45.026,
+          -33.76,
+          0.0
+        ],
+        "bbox_max": [
+          46.277,
+          34.362,
+          9.504
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0007",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 112635.699356095,
+        "face_count": 16,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0007",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 123627.715740429,
+        "face_count": 25,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0007",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 96407.762729929,
+        "face_count": 12,
+        "bbox_min": [
+          -38.753,
+          -27.9445,
+          0.0
+        ],
+        "bbox_max": [
+          38.753,
+          27.9445,
+          34.392
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0007",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 4786.74232468,
+        "face_count": 11,
+        "bbox_min": [
+          -29.69,
+          -27.9445,
+          0.0
+        ],
+        "bbox_max": [
+          29.69,
+          27.9445,
+          25.514
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0007",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 7,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 90834.18950664,
+        "face_count": 14,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0008",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 74629.538765925,
+        "face_count": 11,
+        "bbox_min": [
+          -33.079,
+          -49.5545,
+          0.0
+        ],
+        "bbox_max": [
+          33.079,
+          49.5545,
+          14.013
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0008",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 63138.982098699,
+        "face_count": 8,
+        "bbox_min": [
+          -40.055,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          46.046,
+          74.213,
+          22.398
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0008",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 59914.471308116,
+        "face_count": 11,
+        "bbox_min": [
+          -33.079,
+          -49.5545,
+          0.0
+        ],
+        "bbox_max": [
+          33.079,
+          49.5545,
+          10.462
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0008",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 51455.594470218,
+        "face_count": 10,
+        "bbox_min": [
+          -49.492,
+          -22.314,
+          0.0
+        ],
+        "bbox_max": [
+          47.76,
+          20.635,
+          20.771
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0008",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 61389.885350309,
+        "face_count": 11,
+        "bbox_min": [
+          -33.079,
+          -49.5545,
+          0.0
+        ],
+        "bbox_max": [
+          33.079,
+          49.5545,
+          10.462
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0008",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 60345.778046136,
+        "face_count": 19,
+        "bbox_min": [
+          -33.079,
+          -49.5545,
+          0.0
+        ],
+        "bbox_max": [
+          33.079,
+          49.5545,
+          10.462
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0008",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 63247.35454596,
+        "face_count": 10,
+        "bbox_min": [
+          -29.809,
+          -29.7455,
+          0.0
+        ],
+        "bbox_max": [
+          29.809,
+          29.7455,
+          22.968
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0008",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 6323.856173346,
+        "face_count": 15,
+        "bbox_min": [
+          -21.4915,
+          -29.7455,
+          0.0
+        ],
+        "bbox_max": [
+          21.4915,
+          29.7455,
+          16.374
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0008",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 8,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 52136.692722428,
+        "face_count": 10,
+        "bbox_min": [
+          -33.079,
+          -49.5545,
+          0.0
+        ],
+        "bbox_max": [
+          33.079,
+          49.5545,
+          10.462
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0009",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 82637.538023343,
+        "face_count": 16,
+        "bbox_min": [
+          -54.81,
+          -25.0385,
+          0.0
+        ],
+        "bbox_max": [
+          54.81,
+          25.0385,
+          24.346
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0009",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50706.290200103,
+        "face_count": 8,
+        "bbox_min": [
+          -41.107,
+          -0.0,
+          0.0
+        ],
+        "bbox_max": [
+          11.068,
+          85.419,
+          19.321
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0009",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 64498.8916075,
+        "face_count": 36,
+        "bbox_min": [
+          -54.81,
+          -25.0385,
+          0.0
+        ],
+        "bbox_max": [
+          54.81,
+          25.0385,
+          14.444
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0009",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 37513.517396347,
+        "face_count": 8,
+        "bbox_min": [
+          -24.794,
+          -28.995,
+          0.0
+        ],
+        "bbox_max": [
+          22.183,
+          21.91,
+          20.551
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0009",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 68143.235731028,
+        "face_count": 36,
+        "bbox_min": [
+          -54.81,
+          -25.0385,
+          0.0
+        ],
+        "bbox_max": [
+          54.81,
+          25.0385,
+          14.444
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0009",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 76070.019121264,
+        "face_count": 19,
+        "bbox_min": [
+          -54.81,
+          -25.0385,
+          0.0
+        ],
+        "bbox_max": [
+          54.81,
+          25.0385,
+          14.444
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0009",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 79134.766821162,
+        "face_count": 12,
+        "bbox_min": [
+          -46.1075,
+          -15.7365,
+          0.0
+        ],
+        "bbox_max": [
+          46.1075,
+          15.7365,
+          30.079
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0009",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5772.964507498,
+        "face_count": 11,
+        "bbox_min": [
+          -36.432,
+          -15.7365,
+          0.0
+        ],
+        "bbox_max": [
+          36.432,
+          15.7365,
+          22.063
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0009",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 9,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 57573.169971116,
+        "face_count": 30,
+        "bbox_min": [
+          -54.81,
+          -25.0385,
+          0.0
+        ],
+        "bbox_max": [
+          54.81,
+          25.0385,
+          14.444
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0010",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 114274.98571944,
+        "face_count": 11,
+        "bbox_min": [
+          -58.24,
+          -22.269,
+          0.0
+        ],
+        "bbox_max": [
+          58.24,
+          22.269,
+          25.624
+        ]
+      }
+    },
+    {
+      "id": "lshape_outline-0010",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36133.055342852,
+        "face_count": 8,
+        "bbox_min": [
+          -8.117,
+          0.0,
+          0.0
+        ],
+        "bbox_max": [
+          85.806,
+          43.851,
+          15.256
+        ]
+      }
+    },
+    {
+      "id": "plate_pockets-0010",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 56423.335723632,
+        "face_count": 11,
+        "bbox_min": [
+          -58.24,
+          -22.269,
+          0.0
+        ],
+        "bbox_max": [
+          58.24,
+          22.269,
+          17.598
+        ]
+      }
+    },
+    {
+      "id": "polygon_prism-0010",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 17029.373815938,
+        "face_count": 11,
+        "bbox_min": [
+          -22.216,
+          -34.564,
+          0.0
+        ],
+        "bbox_max": [
+          21.411,
+          35.12,
+          7.986
+        ]
+      }
+    },
+    {
+      "id": "rotated_pockets-0010",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 87868.63606203,
+        "face_count": 11,
+        "bbox_min": [
+          -58.24,
+          -22.269,
+          0.0
+        ],
+        "bbox_max": [
+          58.24,
+          22.269,
+          17.598
+        ]
+      }
+    },
+    {
+      "id": "square_slots-0010",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 67255.883713751,
+        "face_count": 19,
+        "bbox_min": [
+          -58.24,
+          -22.269,
+          0.0
+        ],
+        "bbox_max": [
+          58.24,
+          22.269,
+          17.598
+        ]
+      }
+    },
+    {
+      "id": "stepped_block-0010",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 67685.650982997,
+        "face_count": 10,
+        "bbox_min": [
+          -48.68,
+          -14.1535,
+          0.0
+        ],
+        "bbox_max": [
+          48.68,
+          14.1535,
+          35.711
+        ]
+      }
+    },
+    {
+      "id": "thin_walls-0010",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5205.25110274,
+        "face_count": 15,
+        "bbox_min": [
+          -38.79,
+          -14.1535,
+          0.0
+        ],
+        "bbox_max": [
+          38.79,
+          14.1535,
+          26.569
+        ]
+      }
+    },
+    {
+      "id": "through_cuts-0010",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 10,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48963.386692038,
+        "face_count": 10,
+        "bbox_min": [
+          -58.24,
+          -22.269,
+          0.0
+        ],
+        "bbox_max": [
+          58.24,
+          22.269,
+          17.598
+        ]
+      }
+    },
+    {
+      "id": "boss_plate-0011",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 11,
+      "strata": {
+        "category": "planar"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 53118.769699426,
+        "face_count": 26,
+        "bbox_min": [
+          -25.143,
+          -32.4745,
+          0.0
+        ],
+        "bbox_max": [
+          25.143,
+          32.4745,
+          24.268
+        ]
+      }
+    }
+  ]
+}
