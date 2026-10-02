@@ -33,6 +33,7 @@ scripts/check.sh
 - `corpus/v0.json`: the corpus manifest. `uv run unmesh-harness corpus build [--grid smoke|standard] [--out DIR]`
   writes STEP + metadata JSON to `$UNMESH_CACHE_DIR/corpus` or `~/.cache/unmesh/corpus` (never committed).
   The full `standard` validity test runs with `uv run pytest harness/tests --slow`.
+- `harness/src/unmesh_harness/labels.py`: `tessellate(shape, lin, ang)` gives a `LabeledMesh` (per-triangle face id, analytic face table, edge adjacency); deflection settings in `DEFLECTION_SETTINGS`.
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions
