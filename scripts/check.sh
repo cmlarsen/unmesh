@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export UV_LOCKED=1
+
 cd "$(dirname "$0")/.."
 
 cargo fmt --check

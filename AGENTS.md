@@ -12,7 +12,7 @@ scripts/check.sh
 
 `uv sync` builds the `unmesh` wheel with maturin (needs a Rust toolchain) and installs the
 `unmesh-harness` workspace member. `.cargo/config.toml` points PyO3 at `.venv/bin/python`, so run
-`uv sync` before any `cargo` command.
+`uv sync` before any `cargo` command, including `cargo test -p unmesh-core` (the workspace builds `unmesh-py` too). Setting `UV_PROJECT_ENVIRONMENT` to relocate the venv breaks that path.
 
 ## Gates
 
@@ -21,7 +21,7 @@ scripts/check.sh
 - Rust: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 - Python: `uv run ruff check`, `uv run ruff format --check`, `uv run pytest`.
 
-After editing Rust code that Python imports, run `uv sync` again to rebuild the extension.
+`uv run` rebuilds the extension itself when Rust sources change (via `cache-keys`).
 
 ## Layout
 
