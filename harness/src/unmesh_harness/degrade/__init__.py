@@ -1,4 +1,4 @@
-from . import noise, pose, precision
+from . import noise, pose, precision, refine
 from .core import (
     OPERATORS,
     Operator,
@@ -17,6 +17,7 @@ __all__ = [
     "noise",
     "pose",
     "precision",
+    "refine",
     "register",
     "to_original",
     "to_original_points",

@@ -23,6 +23,7 @@ class Operator:
     preserves_watertight: bool
     changes_frame: bool = False
     may_collapse: bool = False
+    binary: bool = False
 
 
 OPERATORS: dict[str, Operator] = {}
@@ -36,6 +37,7 @@ def register(
     preserves_watertight: bool = True,
     changes_frame: bool = False,
     may_collapse: bool = False,
+    binary: bool = False,
 ):
     def wrap(fn: OperatorFn) -> OperatorFn:
         if name in OPERATORS:
@@ -49,6 +51,7 @@ def register(
             preserves_watertight,
             changes_frame,
             may_collapse,
+            binary,
         )
         return fn
 
@@ -60,6 +63,13 @@ def apply(name: str, mesh: LabeledMesh, severity: float, seed: int) -> LabeledMe
         raise ValueError(f"severity must be in [0, 1], got {severity}")
     op = OPERATORS[name]
     out = copy.deepcopy(mesh)
+    out.metadata.setdefault(
+        "truth",
+        {
+            "vertices": copy.deepcopy(out.vertices),
+            "edge_points": [copy.deepcopy(a.points) for a in out.adjacency],
+        },
+    )
     params: Params = {}
     if severity > 0.0:
         params = op.fn(out, float(severity), np.random.default_rng(seed)) or {}
@@ -108,7 +118,6 @@ def map_faces(
     mesh: LabeledMesh,
     point_fn: Callable[[np.ndarray], np.ndarray],
     direction_fn: Callable[[np.ndarray], np.ndarray],
-    length_scale: float = 1.0,
 ) -> None:
     for face in mesh.faces:
         prm = face.params
@@ -118,9 +127,6 @@ def map_faces(
         for key in _DIRECTION_KEYS:
             if key in prm:
                 prm[key] = direction_fn(np.array([prm[key]], dtype=np.float64))[0].tolist()
-        for key in ("radius", "major_radius", "minor_radius"):
-            if key in prm:
-                prm[key] = prm[key] * length_scale
 
 
 def vertex_table(mesh: LabeledMesh) -> tuple[np.ndarray, np.ndarray]:
@@ -128,7 +134,9 @@ def vertex_table(mesh: LabeledMesh) -> tuple[np.ndarray, np.ndarray]:
     return uniq, inverse.reshape(-1)
 
 
-def displace_vertices(mesh: LabeledMesh, uniq: np.ndarray, inverse: np.ndarray, disp: np.ndarray):
+def displace_vertices(
+    mesh: LabeledMesh, uniq: np.ndarray, inverse: np.ndarray, disp: np.ndarray
+) -> float:
     moved = uniq + disp
     mesh.tris = moved[inverse].reshape(mesh.tris.shape)
     lookup = {tuple(p): i for i, p in enumerate(uniq.tolist())}
@@ -140,3 +148,4 @@ def displace_vertices(mesh: LabeledMesh, uniq: np.ndarray, inverse: np.ndarray, 
         mesh.vertices = remap(mesh.vertices)
     for adj in mesh.adjacency:
         adj.points = remap(adj.points)
+    return float(np.linalg.norm(disp, axis=1).max()) if len(disp) else 0.0

@@ -11,10 +11,11 @@ from ..corpus import load_manifest, select
 from ..groundtruth import generate
 from ..labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from ..oracle import build_oracle_ir
-from .core import OPERATORS, apply, to_original_points
+from .core import OPERATORS, apply, to_original, to_original_points
 
 SEVERITIES = (0.0, 0.5, 1.0)
 SEED = 20260101
+REFINE_FOR_SHEET = 0.3
 
 
 def _closed(mesh: LabeledMesh) -> bool:
@@ -45,19 +46,35 @@ def smoke_meshes() -> list[LabeledMesh]:
     ]
 
 
-def stats(meshes: list[LabeledMesh], name: str, severity: float) -> dict[str, float | bool]:
-    sq, peak, closed, valid = [], 0.0, True, True
+Chain = tuple[tuple[str, float | None], ...]
+
+
+def curved_meshes() -> list[LabeledMesh]:
+    from build123d import Box, fillet
+
+    return [tessellate(fillet(Box(20, 20, 20).edges(), 3), 0.05, 0.3)]
+
+
+def run_chain(mesh: LabeledMesh, chain: Chain, severity: float) -> LabeledMesh:
+    for name, fixed in chain:
+        mesh = apply(name, mesh, severity if fixed is None else fixed, SEED)
+    return mesh
+
+
+def stats(meshes: list[LabeledMesh], chain: Chain, severity: float) -> dict[str, float | bool]:
+    sq, peak, closed, valid, grown = [], 0.0, True, True, []
     for mesh in meshes:
-        out = apply(name, mesh, severity, SEED)
+        out = run_chain(mesh, chain, severity)
         back = to_original_points(out, out.tris.reshape(-1, 3)).reshape(-1, 3, 3)
-        if (
-            OPERATORS[name].changes_frame
-            and np.linalg.det(np.array(out.metadata.get("to_original", np.eye(4).tolist()))[:3, :3])
-            < 0
-            and severity > 0
-        ):
+        if np.linalg.det(to_original(out)[:3, :3]) < 0:
             back = back[:, [0, 2, 1]]
-        d = np.linalg.norm(back - mesh.tris, axis=2).ravel()
+        refined = len(out.tris) != len(mesh.tris)
+        if refined:
+            base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
+            d = np.linalg.norm(back - base.tris, axis=2).ravel()
+        else:
+            d = np.linalg.norm(back - mesh.tris, axis=2).ravel()
+        grown.append(len(out.tris) / len(mesh.tris))
         sq.append(d**2)
         peak = max(peak, float(d.max()))
         closed &= _closed(out)
@@ -67,11 +84,13 @@ def stats(meshes: list[LabeledMesh], name: str, severity: float) -> dict[str, fl
         "max_um": 1000.0 * peak,
         "closed": closed,
         "ir_valid": valid,
+        "tris_ratio": float(np.mean(grown)),
     }
 
 
 def render(meshes: list[LabeledMesh] | None = None) -> str:
     meshes = meshes or smoke_meshes()
+    curved = curved_meshes()
     lines = [
         "# Degradation operators",
         "",
@@ -99,6 +118,17 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "a reflection reverses the sense in which a face boundary is traversed.",
         "- Precision and noise operators leave the face table at the true analytic surfaces: "
         "that is the ground truth the mesh is supposed to recover.",
+        "- Truth edges and vertices: `adjacency[*].points` and `vertices` move with the mesh so "
+        "the oracle IR of a degraded mesh stays self-consistent. The clean positions are kept "
+        'unchanged in `metadata["truth"]` (`vertices`, `edge_points`, captured from the '
+        "mesh as first passed to `apply`, in that mesh's frame) and no operator touches them; "
+        "`to_original` maps degraded coordinates into that frame.",
+        "- `refine` (tessellation family) bisects every edge longer than the target, with one "
+        "midpoint per edge shared by both sides, so the mesh stays conforming and watertight. "
+        "Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the "
+        "incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines "
+        "gain the new boundary nodes. Planar faces have no interior vertices straight out of "
+        "OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.",
         "- The random stream is `numpy.random.default_rng(seed)`; vertices are visited in "
         "`np.unique` order, so output is bit-identical across processes.",
         "",
@@ -111,29 +141,49 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         lines.append(f"| `{op.name}` | {op.family} | {op.severity_0} | {op.severity_1} |")
     lines += [
         "",
-        "Noise amplitude is `severity * 50 um` (Gaussian standard deviation), stored as "
-        "`sigma_mm_*` in the history params. `truncated_digits` uses `round(9 - 6 * severity)` "
+        "Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws "
+        "uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along "
+        "their direction. Every noise history entry records `amplitude_mm`, `distribution` and "
+        "the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` "
         "significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. "
         "Both can collapse short edges at high severity and so document that they do not "
         "guarantee watertightness there.",
         "",
         "## Displacement sheet",
         "",
-        f"{len(meshes)} smoke-corpus parts, deflection {DEFLECTION_SETTINGS[0]}, seed {SEED}. "
-        "Displacement is measured in the original frame, per triangle corner. `closed` is a "
-        "closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded "
-        "mesh passing `validate`.",
+        f"Seed {SEED}. Displacement is measured in the original frame, per triangle corner, "
+        "against the undegraded mesh (against the refined mesh for chains that start with "
+        "`refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). "
+        "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
+        "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
+        "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (5 mm) and sweeps the "
+        "noise severity.",
         "",
-        "| operator | severity | rms (um) | max (um) | closed | IR valid |",
-        "|---|---|---|---|---|---|",
+        "| parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    for name in OPERATORS:
-        for severity in SEVERITIES:
-            s = stats(meshes, name, severity)
-            lines.append(
-                f"| `{name}` | {severity} | {s['rms_um']:.3f} | {s['max_um']:.3f} | "
-                f"{'yes' if s['closed'] else 'no'} | {'yes' if s['ir_valid'] else 'no'} |"
-            )
+    sets = [
+        (f"smoke ({len(meshes)})", meshes, DEFLECTION_SETTINGS[0]),
+        ("filleted box", curved, (0.05, 0.3)),
+    ]
+    for label, group, _ in sets:
+        for name, op in OPERATORS.items():
+            rows: list[tuple[str, Chain]] = [(f"`{name}`", ((name, None),))]
+            if name == "noise_off_plane":
+                rows = [
+                    ("`refine -> noise_off_plane`", (("refine", REFINE_FOR_SHEET), (name, None)))
+                ]
+            for row_label, chain in rows:
+                for severity in (0.0, 1.0) if op.binary else SEVERITIES:
+                    s = stats(group, chain, severity)
+                    ratio = s["tris_ratio"]
+                    only_refine = name == "refine"
+                    rms = "-" if only_refine else f"{s['rms_um']:.3f}"
+                    peak = "-" if only_refine else f"{s['max_um']:.3f}"
+                    lines.append(
+                        f"| {label} | {row_label} | {severity} | {rms} | {peak} | {ratio:.1f} | "
+                        f"{'yes' if s['closed'] else 'no'} | {'yes' if s['ir_valid'] else 'no'} |"
+                    )
     return "\n".join(lines) + "\n"
 
 

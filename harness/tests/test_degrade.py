@@ -1,3 +1,4 @@
+import copy
 import json
 import subprocess
 import sys
@@ -11,7 +12,12 @@ from unmesh_harness import degrade
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.degrade import OPERATORS, to_original_points
 from unmesh_harness.groundtruth import generate
-from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
+from unmesh_harness.labels import (
+    DEFLECTION_SETTINGS,
+    LabeledMesh,
+    distance_to_surface,
+    tessellate,
+)
 from unmesh_harness.oracle import build_oracle_ir
 
 from .test_labels import closed_manifold_problems
@@ -21,6 +27,25 @@ LIN, ANG = DEFLECTION_SETTINGS[0]
 POSE = [n for n, o in OPERATORS.items() if o.changes_frame]
 NOISE = [n for n, o in OPERATORS.items() if o.family == "noise"]
 ALL = sorted(OPERATORS)
+REFINE_SEVERITY = 0.3
+
+
+def prepared(name, mesh):
+    if name == "noise_off_plane":
+        return degrade.apply("refine", mesh, REFINE_SEVERITY, 0)
+    return mesh
+
+
+def levels_for(name, levels):
+    return tuple(min(x, 0.5) for x in levels) if name == "refine" else levels
+
+
+def assert_on_surface(mesh, tol=1e-9):
+    for face in mesh.faces:
+        if face.surface == "other":
+            continue
+        pts = mesh.tris[mesh.face_id == face.id].reshape(-1, 3)
+        assert distance_to_surface(face, pts).max() < tol, (face.id, face.surface)
 
 
 def smoke_meshes():
@@ -60,8 +85,13 @@ def geometry_equal(a: LabeledMesh, b: LabeledMesh) -> bool:
 
 
 def labels_aligned(before: LabeledMesh, after: LabeledMesh) -> None:
-    assert after.tris.shape == before.tris.shape
-    assert np.array_equal(after.face_id, before.face_id)
+    if after.metadata["history"][-1]["op"] == "refine":
+        assert set(after.face_id.tolist()) == set(before.face_id.tolist())
+        assert len(after.tris) >= len(before.tris)
+        assert len(after.face_id) == len(after.tris)
+    else:
+        assert after.tris.shape == before.tris.shape
+        assert np.array_equal(after.face_id, before.face_id)
     assert [f.id for f in after.faces] == [f.id for f in before.faces]
     assert [f.surface for f in after.faces] == [f.surface for f in before.faces]
     assert [(a.face_a, a.face_b, a.edge_id) for a in after.adjacency] == [
@@ -99,17 +129,20 @@ def test_severity_zero_is_identity(name, smoke):
 @pytest.mark.parametrize("name", ALL)
 def test_inputs_are_not_mutated(name, smoke):
     _, mesh = smoke[0]
+    mesh = prepared(name, mesh)
     snapshot = mesh.tris.copy()
-    degrade.apply(name, mesh, 1.0, 1)
+    before = copy.deepcopy(mesh.metadata)
+    degrade.apply(name, mesh, 0.5 if name == "refine" else 1.0, 1)
     assert np.array_equal(mesh.tris, snapshot)
-    assert mesh.metadata == {}
+    assert mesh.metadata == before
 
 
 @pytest.mark.parametrize("severity", [0.25, 0.5, 1.0])
 @pytest.mark.parametrize("name", ALL)
 def test_labels_aligned_and_polylines_coincide(name, severity, smoke, curved):
     for _, mesh in smoke + curved:
-        out = degrade.apply(name, mesh, severity, 3)
+        mesh = prepared(name, mesh)
+        out = degrade.apply(name, mesh, levels_for(name, (severity,))[0], 3)
         labels_aligned(mesh, out)
         polylines_on_mesh(out)
         assert out.metadata["history"][-1]["params"]
@@ -120,8 +153,9 @@ def test_watertight_preserved(name, smoke, curved):
     op = OPERATORS[name]
     if not op.preserves_watertight:
         pytest.skip("operator documents that it does not preserve watertightness")
-    levels = (0.25, 0.5) if op.may_collapse else (0.5, 1.0)
+    levels = levels_for(name, (0.25, 0.5) if op.may_collapse else (0.5, 1.0))
     for _, mesh in smoke + curved:
+        mesh = prepared(name, mesh)
         assert closed_manifold_problems(mesh.tris)[0] == []
         for severity in levels:
             out = degrade.apply(name, mesh, severity, 5)
@@ -131,6 +165,7 @@ def test_watertight_preserved(name, smoke, curved):
 @pytest.mark.parametrize("name", ALL)
 def test_deterministic_in_process(name, smoke):
     _, mesh = smoke[3]
+    mesh = prepared(name, mesh)
     a = degrade.apply(name, mesh, 0.7, 11)
     b = degrade.apply(name, mesh, 0.7, 11)
     assert geometry_equal(a, b)
@@ -140,8 +175,9 @@ def test_deterministic_in_process(name, smoke):
 def test_seed_changes_random_operators(smoke):
     _, mesh = smoke[3]
     for name in ("rotation", "mirror", "noise_isotropic", "noise_normal", "noise_off_plane"):
-        a = degrade.apply(name, mesh, 0.7, 1)
-        b = degrade.apply(name, mesh, 0.7, 2)
+        base = prepared(name, mesh)
+        a = degrade.apply(name, base, 0.7, 1)
+        b = degrade.apply(name, base, 0.7, 2)
         assert not np.array_equal(a.tris, b.tris), name
 
 
@@ -156,7 +192,8 @@ def test_deterministic_across_processes(smoke, tmp_path):
         "m = LabeledMesh.load(sys.argv[1])\n"
         "h = hashlib.sha256()\n"
         "for n in sorted(degrade.OPERATORS):\n"
-        "    o = degrade.apply(n, m, 0.6, 99)\n"
+        "    b = degrade.apply('refine', m, 0.3, 0) if n == 'noise_off_plane' else m\n"
+        "    o = degrade.apply(n, b, 0.6, 99)\n"
         "    h.update(o.tris.tobytes())\n"
         "    h.update(repr(o.metadata).encode())\n"
         "print(h.hexdigest())\n"
@@ -171,7 +208,7 @@ def test_deterministic_across_processes(smoke, tmp_path):
     local = __import__("hashlib").sha256()
     loaded = LabeledMesh.load(src)
     for n in sorted(OPERATORS):
-        o = degrade.apply(n, loaded, 0.6, 99)
+        o = degrade.apply(n, prepared(n, loaded), 0.6, 99)
         local.update(o.tris.tobytes())
         local.update(repr(o.metadata).encode())
     assert digests == {local.hexdigest() + "\n"}
@@ -198,6 +235,7 @@ def test_pose_round_trip_recovers_coordinates(name, smoke, curved):
 def test_pose_oracle_ir_validates(name, severity, smoke, curved):
     for _, mesh in smoke + curved:
         out = degrade.apply(name, mesh, severity, 8)
+        assert_on_surface(out)
         ir = build_oracle_ir(out)
         assert validate(ir) == []
         check_normals_and_left_hand_rule(out, ir)
@@ -274,33 +312,35 @@ def test_far_translation_error_matches_ulp(smoke):
 @pytest.mark.parametrize("name", NOISE)
 def test_noise_moves_shared_vertices_once(name, smoke, curved):
     for _, mesh in smoke + curved:
+        mesh = prepared(name, mesh)
         out = degrade.apply(name, mesh, 1.0, 13)
         before = mesh.tris.reshape(-1, 3)
         after = out.tris.reshape(-1, 3)
         mapping: dict[tuple, tuple] = {}
         for b, a in zip(before.tolist(), after.tolist(), strict=True):
             assert mapping.setdefault(tuple(b), tuple(a)) == tuple(a)
-        assert not np.array_equal(before, after) or name == "noise_off_plane"
+        assert not np.array_equal(before, after)
 
 
 @pytest.mark.parametrize("name", NOISE)
-def test_noise_amplitude_is_explicit_and_scales(name, smoke):
+def test_noise_amplitude_is_a_hard_bound(name, smoke):
     _, mesh = smoke[8]
-    sigmas = []
-    rms = []
+    mesh = prepared(name, mesh)
     for severity in (0.25, 1.0):
         out = degrade.apply(name, mesh, severity, 2)
-        (value,) = [v for k, v in out.metadata["history"][-1]["params"].items() if "sigma" in k]
-        sigmas.append(value)
-        rms.append(np.sqrt(((out.tris - mesh.tris) ** 2).sum(-1).mean()))
-    assert sigmas == [pytest.approx(0.0125), pytest.approx(0.05)]
-    assert rms[1] > rms[0]
-    assert rms[1] < 10 * sigmas[1]
+        params = out.metadata["history"][-1]["params"]
+        assert params["amplitude_mm"] == pytest.approx(0.05 * severity)
+        assert params["distribution"].startswith("uniform")
+        measured = np.linalg.norm(out.tris - mesh.tris, axis=2).max()
+        assert measured <= params["amplitude_mm"] + 1e-12
+        assert measured == pytest.approx(params["max_displacement_mm"], rel=1e-12)
+        assert measured > 0.5 * params["amplitude_mm"]
 
 
 @pytest.mark.parametrize("name", NOISE)
 def test_noise_face_table_stays_consistent(name, smoke, curved):
     for _, mesh in smoke + curved:
+        mesh = prepared(name, mesh)
         out = degrade.apply(name, mesh, 1.0, 17)
         assert [f.__dict__ for f in out.faces] == [f.__dict__ for f in mesh.faces]
         ir = build_oracle_ir(out)
@@ -308,40 +348,45 @@ def test_noise_face_table_stays_consistent(name, smoke, curved):
         assert len(ir.regions) == len(mesh.faces)
 
 
-def test_off_plane_moves_along_mean_plane_normal(smoke):
-    for _, mesh in smoke:
-        out = degrade.apply("noise_off_plane", mesh, 1.0, 6)
-        normals = np.array([f.params["normal"] for f in mesh.faces])[mesh.face_id]
-        sums: dict[tuple, np.ndarray] = {}
-        for tri, n in zip(mesh.tris, normals, strict=True):
-            for v in tri.tolist():
-                sums[tuple(v)] = sums.get(tuple(v), 0) + n
-        moved = 0
-        for before, after in zip(mesh.tris.reshape(-1, 3), out.tris.reshape(-1, 3), strict=True):
-            delta = after - before
-            direction = sums[tuple(before.tolist())]
-            if np.linalg.norm(delta) > 0:
-                moved += 1
-                assert np.linalg.norm(np.cross(delta, direction)) < 1e-12 * max(
-                    1.0, np.linalg.norm(direction)
-                )
-        assert moved
-
-
-def test_off_plane_leaves_curved_faces_untouched(curved):
+def test_off_plane_requires_interior_vertices(curved):
     for _, mesh in curved:
-        out = degrade.apply("noise_off_plane", mesh, 1.0, 6)
-        curved_ids = [f.id for f in mesh.faces if f.surface != "plane"]
-        mask = np.isin(mesh.face_id, curved_ids)
-        assert np.array_equal(out.tris[mask], mesh.tris[mask])
+        with pytest.raises(ValueError, match="refine"):
+            degrade.apply("noise_off_plane", mesh, 1.0, 0)
+    box = tessellate(Box(10, 10, 10), 0.1, 0.5)
+    with pytest.raises(ValueError, match="refine"):
+        degrade.apply("noise_off_plane", box, 1.0, 0)
+    degrade.apply("noise_off_plane", box, 0.0, 0)
+
+
+def test_off_plane_moves_interior_vertices_along_face_normal(smoke, curved):
+    for _, mesh in smoke + curved:
+        refined = degrade.apply("refine", mesh, REFINE_SEVERITY, 0)
+        out = degrade.apply("noise_off_plane", refined, 1.0, 6)
+        params = out.metadata["history"][-1]["params"]
+        assert 0 < params["moved_fraction"] < 1
+        assert params["moved_vertices"] > 0
+        normals = np.array(
+            [f.params["normal"] if f.surface == "plane" else [0, 0, 0] for f in refined.faces]
+        )[refined.face_id]
+        delta = out.tris - refined.tris
+        moved = np.linalg.norm(delta, axis=2) > 0
+        assert moved.any()
+        for corner in range(3):
+            d = delta[:, corner]
+            sel = moved[:, corner]
+            assert np.abs(np.cross(d[sel], normals[sel])).max() < 1e-12
+        curved_ids = [f.id for f in refined.faces if f.surface != "plane"]
+        for fid in curved_ids:
+            assert np.array_equal(
+                out.tris[refined.face_id == fid], refined.tris[refined.face_id == fid]
+            )
 
 
 def test_normal_noise_displaces_along_normal(curved):
     _, mesh = curved[0]
     out = degrade.apply("noise_normal", mesh, 1.0, 9)
     delta = (out.tris - mesh.tris).reshape(-1, 3)
-    assert np.abs(delta).max() > 0
-    assert np.abs(delta).max() < 0.5
+    assert 0 < np.abs(delta).max() <= 0.05
 
 
 def test_metadata_survives_save_load(smoke, tmp_path):
@@ -358,3 +403,59 @@ def test_severity_out_of_range_rejected(smoke):
     for bad in (-0.1, 1.1):
         with pytest.raises(ValueError):
             degrade.apply("float32", mesh, bad, 0)
+
+
+@pytest.mark.parametrize("name", ["rotation", "mirror", "refine"])
+def test_face_table_matches_geometry(name, smoke, curved):
+    for _, mesh in smoke + curved:
+        out = degrade.apply(name, mesh, levels_for(name, (1.0,))[0], 31)
+        assert_on_surface(out)
+
+
+def test_refine_midpoints_land_on_the_surface_and_edges(curved):
+    for _, mesh in curved:
+        out = degrade.apply("refine", mesh, 0.6, 0)
+        params = out.metadata["history"][-1]["params"]
+        assert params["triangles_after"] > len(mesh.tris)
+        assert_on_surface(out)
+        longest = max(
+            np.linalg.norm(out.tris[:, i] - out.tris[:, (i + 1) % 3], axis=1).max()
+            for i in range(3)
+        )
+        assert longest <= params["target_max_edge_mm"] + 1e-12
+        by_edge = {a.edge_id: a for a in mesh.adjacency}
+        for adj in out.adjacency:
+            assert len(adj.points) >= len(by_edge[adj.edge_id].points)
+            pts = np.array(adj.points)
+            for face in (mesh.faces[adj.face_a], mesh.faces[adj.face_b]):
+                assert distance_to_surface(face, pts).max() < 1e-9
+
+
+def test_refine_polylines_keep_original_nodes_in_order(curved):
+    _, mesh = curved[0]
+    out = degrade.apply("refine", mesh, 0.6, 0)
+    for before, after in zip(mesh.adjacency, out.adjacency, strict=True):
+        it = iter(map(tuple, after.points))
+        assert all(tuple(p) in it for p in before.points)
+
+
+def test_truth_positions_survive_every_operator(smoke):
+    _, mesh = smoke[2]
+    steps = [
+        ("refine", 0.3),
+        ("rotation", 0.8),
+        ("mirror", 1.0),
+        ("noise_isotropic", 1.0),
+        ("far_translation", 0.5),
+        ("noise_off_plane", 1.0),
+    ]
+    out = degrade.apply_chain(mesh, steps, 4)
+    truth = out.metadata["truth"]
+    assert np.array_equal(np.array(truth["vertices"]), np.array(mesh.vertices))
+    assert truth["edge_points"] == [a.points for a in mesh.adjacency]
+    moved = to_original_points(out, np.array(out.vertices))
+    assert 0 < np.abs(moved - np.array(mesh.vertices)).max() < 0.2
+
+
+def test_binary_operators_flagged():
+    assert {n for n, o in OPERATORS.items() if o.binary} == {"float32", "mirror"}

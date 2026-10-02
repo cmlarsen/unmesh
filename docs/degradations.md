@@ -9,54 +9,86 @@ Rules every operator follows:
 - Coordinates are transformed point-wise (or per distinct vertex for noise), so a vertex shared by several triangles, a vertex-table entry and an edge-polyline node that coincide before still coincide after, and a watertight mesh stays watertight.
 - Pose operators also transform the analytic parameters in the face table. Mirroring reflects origins, apexes, centres, normals and axes with the same matrix, keeps each face's `reversed` flag (the outward normal is a function of axis and position only), swaps triangle corners 1 and 2, and toggles `forward_in_a` on every adjacency because a reflection reverses the sense in which a face boundary is traversed.
 - Precision and noise operators leave the face table at the true analytic surfaces: that is the ground truth the mesh is supposed to recover.
+- Truth edges and vertices: `adjacency[*].points` and `vertices` move with the mesh so the oracle IR of a degraded mesh stays self-consistent. The clean positions are kept unchanged in `metadata["truth"]` (`vertices`, `edge_points`, captured from the mesh as first passed to `apply`, in that mesh's frame) and no operator touches them; `to_original` maps degraded coordinates into that frame.
+- `refine` (tessellation family) bisects every edge longer than the target, with one midpoint per edge shared by both sides, so the mesh stays conforming and watertight. Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines gain the new boundary nodes. Planar faces have no interior vertices straight out of OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.
 - The random stream is `numpy.random.default_rng(seed)`; vertices are visited in `np.unique` order, so output is bit-identical across processes.
 
 ## Severity scale
 
 | operator | family | severity 0 | severity 1 |
 |---|---|---|---|
-| `noise_isotropic` | noise | identity | every distinct vertex moved by an independent Gaussian vector, 50 um per axis |
-| `noise_normal` | noise | identity | every distinct vertex moved along its area-weighted vertex normal by a Gaussian, 50 um sigma |
-| `noise_off_plane` | noise | identity | vertices whose every incident triangle lies on a planar face moved off-plane along the mean plane normal by a Gaussian, 50 um sigma; vertices touching a curved face stay put |
+| `noise_isotropic` | noise | identity | every distinct vertex moved by an independent vector drawn uniformly from a ball of radius A = severity * 50 um (50 um at severity 1) |
+| `noise_normal` | noise | identity | every distinct vertex moved along its area-weighted vertex normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um |
+| `noise_off_plane` | noise | identity | vertices interior to a single planar face (every incident triangle on that face) moved along its normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um; refine first, since planar faces have no interior vertices otherwise |
 | `rotation` | pose | identity | rotation by 180 degrees about a random unit axis (angle = severity * 180 degrees) |
 | `mirror` | pose | identity | reflection through a random plane through the bounding-box centre (the severity only switches the operator on); triangles re-wound so normals stay outward |
 | `float32` | precision | identity | every coordinate rounded to the nearest float32 (the severity only switches the operator on) |
 | `truncated_digits` | precision | identity | coordinates written with 3 significant digits (9 digits at severity 0+, 6 at 0.5) |
 | `inch_round_trip` | precision | identity | mm converted to inches, written with 3 decimals (25 um grid), converted back (7 decimals at severity 0+, 5 at 0.5) |
 | `far_translation` | precision | identity | part translated up to 1e6 mm (1 km) along a random direction, rounded to float32 there (ulp 62 um), translated back exactly |
+| `refine` | tessellation | identity | edges bisected until none exceeds 1 mm (10 mm at severity 0+, 3.2 mm at 0.5); midpoints on curved faces are projected onto the analytic surface |
 
-Noise amplitude is `severity * 50 um` (Gaussian standard deviation), stored as `sigma_mm_*` in the history params. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
+Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along their direction. Every noise history entry records `amplitude_mm`, `distribution` and the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
 
 ## Displacement sheet
 
-20 smoke-corpus parts, deflection (0.1, 0.5), seed 20260101. Displacement is measured in the original frame, per triangle corner. `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`.
+Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (5 mm) and sweeps the noise severity.
 
-| operator | severity | rms (um) | max (um) | closed | IR valid |
-|---|---|---|---|---|---|
-| `noise_isotropic` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `noise_isotropic` | 0.5 | 40.956 | 70.751 | yes | yes |
-| `noise_isotropic` | 1.0 | 81.912 | 141.502 | yes | yes |
-| `noise_normal` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `noise_normal` | 0.5 | 25.826 | 69.729 | yes | yes |
-| `noise_normal` | 1.0 | 51.652 | 139.459 | yes | yes |
-| `noise_off_plane` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `noise_off_plane` | 0.5 | 25.826 | 69.729 | yes | yes |
-| `noise_off_plane` | 1.0 | 51.652 | 139.459 | yes | yes |
-| `rotation` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `rotation` | 0.5 | 0.000 | 0.000 | yes | yes |
-| `rotation` | 1.0 | 0.000 | 0.000 | yes | yes |
-| `mirror` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `mirror` | 0.5 | 0.000 | 0.000 | yes | yes |
-| `mirror` | 1.0 | 0.000 | 0.000 | yes | yes |
-| `float32` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `float32` | 0.5 | 0.001 | 0.004 | yes | yes |
-| `float32` | 1.0 | 0.001 | 0.004 | yes | yes |
-| `truncated_digits` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `truncated_digits` | 0.5 | 0.020 | 0.067 | yes | yes |
-| `truncated_digits` | 1.0 | 38.868 | 69.304 | yes | yes |
-| `inch_round_trip` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `inch_round_trip` | 0.5 | 0.119 | 0.194 | yes | yes |
-| `inch_round_trip` | 1.0 | 12.033 | 20.862 | yes | yes |
-| `far_translation` | 0.0 | 0.000 | 0.000 | yes | yes |
-| `far_translation` | 0.5 | 13.207 | 21.747 | yes | yes |
-| `far_translation` | 1.0 | 26.027 | 43.385 | yes | yes |
+| parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
+|---|---|---|---|---|---|---|---|
+| smoke (20) | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `noise_isotropic` | 0.5 | 19.422 | 24.941 | 1.0 | yes | yes |
+| smoke (20) | `noise_isotropic` | 1.0 | 38.844 | 49.882 | 1.0 | yes | yes |
+| smoke (20) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `noise_normal` | 0.5 | 13.317 | 24.874 | 1.0 | yes | yes |
+| smoke (20) | `noise_normal` | 1.0 | 26.634 | 49.748 | 1.0 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 111.3 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 0.5 | 13.429 | 25.000 | 111.3 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 1.0 | 26.858 | 49.999 | 111.3 | yes | yes |
+| smoke (20) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `float32` | 1.0 | 0.001 | 0.004 | 1.0 | yes | yes |
+| smoke (20) | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `truncated_digits` | 0.5 | 0.020 | 0.067 | 1.0 | yes | yes |
+| smoke (20) | `truncated_digits` | 1.0 | 38.868 | 69.304 | 1.0 | yes | yes |
+| smoke (20) | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `inch_round_trip` | 0.5 | 0.119 | 0.194 | 1.0 | yes | yes |
+| smoke (20) | `inch_round_trip` | 1.0 | 12.033 | 20.862 | 1.0 | yes | yes |
+| smoke (20) | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (20) | `far_translation` | 0.5 | 13.207 | 21.747 | 1.0 | yes | yes |
+| smoke (20) | `far_translation` | 1.0 | 26.027 | 43.385 | 1.0 | yes | yes |
+| smoke (20) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (20) | `refine` | 0.5 | - | - | 269.6 | yes | yes |
+| smoke (20) | `refine` | 1.0 | - | - | 2506.5 | yes | yes |
+| filleted box | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `noise_isotropic` | 0.5 | 19.298 | 24.981 | 1.0 | yes | yes |
+| filleted box | `noise_isotropic` | 1.0 | 38.596 | 49.962 | 1.0 | yes | yes |
+| filleted box | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `noise_normal` | 0.5 | 14.338 | 24.874 | 1.0 | yes | yes |
+| filleted box | `noise_normal` | 1.0 | 28.676 | 49.748 | 1.0 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 2.7 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 0.5 | 2.508 | 24.982 | 2.7 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 1.0 | 5.015 | 49.963 | 2.7 | yes | yes |
+| filleted box | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `float32` | 1.0 | 0.000 | 0.001 | 1.0 | yes | yes |
+| filleted box | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `truncated_digits` | 0.5 | 0.004 | 0.007 | 1.0 | yes | yes |
+| filleted box | `truncated_digits` | 1.0 | 4.778 | 7.646 | 1.0 | yes | yes |
+| filleted box | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `inch_round_trip` | 0.5 | 0.108 | 0.172 | 1.0 | yes | yes |
+| filleted box | `inch_round_trip` | 1.0 | 13.636 | 19.273 | 1.0 | yes | yes |
+| filleted box | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `far_translation` | 0.5 | 14.641 | 21.493 | 1.0 | yes | yes |
+| filleted box | `far_translation` | 1.0 | 27.426 | 42.182 | 1.0 | yes | yes |
+| filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `refine` | 0.5 | - | - | 6.5 | yes | yes |
+| filleted box | `refine` | 1.0 | - | - | 20.7 | yes | yes |

@@ -9,7 +9,7 @@ FAR_TRANSLATION_MM = 1.0e6
 
 
 def significant_digits(severity: float) -> int:
-    return int(round(9 - 6 * severity))
+    return int(np.floor(9 - 6 * severity + 0.5))
 
 
 def round_significant(x: np.ndarray, digits: int) -> np.ndarray:
@@ -22,7 +22,7 @@ def round_significant(x: np.ndarray, digits: int) -> np.ndarray:
 
 
 def inch_decimals(severity: float) -> int:
-    return int(round(7 - 4 * severity))
+    return int(np.floor(7 - 4 * severity + 0.5))
 
 
 @register(
@@ -30,6 +30,7 @@ def inch_decimals(severity: float) -> int:
     "precision",
     "identity",
     "every coordinate rounded to the nearest float32 (the severity only switches the operator on)",
+    binary=True,
 )
 def float32(mesh, severity, rng):
     map_points(mesh, lambda p: p.astype(np.float32).astype(np.float64))

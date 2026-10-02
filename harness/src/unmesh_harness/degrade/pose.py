@@ -47,6 +47,7 @@ def rotation(mesh, severity, rng):
     "reflection through a random plane through the bounding-box centre (the severity only "
     "switches the operator on); triangles re-wound so normals stay outward",
     changes_frame=True,
+    binary=True,
 )
 def mirror(mesh, severity, rng):
     normal = rng.standard_normal(3)
