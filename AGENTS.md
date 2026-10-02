@@ -30,6 +30,9 @@ scripts/check.sh
 - `python/unmesh`: the public Python package (depends on numpy only).
 - `harness/`: the separate `unmesh-harness` package. GPL tools may appear only here, as optional
   dependencies.
+- `corpus/v0.json`: the corpus manifest. `uv run unmesh-harness corpus build [--grid smoke|standard] [--out DIR]`
+  writes STEP + metadata JSON to `$UNMESH_CACHE_DIR/corpus` or `~/.cache/unmesh/corpus` (never committed).
+  The full `standard` validity test runs with `uv run pytest harness/tests --slow`.
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions

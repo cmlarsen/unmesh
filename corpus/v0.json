@@ -1,0 +1,1229 @@
+{
+  "version": 0,
+  "grids": {
+    "smoke": "Fast PR gate, subset of standard.",
+    "standard": "Nightly corpus."
+  },
+  "entries": [
+    {
+      "id": "boss_plate-0000",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0000",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0000",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0000",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0000",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0000",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0000",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0000",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0000",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 0,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0001",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0001",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0001",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0001",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0001",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0001",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0001",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0001",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0001",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 1,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0002",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0002",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0002",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0002",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0002",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0002",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0002",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0002",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0002",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 2,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0003",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0003",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0003",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0003",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0003",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0003",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0003",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0003",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0003",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 3,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0004",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0004",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0004",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0004",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0004",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0004",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0004",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0004",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0004",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 4,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0005",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0005",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0005",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0005",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0005",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0005",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0005",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0005",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0005",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 5,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0006",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0006",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0006",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0006",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0006",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0006",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0006",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0006",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0006",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 6,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0007",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0007",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0007",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0007",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0007",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0007",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0007",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0007",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0007",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 7,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0008",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0008",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0008",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0008",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0008",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0008",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0008",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0008",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0008",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 8,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0009",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0009",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0009",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0009",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0009",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0009",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0009",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0009",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0009",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 9,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0010",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "lshape_outline-0010",
+      "tier": "generated",
+      "family": "lshape_outline",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "plate_pockets-0010",
+      "tier": "generated",
+      "family": "plate_pockets",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "polygon_prism-0010",
+      "tier": "generated",
+      "family": "polygon_prism",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "rotated_pockets-0010",
+      "tier": "generated",
+      "family": "rotated_pockets",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "square_slots-0010",
+      "tier": "generated",
+      "family": "square_slots",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "stepped_block-0010",
+      "tier": "generated",
+      "family": "stepped_block",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "thin_walls-0010",
+      "tier": "generated",
+      "family": "thin_walls",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "through_cuts-0010",
+      "tier": "generated",
+      "family": "through_cuts",
+      "seed": 10,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    },
+    {
+      "id": "boss_plate-0011",
+      "tier": "generated",
+      "family": "boss_plate",
+      "seed": 11,
+      "strata": {
+        "complexity": "planar"
+      },
+      "grids": [
+        "standard"
+      ]
+    }
+  ]
+}
