@@ -6,5 +6,7 @@ license.workspace = true
 
 [dependencies]
 rustc-hash = "2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 
 [dev-dependencies]
