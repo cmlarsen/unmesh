@@ -13,6 +13,7 @@ pub use crate::mesh::Point;
 pub struct Ir {
     pub ir_version: u32,
     pub tolerances: Tolerances,
+    pub source: Source,
     pub shells: Vec<Shell>,
     pub regions: Vec<Region>,
     pub adjacencies: Vec<Adjacency>,
@@ -39,10 +40,26 @@ impl Default for Tolerances {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Source {
+    pub triangle_count: u32,
+    pub vertex_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellRole {
+    Outer,
+    Cavity,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Shell {
     pub closed: bool,
+    pub role: ShellRole,
+    pub parent: Option<u32>,
     pub regions: Vec<u32>,
 }
 
@@ -137,10 +154,18 @@ pub struct Boundary {
     pub points: Vec<Point>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VertexRole {
+    Junction,
+    KindChange,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Vertex {
     pub id: u32,
+    pub role: VertexRole,
     pub position: Point,
     pub regions: Vec<u32>,
     pub source_positions: Vec<Point>,
@@ -422,6 +447,27 @@ pub fn validate(ir: &Ir) -> Vec<String> {
                 e.push(format!("region {r} is in more than one shell"));
             }
         }
+        match shell.role {
+            ShellRole::Outer => {
+                if shell.parent.is_some() {
+                    e.push(format!("outer shell {si} must have a null parent"));
+                }
+            }
+            ShellRole::Cavity => {
+                let parent_ok = shell
+                    .parent
+                    .and_then(|p| ir.shells.get(p as usize))
+                    .is_some_and(|p| p.role == ShellRole::Outer);
+                if !parent_ok {
+                    e.push(format!(
+                        "cavity shell {si} must have an outer shell as parent"
+                    ));
+                }
+                if !shell.closed {
+                    e.push(format!("cavity shell {si} must be closed"));
+                }
+            }
+        }
         if !shell.closed {
             let single_facets = shell.regions.len() == 1
                 && ir
@@ -441,6 +487,11 @@ pub fn validate(ir: &Ir) -> Vec<String> {
             e.push(format!("region {i} is in no shell"));
         }
         for t in &region.triangles {
+            if *t >= ir.source.triangle_count {
+                e.push(format!(
+                    "region {i}: source triangle {t} is outside the input mesh"
+                ));
+            }
             if !seen_triangles.insert(*t) {
                 e.push(format!(
                     "source triangle {t} appears in more than one place"
@@ -506,6 +557,8 @@ pub fn validate(ir: &Ir) -> Vec<String> {
     }
     let mut pairs = BTreeSet::new();
     let mut ends: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    let mut end_kinds: BTreeMap<u32, Vec<Kind>> = BTreeMap::new();
+    let mut balance: BTreeMap<(u32, u32), i32> = BTreeMap::new();
     let n_vertices = ir.vertices.len() as u32;
     for adj in &ir.adjacencies {
         let [a, b] = adj.regions;
@@ -567,8 +620,13 @@ pub fn validate(ir: &Ir) -> Vec<String> {
                             ));
                         }
                         ends.entry(v).or_default().extend([a, b]);
+                        end_kinds.entry(v).or_default().push(bd.kind);
                     }
                 }
+            }
+            for (r, tail, head) in [(a, s, t), (b, t, s)] {
+                *balance.entry((r, tail)).or_default() += 1;
+                *balance.entry((r, head)).or_default() -= 1;
             }
         }
     }
@@ -577,9 +635,22 @@ pub fn validate(ir: &Ir) -> Vec<String> {
             e.push(format!("vertex at index {i} has id {}", v.id));
         }
         let sorted = v.regions.windows(2).all(|w| w[0] < w[1]);
-        if v.regions.len() < 3 || !sorted || v.regions.iter().any(|r| *r >= n_regions) {
+        let min_regions = if v.role == VertexRole::KindChange {
+            2
+        } else {
+            3
+        };
+        if v.role == VertexRole::KindChange {
+            let kinds = end_kinds.get(&v.id).map(Vec::as_slice).unwrap_or(&[]);
+            if v.regions.len() != 2 || kinds.len() != 2 || kinds[0] == kinds[1] {
+                e.push(format!(
+                    "vertex {i}: a kind_change vertex joins one tangent and one transversal boundary"
+                ));
+            }
+        }
+        if v.regions.len() < min_regions || !sorted || v.regions.iter().any(|r| *r >= n_regions) {
             e.push(format!(
-                "vertex {i}: regions must be sorted, distinct, >= 3"
+                "vertex {i}: regions must be sorted, distinct, and at least 3 for a junction"
             ));
         }
         if v.source_positions.is_empty() {
@@ -589,6 +660,13 @@ pub fn validate(ir: &Ir) -> Vec<String> {
         if ends.get(&v.id) != Some(&expect) {
             e.push(format!(
                 "vertex {i}: regions differ from those whose boundaries end here"
+            ));
+        }
+    }
+    for ((r, v), n) in &balance {
+        if *n != 0 {
+            e.push(format!(
+                "region {r}: boundaries do not run head to tail at vertex {v}"
             ));
         }
     }
@@ -653,8 +731,14 @@ mod tests {
         Ir {
             ir_version: IR_VERSION,
             tolerances: Tolerances::default(),
+            source: Source {
+                triangle_count: 1,
+                vertex_count: 3,
+            },
             shells: vec![Shell {
                 closed: false,
+                role: ShellRole::Outer,
+                parent: None,
                 regions: vec![0],
             }],
             regions: vec![Region {
@@ -692,6 +776,44 @@ mod tests {
         let mut ir = tiny();
         ir.regions[0].residual = Some(Residual { rms: 0.0, max: 0.0 });
         assert!(ir.validate().is_err());
+    }
+
+    fn fixture(name: &str) -> Ir {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/ir")
+            .join(format!("{name}.json"));
+        Ir::from_json(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn reversed_open_boundary_breaks_head_to_tail() {
+        let mut ir = fixture("box");
+        let bd = &mut ir.adjacencies[0].boundaries[0];
+        bd.points.reverse();
+        std::mem::swap(&mut bd.start_vertex, &mut bd.end_vertex);
+        assert!(ir.validate().is_err());
+    }
+
+    #[test]
+    fn kind_change_and_cavity_rules() {
+        let ir = fixture("kind_change");
+        assert_eq!(
+            ir.vertices
+                .iter()
+                .filter(|v| v.role == VertexRole::KindChange)
+                .count(),
+            2
+        );
+        let mut bad = ir.clone();
+        bad.vertices[0].role = VertexRole::Junction;
+        assert!(bad.validate().is_err());
+        let mut cav = fixture("cavity");
+        assert_eq!(cav.shells[1].role, ShellRole::Cavity);
+        cav.shells[1].parent = None;
+        assert!(cav.validate().is_err());
+        let mut far = fixture("box");
+        far.source.triangle_count = 3;
+        assert!(far.validate().is_err());
     }
 
     #[test]

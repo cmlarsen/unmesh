@@ -22,7 +22,7 @@ impl Default for ConvertOptions {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Warning {
+pub struct ConvertWarning {
     pub code: String,
     pub message: String,
 }
@@ -33,7 +33,7 @@ pub struct Report {
     pub rms_deviation: f64,
     pub analytic_area_fraction: f64,
     pub region_counts: std::collections::BTreeMap<String, u32>,
-    pub warnings: Vec<Warning>,
+    pub warnings: Vec<ConvertWarning>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

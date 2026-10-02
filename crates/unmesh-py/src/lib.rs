@@ -1,4 +1,4 @@
-use numpy::{IntoPyArray, PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -78,6 +78,7 @@ fn write_stl(py: Python<'_>, path: std::path::PathBuf, tris: &Bound<'_, PyAny>) 
 type WeldOutput<'py> = (
     Bound<'py, PyArray2<f64>>,
     Bound<'py, PyArray2<u32>>,
+    Bound<'py, PyArray1<u32>>,
     Bound<'py, PyDict>,
 );
 
@@ -88,12 +89,12 @@ fn weld<'py>(
     tolerance: f64,
 ) -> PyResult<WeldOutput<'py>> {
     let soup = soup_from_array(py, tris)?;
-    let (verts, faces, report) = py.detach(|| {
-        let (mesh, report) = unmesh_core::weld(&soup, tolerance)
+    let (verts, faces, source, report) = py.detach(|| {
+        let (mesh, source, report) = unmesh_core::weld(&soup, tolerance)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let verts: Vec<f64> = mesh.vertices.iter().flatten().copied().collect();
         let faces: Vec<u32> = mesh.faces.iter().flatten().copied().collect();
-        Ok::<_, PyErr>((verts, faces, report))
+        Ok::<_, PyErr>((verts, faces, source, report))
     })?;
     let nv = verts.len() / 3;
     let nf = faces.len() / 3;
@@ -104,6 +105,7 @@ fn weld<'py>(
     Ok((
         verts.into_pyarray(py).reshape([nv, 3])?,
         faces.into_pyarray(py).reshape([nf, 3])?,
+        source.into_pyarray(py),
         dict,
     ))
 }

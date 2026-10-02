@@ -20,7 +20,7 @@ class ConvertOptions:
 
 
 @dataclass(frozen=True)
-class Warning:
+class ConvertWarning:
     code: str
     message: str
 
@@ -31,7 +31,7 @@ class Report:
     rms_deviation: float
     analytic_area_fraction: float
     region_counts: dict[str, int] = field(default_factory=dict)
-    warnings: list[Warning] = field(default_factory=list)
+    warnings: list[ConvertWarning] = field(default_factory=list)
 
 
 class Result(NamedTuple):

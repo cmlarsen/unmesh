@@ -30,7 +30,10 @@ impl fmt::Display for WeldError {
 
 impl std::error::Error for WeldError {}
 
-pub fn weld(soup: &TriangleSoup, tolerance: f64) -> Result<(IndexedMesh, WeldReport), WeldError> {
+pub fn weld(
+    soup: &TriangleSoup,
+    tolerance: f64,
+) -> Result<(IndexedMesh, Vec<u32>, WeldReport), WeldError> {
     if !tolerance.is_finite() || tolerance < 0.0 {
         return Err(WeldError::InvalidTolerance);
     }
@@ -45,16 +48,18 @@ pub fn weld(soup: &TriangleSoup, tolerance: f64) -> Result<(IndexedMesh, WeldRep
     }
     let mut vertices: Vec<Point> = Vec::new();
     let mut faces = Vec::with_capacity(soup.len());
+    let mut source = Vec::with_capacity(soup.len());
     let mut degenerate_dropped = 0;
     let mut index = SpatialIndex::new(tolerance);
 
-    for tri in &soup.triangles {
+    for (i, tri) in soup.triangles.iter().enumerate() {
         let ids = tri.map(|p| index.find_or_insert(p, &mut vertices));
         if ids[0] == ids[1] || ids[1] == ids[2] || ids[0] == ids[2] {
             degenerate_dropped += 1;
             continue;
         }
         faces.push(ids);
+        source.push(i as u32);
     }
 
     let report = WeldReport {
@@ -62,7 +67,7 @@ pub fn weld(soup: &TriangleSoup, tolerance: f64) -> Result<(IndexedMesh, WeldRep
         unique_vertices: vertices.len(),
         degenerate_dropped,
     };
-    Ok((IndexedMesh { vertices, faces }, report))
+    Ok((IndexedMesh { vertices, faces }, source, report))
 }
 
 struct SpatialIndex {
@@ -143,7 +148,8 @@ mod tests {
 
     #[test]
     fn exact_weld_shares_identical_corners() {
-        let (mesh, report) = weld(&quad(0.0), 0.0).unwrap();
+        let (mesh, source, report) = weld(&quad(0.0), 0.0).unwrap();
+        assert_eq!(source, [0, 1]);
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(report.input_corners, 6);
         assert_eq!(mesh.faces.len(), 2);
@@ -151,13 +157,13 @@ mod tests {
 
     #[test]
     fn exact_weld_keeps_a_gap_open() {
-        let (mesh, _) = weld(&quad(1e-9), 0.0).unwrap();
+        let (mesh, _, _) = weld(&quad(1e-9), 0.0).unwrap();
         assert_eq!(mesh.vertices.len(), 5);
     }
 
     #[test]
     fn tolerant_weld_closes_a_gap_across_cell_boundaries() {
-        let (mesh, _) = weld(&quad(1e-9), 1e-6).unwrap();
+        let (mesh, _, _) = weld(&quad(1e-9), 1e-6).unwrap();
         assert_eq!(mesh.vertices.len(), 4);
     }
 
@@ -166,8 +172,9 @@ mod tests {
         let soup = TriangleSoup {
             triangles: vec![[[0.0, 0.0, 0.0], [1e-9, 0.0, 0.0], [0.0, 1.0, 0.0]]],
         };
-        let (mesh, report) = weld(&soup, 1e-6).unwrap();
+        let (mesh, source, report) = weld(&soup, 1e-6).unwrap();
         assert!(mesh.faces.is_empty());
+        assert!(source.is_empty());
         assert_eq!(report.degenerate_dropped, 1);
     }
 
@@ -183,5 +190,19 @@ mod tests {
             triangles: vec![[[1e20, 0.0, 0.0], [-1e20, 0.0, 0.0], [0.0, 1e20, 0.0]]],
         };
         assert!(weld(&soup, 1e-6).is_ok());
+    }
+
+    #[test]
+    fn source_map_skips_dropped_triangles() {
+        let soup = TriangleSoup {
+            triangles: vec![
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                [[0.0, 0.0, 0.0], [1e-9, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+            ],
+        };
+        let (mesh, source, _) = weld(&soup, 1e-6).unwrap();
+        assert_eq!(mesh.faces.len(), 2);
+        assert_eq!(source, [0, 2]);
     }
 }

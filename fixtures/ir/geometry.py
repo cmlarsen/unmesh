@@ -24,13 +24,44 @@ def _radial(p, origin, axis):
     return q, h, r, float(np.linalg.norm(r))
 
 
+def _closest_on_triangle(p, a, b, c):
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = ab @ ap, ac @ ap
+    if d1 <= 0 and d2 <= 0:
+        return a
+    bp = p - b
+    d3, d4 = ab @ bp, ac @ bp
+    if d3 >= 0 and d4 <= d3:
+        return b
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        return a + ab * (d1 / (d1 - d3))
+    cp = p - c
+    d5, d6 = ab @ cp, ac @ cp
+    if d6 >= 0 and d5 <= d6:
+        return c
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        return a + ac * (d2 / (d2 - d6))
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return b + (c - b) * w
+    denom = 1.0 / (va + vb + vc)
+    return a + ab * (vb * denom) + ac * (vc * denom)
+
+
 def _facets_normal(surface: Facets, p) -> np.ndarray:
+    p = np.asarray(p, dtype=float)
     v = np.asarray(surface.vertices, dtype=float)
-    f = np.asarray(surface.faces)
-    tri = v[f]
-    centroids = tri.mean(axis=1)
-    k = int(np.argmin(np.linalg.norm(centroids - np.asarray(p, dtype=float), axis=1)))
-    return _unit(np.cross(tri[k][1] - tri[k][0], tri[k][2] - tri[k][0]))
+    best, best_d = None, math.inf
+    for f in surface.faces:
+        a, b, c = v[list(f)]
+        d = float(np.linalg.norm(_closest_on_triangle(p, a, b, c) - p))
+        if d < best_d - 1e-12:
+            best, best_d = (a, b, c), d
+    a, b, c = best
+    return _unit(np.cross(b - a, c - a))
 
 
 def normal(surface: Surface, p) -> np.ndarray:

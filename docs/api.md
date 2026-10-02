@@ -48,7 +48,7 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `rms_deviation` | RMS of the same. |
 | `analytic_area_fraction` | Share of mesh area in analytic (non-`facets`) regions. A report only, not a quality measure. |
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
-| `warnings` | List of `Warning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
+| `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
@@ -86,6 +86,12 @@ The IR as dataclasses: `Ir`, `Region`, `Plane`, `Cylinder`, `Cone`, `Sphere`, `T
 write [canonical JSON](ir.md#canonical-json); `ir.validate()` raises `IrError` listing every
 structural problem; `unmesh.ir.validate(ir)` returns the list instead. `Ir.loads` validates.
 
+### `unmesh.weld(tris, tolerance)`
+
+Returns `(vertices, faces, source_triangles, report)`: the welded arrays, a `uint32` array giving the input
+triangle index of each welded face, and the report dict (`input_corners`, `unique_vertices`,
+`degenerate_dropped`).
+
 ## Rust: `unmesh-core`
 
 No kernel dependency, no Python.
@@ -103,12 +109,14 @@ Public surface:
 
 - `mesh`: `Point`, `TriangleSoup`, `IndexedMesh`.
 - `stl`: `read_stl`, `write_stl_binary`, `StlError`.
-- `weld`: `weld`, `WeldReport`.
+- `weld`: `weld(&TriangleSoup, tolerance) -> (IndexedMesh, Vec<u32>, WeldReport)`, `WeldReport`, `WeldError`. The
+  `Vec<u32>` maps each welded face to its index in the input soup; degenerate triangles are dropped, so
+  welded face `i` is input triangle `map[i]`. IR source triangle ids are input indices.
 - `ir`: the IR types (`Ir`, `Tolerances`, `Shell`, `Region`, `Residual`, `Surface`, `Orientation`,
   `Adjacency`, `Boundary`, `Kind`, `Vertex`), `IR_VERSION`, `validate`, `canonicalize`, `format_f64`,
   `IrError`. All types are `serde` `Serialize`/`Deserialize`; JSON field names equal the Rust names.
 - `api` (re-exported at the crate root): `convert(&IndexedMesh, &ConvertOptions) -> Result<ConvertOutput,
-  ConvertError>`, `ConvertOptions`, `Report`, `Warning`, `ConvertOutput`, `ConvertError`.
+  ConvertError>`, `ConvertOptions`, `Report`, `ConvertWarning`, `ConvertOutput`, `ConvertError`.
 
 The `ir_canon` example (`cargo run -p unmesh-core --example ir_canon < ir.json`) prints the canonical
 form of an IR read from stdin; the cross-language tests use it.

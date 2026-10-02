@@ -30,10 +30,11 @@ radians; angles named `*_deg` are degrees.
 {
   "ir_version": 0,
   "tolerances": { "linear": 0.001, "angular_snap_deg": 0.5, "tangent_threshold_deg": 3.0, "vertex_merge": 1e-06 },
-  "shells":      [ { "closed": true, "regions": [0, 1, 2] } ],
+  "source":      { "triangle_count": 12, "vertex_count": 8 },
+  "shells":      [ { "closed": true, "role": "outer", "parent": null, "regions": [0, 1, 2] } ],
   "regions":     [ { "id": 0, "surface": {}, "triangles": [], "residual": {} } ],
   "adjacencies": [ { "regions": [0, 1], "boundaries": [] } ],
-  "vertices":    [ { "id": 0, "position": [], "regions": [], "source_positions": [] } ]
+  "vertices":    [ { "id": 0, "role": "junction", "position": [], "regions": [], "source_positions": [] } ]
 }
 ```
 
@@ -68,6 +69,13 @@ produce the same bytes from the same data:
 
 Rust: `Ir::to_canonical_json`, `Ir::from_json`. Python: `Ir.dumps`, `Ir.loads`.
 
+## Source
+
+`source.triangle_count` and `source.vertex_count` describe the **input** mesh the IR was built from:
+the triangles as the user supplied them (STL order, or the face list of a `(vertices, faces)` input)
+and the vertices of that input. They are the bounds for every source triangle id in the IR, which a
+validator checks. The IR does not embed the mesh.
+
 ## Tolerances
 
 | field | default | meaning |
@@ -87,9 +95,12 @@ A region is a connected set of source triangles explained by one surface.
 { "id": 2, "surface": { "type": "cylinder", ... }, "triangles": [14, 15, 16], "residual": { "rms": 2e-05, "max": 6e-05 } }
 ```
 
-- `triangles`: ids of the source triangles, as indices into the face list of the welded
-  `IndexedMesh` the converter worked on (the output of `unmesh_core::weld`, before any other edit). The
-  IR does not embed the mesh. Every triangle id appears in at most one region.
+- `triangles`: ids of the source triangles, as indices into the **input** triangles (STL order, or the
+  face list of a `(vertices, faces)` input), each below `source.triangle_count`. They are not indices
+  into the welded mesh: weld drops degenerate triangles, so welded indices drift from input indices. The
+  converter maps welded faces back through the source-triangle map that `unmesh_core::weld` returns
+  (`unmesh.weld` returns it as an extra array). Triangles dropped as degenerate belong to no region. Every
+  triangle id appears in at most one region.
 - `residual`: RMS and max distance from the region's source triangles to its surface, in the units of
   the mesh. `null` for `facets` regions, which make no claim about a surface.
 
@@ -121,9 +132,15 @@ space. The IR stores this unambiguously:
 
 There is no separate sign on the parameters: radii and half-angles are always positive.
 
-The orientation of shells follows from this. A closed shell's outward normals point away from its
-enclosed volume. A converter that finds a shell with negative signed volume flips its triangle winding
-before fitting and reports `flipped_winding`; the IR never contains an inside-out shell.
+The orientation of shells follows from this. An `outer` shell's outward normals point away
+from its enclosed volume. A converter that finds an outer shell with negative signed volume flips its
+triangle winding before fitting and reports `flipped_winding`. A `cavity` shell is the opposite on
+purpose: its normals point into the void (away from the material), so its signed volume is negative, and
+it is exempt from the flip rule. The IR never contains an inside-out outer shell.
+
+On periodic surfaces (cylinder, cone, sphere, torus) the IR gives no seam and no angular reference. The
+writer chooses them, and it must pick the seam so it does not coincide with a boundary the face is
+trimmed by where that can be avoided.
 
 ## Adjacency and boundary polylines
 
@@ -148,12 +165,23 @@ boundary loops counter-clockwise about its outward normal uses each boundary as 
 region is `a`, and reversed when it is `b`. For two planar regions this also gives the convexity: the
 edge is convex when `t` is parallel to `n_a x n_b`, and concave when anti-parallel.
 
-**Splitting.** A boundary is split wherever an IR vertex lies on it, and wherever `kind` changes. So
+**Splitting.** A boundary is split wherever an IR vertex lies on it, and wherever `kind` changes; a change of
+kind is marked with a `kind_change` vertex (see [Vertices](#vertices)). So
 a boundary is either `closed` (a loop with no vertex on it: the first point is not repeated at the
 end, there are at least 3 points, and `start_vertex` and `end_vertex` are `null`), or open (at least 2
 points, whose first and last points are the positions of IR vertices `start_vertex` and
 `end_vertex`). A fillet's tangent edge along a straight run therefore appears as a separate boundary
 from its transversal ends.
+
+**Which side is the face.** The loop direction is what tells the writer which side of a boundary the
+face lies on: with `a` on the left, the face of region `a` is the part of its surface to the left of the
+boundary, and the face of `b` is the part to the right. On a periodic surface a closed boundary alone
+does not say which of the two sides it separates is the face; the direction does.
+
+**Head to tail.** For every region, take its boundaries in that region's own direction (as written when
+the region is `a`, reversed when it is `b`). At every vertex, as many of them must arrive as leave. A
+validator checks this; it catches a single reversed open boundary. Closed boundaries have no vertices
+and are covered by the geometric tests instead.
 
 **Points.** Boundary points are mesh vertex positions, possibly moved by snapping. Each point lies
 within `tolerances.linear` of both adjacent surfaces. Intermediate points are the original mesh
@@ -190,18 +218,25 @@ in `Tolerances`, not the format.
 
 ## Vertices
 
-A vertex is a point where three or more regions meet. It exists so a writer need not rediscover
-topology from polyline endpoints.
+A vertex is a point where boundaries end. It exists so a writer need not rediscover topology from
+polyline endpoints.
 
 ```json
-{ "id": 0, "position": [0.0, 0.0, 0.0], "regions": [0, 2, 4], "source_positions": [[0.0, 0.0, 0.0]] }
+{ "id": 0, "role": "junction", "position": [0.0, 0.0, 0.0], "regions": [0, 2, 4], "source_positions": [[0.0, 0.0, 0.0]] }
 ```
 
+- `role` is `junction` for a point where three or more regions meet, or `kind_change` for a point on a
+  single pair's boundary where `kind` changes. A boundary must end at a vertex, and a `kind` change
+  mid-chain would otherwise have nowhere to end. Dihedral angles that vary along a boundary (a slanted
+  plane cutting a cylinder) cross the tangent threshold at such points.
 - `position` is the IR's position after snapping (the least-squares point of the meeting surfaces).
-- `regions` are the sorted ids of the regions that meet there; at least three.
+- `regions` are the sorted ids of the regions that meet there: at least three for a `junction`, exactly
+  two for a `kind_change`.
 - `source_positions` are the mesh vertex positions that were merged into this vertex.
 - Every open boundary starts and ends at a vertex, and the regions of a vertex are exactly the regions
-  of the boundaries that end there.
+  of the boundaries that end there. A `kind_change` vertex is the end of exactly two boundaries of the
+  same pair, one `tangent` and one `transversal`. A writer treats it as a vertex of degree two on the
+  edge: the edge continues, and only the method that builds it changes.
 
 A closed boundary has no vertex: the circular edge of a bore or of a disc fillet is a loop with
 nothing on it, and the writer treats it as a closed edge with a seam.
@@ -216,7 +251,7 @@ surface explains within tolerance.
 ```
 
 `faces` index into `vertices`, wind counter-clockwise from outside, and there is one face per entry in
-the region's `triangles` (same order).
+the region's `triangles` (same order). An open-shell facets region keeps the input winding as it is.
 
 **Bordering an analytic region.**
 
@@ -238,8 +273,22 @@ the region's `triangles` (same order).
 A shell is one connected component of the input mesh; `shells[i].regions` lists its region ids. Each
 region is in exactly one shell, and an adjacency never crosses shells.
 
-A multi-body input is several shells, which the writer emits as a compound of solids. Bodies that only
-touch at a vertex or along an edge are separate shells; no adjacency joins them.
+```json
+{ "closed": true, "role": "outer", "parent": null, "regions": [0, 1, 2, 3, 4, 5] }
+```
+
+- `role: "outer"` shells have `parent: null`. Their normals point out of the material.
+- `role: "cavity"` shells are closed shells inside an outer shell: a void in the material. `parent` is the
+  index of the enclosing outer shell. Cavity normals point into the void (still out of the material), so
+  their signed volume is negative, and they are not flipped. Cavities do not nest: a body floating
+  inside a void is a separate `outer` shell.
+- The writer builds **one solid** from each outer shell together with all the cavities whose `parent` is
+  that shell. Outer shells without cavities are plain solids. The result is a compound with one solid per
+  outer shell.
+- An open shell (`closed: false`) is always `outer`.
+
+A multi-body input is several outer shells, which the writer emits as a compound of solids. Bodies that
+only touch at a vertex or along an edge are separate shells; no adjacency joins them.
 
 ## Non-manifold and open input
 
@@ -250,7 +299,8 @@ every one of its mesh edges is shared by exactly two triangles, with consistent 
 |---|---|
 | Degenerate (zero-area) or duplicate triangles | Dropped before fitting. Report warning `degenerate_triangles`. |
 | Closed manifold, consistent winding, positive volume | Normal shell. |
-| Closed manifold, negative volume | Winding flipped. Warning `flipped_winding`. |
+| Closed manifold, negative volume, not enclosed by another shell | Winding flipped. Warning `flipped_winding`. |
+| Closed manifold, negative volume, inside another outer shell | A `cavity` shell. Not flipped. |
 | Closed manifold, mixed winding | Winding repaired by flood fill when that makes it consistent; otherwise treated as non-manifold. Warning `repaired_winding`. |
 | Open edges (shared by one triangle) | The component is an **open shell**: `"closed": false`, exactly one `facets` region holding all its triangles, no adjacencies, no vertices. Warning `open_edges`. |
 | Non-manifold edges (shared by three or more triangles) | The whole edge-connected component is an open shell as above. Warning `non_manifold_edges`. The converter never guesses which triangles belong together. |
@@ -258,9 +308,6 @@ every one of its mesh edges is shared by exactly two triangles, with consistent 
 The writer emits an open shell as a sewn shell of triangle faces, never as a solid, and reports it. A
 part with some open shells and some closed ones still converts: the closed shells are analytic
 solids, the open ones are faceted shells, all in one compound. Nothing fails a whole file.
-
-Cavities (a closed shell inside another) are separate shells with outward normals pointing into the
-cavity; v0 does not nest them and a writer may treat them as independent bodies.
 
 ## Consumers
 

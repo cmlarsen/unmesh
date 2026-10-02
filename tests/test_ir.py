@@ -19,10 +19,15 @@ import build  # noqa: E402
 import geometry  # noqa: E402
 
 from unmesh.ir import (  # noqa: E402
+    Cylinder,
     Facets,
     Ir,
     IrError,
     Plane,
+    Region,
+    Shell,
+    Source,
+    Tolerances,
     canonical_json,
     format_float,
     validate,
@@ -46,6 +51,8 @@ def test_fixture_set():
         "disc_fillet",
         "mixed_facets",
         "two_bodies",
+        "kind_change",
+        "cavity",
     } <= set(NAMES)
 
 
@@ -77,7 +84,7 @@ def assert_close(a, b, path=""):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_fixture_is_regenerated(name):
-    assert_close(build.FIXTURES[name]().to_dict(), json.loads(load(name)))
+    assert_close(build.FIXTURES[name]()[0].to_dict(), json.loads(load(name)))
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -158,11 +165,59 @@ def test_planar_loops_run_counter_clockwise_about_the_outward_normal(name):
             assert area @ np.asarray(r.surface.normal) > 0, (name, r.id)
 
 
+def boundary_samples(bd):
+    pts = [np.asarray(p) for p in bd.points]
+    n = len(pts)
+    if n == 2 and not bd.closed:
+        return [((pts[0] + pts[1]) / 2, pts[1] - pts[0])]
+    out = []
+    for j in range(n) if bd.closed else range(1, n - 1):
+        out.append((pts[j], pts[(j + 1) % n] - pts[j - 1]))
+    return out
+
+
+def side_probe(inside, surface, p, w):
+    q = p + 0.1 * w
+    if not isinstance(surface, Facets):
+        q = geometry.project(surface, q)
+    n = geometry.normal(surface, q)
+    return inside(q - 1e-3 * n) and not inside(q + 1e-3 * n)
+
+
 @pytest.mark.parametrize("name", [n for n in NAMES if n != "open_shell"])
-def test_every_polyline_is_used_twice_with_opposite_direction(name):
+def test_each_boundary_has_a_on_the_left_and_b_on_the_right(name):
     ir = Ir.loads(load(name))
-    total = sum((region_loop_vector_area(ir, r.id) for r in ir.regions), start=np.zeros(3))
-    assert np.allclose(total, 0.0, atol=1e-9)
+    inside = build.FIXTURES[name]()[1]
+    for adj in ir.adjacencies:
+        a, b = (ir.regions[i].surface for i in adj.regions)
+        for bd in adj.boundaries:
+            for p, t in boundary_samples(bd):
+                t = t / np.linalg.norm(t)
+                assert side_probe(inside, a, p, np.cross(geometry.normal(a, p), t)), (
+                    name,
+                    adj.regions,
+                    "a",
+                )
+                assert side_probe(inside, b, p, -np.cross(geometry.normal(b, p), t)), (
+                    name,
+                    adj.regions,
+                    "b",
+                )
+
+
+@pytest.mark.parametrize("name", [n for n in NAMES if n != "open_shell"])
+def test_facets_triangles_wind_outward(name):
+    ir = Ir.loads(load(name))
+    inside = build.FIXTURES[name]()[1]
+    for r in ir.regions:
+        if isinstance(r.surface, Facets):
+            v = np.asarray(r.surface.vertices)
+            for f in r.surface.faces:
+                a, b, c = v[list(f)]
+                n = np.cross(b - a, c - a)
+                n /= np.linalg.norm(n)
+                m = (a + b + c) / 3
+                assert inside(m - 1e-3 * n) and not inside(m + 1e-3 * n)
 
 
 @pytest.mark.parametrize("name", ["box", "two_bodies"])
@@ -207,6 +262,11 @@ def test_kinds_in_curved_fixtures():
     assert kinds["disc_fillet"] == {"tangent", "transversal"}
 
 
+def reverse_boundary(bd):
+    bd["points"] = bd["points"][::-1]
+    bd["start_vertex"], bd["end_vertex"] = bd["end_vertex"], bd["start_vertex"]
+
+
 def mutate(name, fn):
     d = json.loads(load(name))
     fn(d)
@@ -223,10 +283,72 @@ def test_validation_rejects_broken_ir():
         lambda d: d["shells"][0].update(regions=[0, 1, 2, 3, 4]),
         lambda d: d["adjacencies"][0]["boundaries"][0]["points"].__setitem__(0, [9.0, 9.0, 9.0]),
         lambda d: d["regions"][1]["triangles"].append(d["regions"][0]["triangles"][0]),
+        lambda d: d["source"].update(triangle_count=3),
+        lambda d: reverse_boundary(d["adjacencies"][0]["boundaries"][0]),
+        lambda d: d["vertices"][0].update(role="kind_change"),
     ]
     for case in cases:
         with pytest.raises(IrError):
             Ir.from_dict(mutate("box", case))
+
+
+def test_kind_change_vertices():
+    ir = Ir.loads(load("kind_change"))
+    kc = [v for v in ir.vertices if v.role == "kind_change"]
+    assert len(kc) == 2
+    assert all(len(v.regions) == 2 for v in kc)
+    pair = next(a for a in ir.adjacencies if len(a.boundaries) == 2)
+    assert {b.kind for b in pair.boundaries} == {"tangent", "transversal"}
+    assert not any(v.role == "kind_change" for v in Ir.loads(load("box")).vertices)
+
+
+def test_cavity_shell():
+    ir = Ir.loads(load("cavity"))
+    assert [(s.role, s.parent) for s in ir.shells] == [("outer", None), ("cavity", 0)]
+    center = np.array([10.0, 10.0, 10.0])
+    for r in ir.shells[1].regions:
+        s = ir.regions[r].surface
+        assert (center - np.asarray(s.origin)) @ np.asarray(s.normal) > 0
+
+
+def test_cavity_validation():
+    for fn in (
+        lambda d: d["shells"][1].update(parent=None),
+        lambda d: d["shells"][1].update(parent=1),
+        lambda d: d["shells"][0].update(parent=1),
+        lambda d: d["shells"][1].update(closed=False),
+    ):
+        with pytest.raises(IrError):
+            Ir.from_dict(mutate("cavity", fn))
+
+
+def test_dumps_coerces_hand_built_values():
+    surface = Cylinder((0, 0, 0), (0, 0, 1), 5, "same")
+    assert '"radius":5.0' in canonical_json(surface.to_dict())
+    ir = Ir(
+        Tolerances(linear=1, angular_snap_deg=1, tangent_threshold_deg=3, vertex_merge=1),
+        Source(np.int64(1), np.int64(3)),
+        [Shell(True, "outer", None, [np.int64(0)])],
+        [
+            Region(
+                np.int64(0),
+                Facets(
+                    [(np.float32(0), np.float64(0), 0), (1, 0, 0), (0, 1, 0)],
+                    [(np.int64(0), np.int64(1), np.int64(2))],
+                ),
+                [np.int64(0)],
+                None,
+            )
+        ],
+        [],
+        [],
+    )
+    ir.shells[0].closed = False
+    text = ir.dumps()
+    assert '"linear":1.0' in text
+    assert '"triangle_count":1' in text
+    assert '"vertices":[[0.0,0.0,0.0],[1.0,0.0,0.0],[0.0,1.0,0.0]]' in text
+    assert Ir.loads(text).dumps() == text
 
 
 def test_unknown_keys_rejected():
@@ -335,7 +457,8 @@ def test_rust_and_python_format_random_floats_identically():
                 "tangent_threshold_deg": 3.0,
                 "vertex_merge": 1e-06,
             },
-            "shells": [{"closed": False, "regions": [0]}],
+            "source": {"triangle_count": 1, "vertex_count": 3},
+            "shells": [{"closed": False, "role": "outer", "parent": None, "regions": [0]}],
             "regions": [
                 {
                     "id": 0,

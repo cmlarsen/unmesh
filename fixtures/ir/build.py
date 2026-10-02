@@ -17,6 +17,7 @@ from unmesh.ir import (
     Region,
     Residual,
     Shell,
+    Source,
     Tolerances,
     Torus,
     Vertex,
@@ -32,14 +33,17 @@ def key(p) -> tuple[float, float, float]:
 
 
 class Builder:
-    def __init__(self, inside: Callable[[np.ndarray], bool]):
+    def __init__(self, inside: Callable[[np.ndarray], bool], tol: Tolerances = TOL):
         self.inside = inside
+        self.tol = tol
         self.regions: list[Region] = []
         self.shells: list[list[int]] = []
+        self.shell_meta: list[tuple[str, int | None]] = []
         self.edges: dict[tuple[int, int], list[Boundary]] = {}
         self.next_triangle = 0
 
-    def shell(self) -> None:
+    def shell(self, role: str = "outer", parent: int | None = None) -> None:
+        self.shell_meta.append((role, parent))
         self.shells.append([])
 
     def region(self, surface, n_triangles: int = 2) -> int:
@@ -62,7 +66,7 @@ class Builder:
             assert self._a_on_left(a, pts, closed), f"orientation probe failed for ({a}, {b})"
         sa, sb = self.regions[a].surface, self.regions[b].surface
         deg = round(dihedral_deg(sa, sb, sample_points(pts, closed)), 6)
-        kind = "tangent" if deg < TOL.tangent_threshold_deg else "transversal"
+        kind = "tangent" if deg < self.tol.tangent_threshold_deg else "transversal"
         self.edges.setdefault((a, b), []).append(Boundary(kind, deg, closed, None, None, pts))
 
     def _a_on_left(self, a: int, pts, closed: bool) -> bool:
@@ -91,7 +95,10 @@ class Builder:
                         ends.setdefault(key(p), set()).update((a, b))
         order = sorted(ends)
         index = {k: i for i, k in enumerate(order)}
-        vertices = [Vertex(i, k, sorted(ends[k]), [k]) for i, k in enumerate(order)]
+        vertices = [
+            Vertex(i, "junction" if len(ends[k]) > 2 else "kind_change", k, sorted(ends[k]), [k])
+            for i, k in enumerate(order)
+        ]
         adjacencies = []
         for a, b in sorted(self.edges):
             bds = self.edges[(a, b)]
@@ -100,9 +107,14 @@ class Builder:
                     bd.start_vertex = index[key(bd.points[0])]
                     bd.end_vertex = index[key(bd.points[-1])]
             adjacencies.append(Adjacency((a, b), bds))
+        n = self.next_triangle
         ir = Ir(
-            TOL,
-            [Shell(True, s) for s in self.shells],
+            self.tol,
+            Source(n, n // 2 + 2),
+            [
+                Shell(True, role, parent, s)
+                for (role, parent), s in zip(self.shell_meta, self.shells, strict=True)
+            ],
             self.regions,
             adjacencies,
             vertices,
@@ -124,7 +136,9 @@ def in_box(p, lo, hi) -> bool:
     return all(lo[i] < p[i] < hi[i] for i in range(3))
 
 
-def add_box(b: Builder, lo, hi, skip: set[str] = frozenset()) -> dict[str, int]:
+def add_box(
+    b: Builder, lo, hi, skip: set[str] = frozenset(), inward: bool = False
+) -> dict[str, int]:
     x0, y0, z0 = lo
     x1, y1, z1 = hi
     specs = {
@@ -135,7 +149,10 @@ def add_box(b: Builder, lo, hi, skip: set[str] = frozenset()) -> dict[str, int]:
         "-z": ((x0, y0, z0), (0, 0, -1)),
         "+z": ((x0, y0, z1), (0, 0, 1)),
     }
-    return {k: b.plane(*v) for k, v in specs.items() if k not in skip}
+    sign = -1 if inward else 1
+    return {
+        k: b.plane(o, tuple(sign * c for c in n)) for k, (o, n) in specs.items() if k not in skip
+    }
 
 
 def box_edge(b: Builder, ids, f1: str, f2: str, p, q) -> None:
@@ -167,11 +184,15 @@ def all_box_edges(b: Builder, ids, lo, hi, skip=()) -> None:
 
 def fixture_box() -> Ir:
     lo, hi = (0, 0, 0), (20, 10, 5)
-    b = Builder(lambda p: in_box(p, lo, hi))
+
+    def inside(p):
+        return in_box(p, lo, hi)
+
+    b = Builder(inside)
     b.shell()
     ids = add_box(b, lo, hi)
     all_box_edges(b, ids, lo, hi)
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_plate_with_bore() -> Ir:
@@ -188,7 +209,7 @@ def fixture_plate_with_bore() -> Ir:
     all_box_edges(b, ids, lo, hi)
     for z, face in ((6.0, "+z"), (0.0, "-z")):
         b.edge(ids[face], bore, circle((c[0], c[1], z), (1, 0, 0), (0, 1, 0), r), closed=True)
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_box_fillet() -> Ir:
@@ -216,7 +237,7 @@ def fixture_box_fillet() -> Ir:
         b.edge(a, c, arc((cx, cy, z), (1, 0, 0), (0, 1, 0), rad, 0.0, math.pi / 2, 9))
     b.edge(ids["+x"], fil, [(20, cy, 0), (20, cy, 5)])
     b.edge(ids["+y"], fil, [(cx, 10, 0), (cx, 10, 5)])
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_plate_chamfer() -> Ir:
@@ -230,12 +251,22 @@ def fixture_plate_chamfer() -> Ir:
     ids = add_box(b, lo, hi)
     s = 1 / math.sqrt(2)
     ch = b.plane((20, 0, 4), (s, 0, s))
-    all_box_edges(b, ids, lo, hi, skip={("+x", "+z")})
+    all_box_edges(
+        b,
+        ids,
+        lo,
+        hi,
+        skip={("+x", "+z"), ("+x", "-y"), ("+x", "+y"), ("-y", "+z"), ("+y", "+z")},
+    )
+    box_edge(b, ids, "+x", "-y", (20, 0, 0), (20, 0, 4))
+    box_edge(b, ids, "+x", "+y", (20, 10, 0), (20, 10, 4))
+    box_edge(b, ids, "-y", "+z", (0, 0, 5), (19, 0, 5))
+    box_edge(b, ids, "+y", "+z", (0, 10, 5), (19, 10, 5))
     b.edge(ids["+x"], ch, [(20, 0, 4), (20, 10, 4)])
     b.edge(ids["+z"], ch, [(19, 0, 5), (19, 10, 5)])
     b.edge(ids["-y"], ch, [(20, 0, 4), (19, 0, 5)])
     b.edge(ids["+y"], ch, [(20, 10, 4), (19, 10, 5)])
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_countersink() -> Ir:
@@ -261,7 +292,7 @@ def fixture_countersink() -> Ir:
     b.edge(ids["+z"], cone, circle((cx, cy, 8.0), x, y, r_top), closed=True)
     b.edge(cone, bore, circle((cx, cy, z_cone), x, y, r_bore), closed=True)
     b.edge(ids["-z"], bore, circle((cx, cy, 0.0), x, y, r_bore), closed=True)
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_disc_fillet() -> Ir:
@@ -286,7 +317,7 @@ def fixture_disc_fillet() -> Ir:
     b.edge(top, tor, circle((0, 0, height), x, y, radius - rf), closed=True)
     b.edge(side, tor, circle((0, 0, zc), x, y, radius), closed=True)
     b.edge(bottom, side, circle((0, 0, 0), x, y, radius), closed=True)
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_mixed_facets() -> Ir:
@@ -316,28 +347,85 @@ def fixture_mixed_facets() -> Ir:
         ("+z", corners[2], corners[3]),
     ):
         b.edge(ids[face], patch, [p, q])
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_two_bodies() -> Ir:
     lo1, hi1 = (0, 0, 0), (10, 10, 5)
     lo2, hi2 = (20, 0, 0), (25, 5, 5)
-    b = Builder(lambda p: in_box(p, lo1, hi1) or in_box(p, lo2, hi2))
+
+    def inside(p):
+        return in_box(p, lo1, hi1) or in_box(p, lo2, hi2)
+
+    b = Builder(inside)
     for lo, hi in ((lo1, hi1), (lo2, hi2)):
         b.shell()
         ids = add_box(b, lo, hi)
         all_box_edges(b, ids, lo, hi)
-    return b.build()
+    return b.build(), inside
 
 
 def fixture_open_shell() -> Ir:
-    b = Builder(lambda p: False)
+    def inside(p):
+        return False
+
+    b = Builder(inside)
     b.shell()
     verts = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]
     b.region(Facets(verts, [(0, 1, 2), (0, 2, 3)]), 2)
-    ir = Ir(TOL, [Shell(False, [0])], b.regions, [], [])
+    ir = Ir(TOL, Source(2, 4), [Shell(False, "outer", None, [0])], b.regions, [], [])
     ir.validate()
-    return ir
+    return ir, inside
+
+
+def fixture_kind_change() -> tuple[Ir, Callable]:
+    cx, cy, rad = 10.0, 5.0, 3.0
+    alpha = math.radians(30.0)
+    thr = 75.0
+    slope = math.tan(alpha)
+
+    def top_z(x):
+        return 6.0 - slope * (x - cx)
+
+    def inside(p):
+        return 0 < p[2] < top_z(p[0]) and math.hypot(p[0] - cx, p[1] - cy) < rad
+
+    tol = Tolerances(tangent_threshold_deg=thr)
+    b = Builder(inside, tol)
+    b.shell()
+    bottom = b.plane((cx, cy, 0.0), (0, 0, -1))
+    side = b.region(Cylinder((cx, cy, 0.0), (0.0, 0.0, 1.0), rad, "same"), 16)
+    n = (math.sin(alpha), 0.0, math.cos(alpha))
+    top = b.plane((cx, cy, 6.0), n, 4)
+    theta0 = math.acos(math.cos(math.radians(thr)) / math.sin(alpha))
+
+    def ring(t0, t1, count):
+        return [
+            (cx + rad * math.cos(t), cy + rad * math.sin(t), top_z(cx + rad * math.cos(t)))
+            for t in np.linspace(t0, t1, count)
+        ]
+
+    b.edge(bottom, side, circle((cx, cy, 0.0), (1, 0, 0), (0, 1, 0), rad), closed=True)
+    b.edge(side, top, ring(-theta0, theta0, 17))
+    b.edge(side, top, ring(theta0, 2 * math.pi - theta0, 33))
+    return b.build(), inside
+
+
+def fixture_cavity() -> tuple[Ir, Callable]:
+    lo, hi = (0, 0, 0), (20, 20, 20)
+    vlo, vhi = (7, 7, 7), (13, 13, 13)
+
+    def inside(p):
+        return in_box(p, lo, hi) and not in_box(p, vlo, vhi)
+
+    b = Builder(inside)
+    b.shell()
+    ids = add_box(b, lo, hi)
+    all_box_edges(b, ids, lo, hi)
+    b.shell("cavity", 0)
+    ids = add_box(b, vlo, vhi, inward=True)
+    all_box_edges(b, ids, vlo, vhi)
+    return b.build(), inside
 
 
 FIXTURES = {
@@ -350,4 +438,6 @@ FIXTURES = {
     "mixed_facets": fixture_mixed_facets,
     "two_bodies": fixture_two_bodies,
     "open_shell": fixture_open_shell,
+    "kind_change": fixture_kind_change,
+    "cavity": fixture_cavity,
 }

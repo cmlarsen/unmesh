@@ -11,6 +11,8 @@ IR_VERSION = 0
 Point = tuple[float, float, float]
 Orientation = Literal["same", "reversed"]
 Kind = Literal["transversal", "tangent"]
+VertexRole = Literal["junction", "kind_change"]
+ShellRole = Literal["outer", "cavity"]
 
 
 class IrError(ValueError):
@@ -21,6 +23,10 @@ def _pt(v: Any) -> Point:
     if len(v) != 3:
         raise IrError(f"point needs 3 components: {v!r}")
     return (float(v[0]), float(v[1]), float(v[2]))
+
+
+def _fl(v: Any) -> list[float]:
+    return [float(c) for c in v]
 
 
 def _keys(d: Any, keys: set[str], what: str) -> None:
@@ -38,10 +44,10 @@ class Tolerances:
 
     def to_dict(self) -> dict:
         return {
-            "linear": self.linear,
-            "angular_snap_deg": self.angular_snap_deg,
-            "tangent_threshold_deg": self.tangent_threshold_deg,
-            "vertex_merge": self.vertex_merge,
+            "linear": float(self.linear),
+            "angular_snap_deg": float(self.angular_snap_deg),
+            "tangent_threshold_deg": float(self.tangent_threshold_deg),
+            "vertex_merge": float(self.vertex_merge),
         }
 
     @staticmethod
@@ -58,7 +64,7 @@ class Plane:
     normal: Point
 
     def to_dict(self) -> dict:
-        return {"type": "plane", "origin": list(self.origin), "normal": list(self.normal)}
+        return {"type": "plane", "origin": _fl(self.origin), "normal": _fl(self.normal)}
 
 
 @dataclass
@@ -72,9 +78,9 @@ class Cylinder:
     def to_dict(self) -> dict:
         return {
             "type": "cylinder",
-            "origin": list(self.origin),
-            "axis": list(self.axis),
-            "radius": self.radius,
+            "origin": _fl(self.origin),
+            "axis": _fl(self.axis),
+            "radius": float(self.radius),
             "orientation": self.orientation,
         }
 
@@ -90,9 +96,9 @@ class Cone:
     def to_dict(self) -> dict:
         return {
             "type": "cone",
-            "apex": list(self.apex),
-            "axis": list(self.axis),
-            "half_angle": self.half_angle,
+            "apex": _fl(self.apex),
+            "axis": _fl(self.axis),
+            "half_angle": float(self.half_angle),
             "orientation": self.orientation,
         }
 
@@ -107,8 +113,8 @@ class Sphere:
     def to_dict(self) -> dict:
         return {
             "type": "sphere",
-            "center": list(self.center),
-            "radius": self.radius,
+            "center": _fl(self.center),
+            "radius": float(self.radius),
             "orientation": self.orientation,
         }
 
@@ -125,10 +131,10 @@ class Torus:
     def to_dict(self) -> dict:
         return {
             "type": "torus",
-            "center": list(self.center),
-            "axis": list(self.axis),
-            "major_radius": self.major_radius,
-            "minor_radius": self.minor_radius,
+            "center": _fl(self.center),
+            "axis": _fl(self.axis),
+            "major_radius": float(self.major_radius),
+            "minor_radius": float(self.minor_radius),
             "orientation": self.orientation,
         }
 
@@ -142,8 +148,8 @@ class Facets:
     def to_dict(self) -> dict:
         return {
             "type": "facets",
-            "vertices": [list(v) for v in self.vertices],
-            "faces": [list(f) for f in self.faces],
+            "vertices": [_fl(v) for v in self.vertices],
+            "faces": [[int(i) for i in f] for f in self.faces],
         }
 
 
@@ -214,12 +220,12 @@ class Region:
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id,
+            "id": int(self.id),
             "surface": self.surface.to_dict(),
-            "triangles": list(self.triangles),
+            "triangles": [int(t) for t in self.triangles],
             "residual": None
             if self.residual is None
-            else {"rms": self.residual.rms, "max": self.residual.max},
+            else {"rms": float(self.residual.rms), "max": float(self.residual.max)},
         }
 
     @staticmethod
@@ -248,11 +254,11 @@ class Boundary:
     def to_dict(self) -> dict:
         return {
             "kind": self.kind,
-            "dihedral_deg": self.dihedral_deg,
-            "closed": self.closed,
-            "start_vertex": self.start_vertex,
-            "end_vertex": self.end_vertex,
-            "points": [list(p) for p in self.points],
+            "dihedral_deg": float(self.dihedral_deg),
+            "closed": bool(self.closed),
+            "start_vertex": None if self.start_vertex is None else int(self.start_vertex),
+            "end_vertex": None if self.end_vertex is None else int(self.end_vertex),
+            "points": [_fl(p) for p in self.points],
         }
 
     @staticmethod
@@ -281,7 +287,7 @@ class Adjacency:
 
     def to_dict(self) -> dict:
         return {
-            "regions": list(self.regions),
+            "regions": [int(r) for r in self.regions],
             "boundaries": [b.to_dict() for b in self.boundaries],
         }
 
@@ -295,23 +301,28 @@ class Adjacency:
 @dataclass
 class Vertex:
     id: int
+    role: VertexRole
     position: Point
     regions: list[int]
     source_positions: list[Point]
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id,
-            "position": list(self.position),
-            "regions": list(self.regions),
-            "source_positions": [list(p) for p in self.source_positions],
+            "id": int(self.id),
+            "role": self.role,
+            "position": _fl(self.position),
+            "regions": [int(r) for r in self.regions],
+            "source_positions": [_fl(p) for p in self.source_positions],
         }
 
     @staticmethod
     def from_dict(d: dict) -> Vertex:
-        _keys(d, {"id", "position", "regions", "source_positions"}, "vertex")
+        _keys(d, {"id", "role", "position", "regions", "source_positions"}, "vertex")
+        if d["role"] not in ("junction", "kind_change"):
+            raise IrError(f"bad vertex role {d['role']!r}")
         return Vertex(
             int(d["id"]),
+            d["role"],
             _pt(d["position"]),
             [int(r) for r in d["regions"]],
             [_pt(p) for p in d["source_positions"]],
@@ -321,22 +332,52 @@ class Vertex:
 @dataclass
 class Shell:
     closed: bool
+    role: ShellRole
+    parent: int | None
     regions: list[int]
 
     def to_dict(self) -> dict:
-        return {"closed": self.closed, "regions": list(self.regions)}
+        return {
+            "closed": bool(self.closed),
+            "role": self.role,
+            "parent": None if self.parent is None else int(self.parent),
+            "regions": [int(r) for r in self.regions],
+        }
 
     @staticmethod
     def from_dict(d: dict) -> Shell:
-        _keys(d, {"closed", "regions"}, "shell")
+        _keys(d, {"closed", "role", "parent", "regions"}, "shell")
         if not isinstance(d["closed"], bool):
             raise IrError("closed must be a bool")
-        return Shell(d["closed"], [int(r) for r in d["regions"]])
+        if d["role"] not in ("outer", "cavity"):
+            raise IrError(f"bad shell role {d['role']!r}")
+        parent = d["parent"]
+        return Shell(
+            d["closed"],
+            d["role"],
+            None if parent is None else int(parent),
+            [int(r) for r in d["regions"]],
+        )
+
+
+@dataclass
+class Source:
+    triangle_count: int
+    vertex_count: int
+
+    def to_dict(self) -> dict:
+        return {"triangle_count": int(self.triangle_count), "vertex_count": int(self.vertex_count)}
+
+    @staticmethod
+    def from_dict(d: dict) -> Source:
+        _keys(d, {"triangle_count", "vertex_count"}, "source")
+        return Source(int(d["triangle_count"]), int(d["vertex_count"]))
 
 
 @dataclass
 class Ir:
     tolerances: Tolerances
+    source: Source
     shells: list[Shell]
     regions: list[Region]
     adjacencies: list[Adjacency]
@@ -345,8 +386,9 @@ class Ir:
 
     def to_dict(self) -> dict:
         return {
-            "ir_version": self.ir_version,
+            "ir_version": int(self.ir_version),
             "tolerances": self.tolerances.to_dict(),
+            "source": self.source.to_dict(),
             "shells": [s.to_dict() for s in self.shells],
             "regions": [r.to_dict() for r in self.regions],
             "adjacencies": [a.to_dict() for a in self.adjacencies],
@@ -355,10 +397,19 @@ class Ir:
 
     @staticmethod
     def from_dict(d: dict) -> Ir:
-        keys = {"ir_version", "tolerances", "shells", "regions", "adjacencies", "vertices"}
+        keys = {
+            "ir_version",
+            "tolerances",
+            "source",
+            "shells",
+            "regions",
+            "adjacencies",
+            "vertices",
+        }
         _keys(d, keys, "ir")
         ir = Ir(
             Tolerances.from_dict(d["tolerances"]),
+            Source.from_dict(d["source"]),
             [Shell.from_dict(s) for s in d["shells"]],
             [Region.from_dict(r) for r in d["regions"]],
             [Adjacency.from_dict(a) for a in d["adjacencies"]],
@@ -455,6 +506,18 @@ def validate(ir: Ir) -> list[str]:
                 e.append(f"region {r} is in more than one shell")
             else:
                 shell_of[r] = si
+        if shell.role == "outer" and shell.parent is not None:
+            e.append(f"outer shell {si} must have a null parent")
+        if shell.role == "cavity":
+            parent = shell.parent
+            if (
+                parent is None
+                or not 0 <= parent < len(ir.shells)
+                or ir.shells[parent].role != "outer"
+            ):
+                e.append(f"cavity shell {si} must have an outer shell as parent")
+            if not shell.closed:
+                e.append(f"cavity shell {si} must be closed")
         if not shell.closed:
             ok = (
                 len(shell.regions) == 1
@@ -470,6 +533,8 @@ def validate(ir: Ir) -> list[str]:
         if i not in shell_of:
             e.append(f"region {i} is in no shell")
         for t in region.triangles:
+            if not 0 <= t < ir.source.triangle_count:
+                e.append(f"region {i}: source triangle {t} is outside the input mesh")
             if t in seen:
                 e.append(f"source triangle {t} appears in more than one place")
             seen.add(t)
@@ -500,6 +565,8 @@ def validate(ir: Ir) -> list[str]:
             e.append(f"region {i}: analytic region needs a residual")
     pairs: set[tuple[int, int]] = set()
     ends: dict[int, set[int]] = {}
+    end_kinds: dict[int, list[str]] = {}
+    balance: dict[tuple[int, int], int] = {}
     for adj in ir.adjacencies:
         a, b = adj.regions
         if not a < b < n_regions:
@@ -533,20 +600,41 @@ def validate(ir: Ir) -> list[str]:
                 if not 0 <= v < len(ir.vertices):
                     e.append(f"adjacency ({a}, {b}): missing vertex {v}")
                     continue
+                end_kinds.setdefault(v, []).append(bd.kind)
                 if math.dist(ir.vertices[v].position, p) > ir.tolerances.vertex_merge:
                     e.append(f"adjacency ({a}, {b}): endpoint is not at vertex {v}")
                 ends.setdefault(v, set()).update((a, b))
+            for r, (tail, head) in (
+                (a, (bd.start_vertex, bd.end_vertex)),
+                (b, (bd.end_vertex, bd.start_vertex)),
+            ):
+                balance[(r, tail)] = balance.get((r, tail), 0) + 1
+                balance[(r, head)] = balance.get((r, head), 0) - 1
     for i, v in enumerate(ir.vertices):
         if v.id != i:
             e.append(f"vertex at index {i} has id {v.id}")
+        if v.role not in ("junction", "kind_change"):
+            e.append(f"vertex {i}: bad role")
+        min_regions = 2 if v.role == "kind_change" else 3
+        if v.role == "kind_change" and (
+            len(v.regions) != 2
+            or len(end_kinds.get(v.id, [])) != 2
+            or len(set(end_kinds.get(v.id, []))) != 2
+        ):
+            e.append(
+                f"vertex {i}: a kind_change vertex joins one tangent and one transversal boundary"
+            )
         if (
-            len(v.regions) < 3
+            len(v.regions) < min_regions
             or any(x >= y for x, y in zip(v.regions, v.regions[1:], strict=False))
             or any(not 0 <= r < n_regions for r in v.regions)
         ):
-            e.append(f"vertex {i}: regions must be sorted, distinct, >= 3")
+            e.append(f"vertex {i}: regions must be sorted, distinct, and at least 3 for a junction")
         if not v.source_positions:
             e.append(f"vertex {i}: no source positions")
         if ends.get(v.id) != set(v.regions):
             e.append(f"vertex {i}: regions differ from those whose boundaries end here")
+    for (r, v), n in sorted(balance.items()):
+        if n != 0:
+            e.append(f"region {r}: boundaries do not run head to tail at vertex {v}")
     return e

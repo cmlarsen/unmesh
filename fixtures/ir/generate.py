@@ -7,4 +7,4 @@ from build import FIXTURES  # noqa: E402
 
 out = pathlib.Path(__file__).parent
 for name, make in FIXTURES.items():
-    (out / f"{name}.json").write_text(make().dumps() + "\n")
+    (out / f"{name}.json").write_text(make()[0].dumps() + "\n")

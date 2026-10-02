@@ -4,7 +4,7 @@
   "title": "unmesh IR v0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ir_version", "tolerances", "shells", "regions", "adjacencies", "vertices"],
+  "required": ["ir_version", "tolerances", "source", "shells", "regions", "adjacencies", "vertices"],
   "properties": {
     "ir_version": { "const": 0 },
     "tolerances": {
@@ -16,6 +16,15 @@
         "angular_snap_deg": { "type": "number", "minimum": 0 },
         "tangent_threshold_deg": { "type": "number", "exclusiveMinimum": 0, "maximum": 90 },
         "vertex_merge": { "$ref": "#/$defs/positive" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triangle_count", "vertex_count"],
+      "properties": {
+        "triangle_count": { "$ref": "#/$defs/index" },
+        "vertex_count": { "$ref": "#/$defs/index" }
       }
     },
     "shells": { "type": "array", "items": { "$ref": "#/$defs/shell" } },
@@ -31,9 +40,11 @@
     "shell": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["closed", "regions"],
+      "required": ["closed", "role", "parent", "regions"],
       "properties": {
         "closed": { "type": "boolean" },
+        "role": { "enum": ["outer", "cavity"] },
+        "parent": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/index" }] },
         "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 1 }
       }
     },
@@ -180,13 +191,17 @@
     "vertex": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "position", "regions", "source_positions"],
+      "required": ["id", "role", "position", "regions", "source_positions"],
       "properties": {
         "id": { "$ref": "#/$defs/index" },
+        "role": { "enum": ["junction", "kind_change"] },
         "position": { "$ref": "#/$defs/point" },
-        "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 3 },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 2 },
         "source_positions": { "type": "array", "items": { "$ref": "#/$defs/point" }, "minItems": 1 }
-      }
+      },
+      "if": { "properties": { "role": { "const": "junction" } } },
+      "then": { "properties": { "regions": { "minItems": 3 } } },
+      "else": { "properties": { "regions": { "maxItems": 2 } } }
     }
   }
 }
