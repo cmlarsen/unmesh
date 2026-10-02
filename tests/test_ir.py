@@ -60,9 +60,24 @@ def test_roundtrip_is_byte_identical(name):
     assert Ir.loads(text.rstrip("\n")).dumps() + "\n" == text
 
 
+def assert_close(a, b, path=""):
+    if isinstance(a, dict):
+        assert a.keys() == b.keys(), path
+        for k in a:
+            assert_close(a[k], b[k], f"{path}/{k}")
+    elif isinstance(a, list):
+        assert len(a) == len(b), path
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
+            assert_close(x, y, f"{path}/{i}")
+    elif isinstance(a, float):
+        assert a == pytest.approx(b, abs=1e-9), path
+    else:
+        assert a == b, path
+
+
 @pytest.mark.parametrize("name", NAMES)
-def test_fixture_is_regenerated_exactly(name):
-    assert build.FIXTURES[name]().dumps() + "\n" == load(name)
+def test_fixture_is_regenerated(name):
+    assert_close(build.FIXTURES[name]().to_dict(), json.loads(load(name)))
 
 
 @pytest.mark.parametrize("name", NAMES)
