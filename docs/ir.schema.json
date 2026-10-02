@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cmlarsen/unmesh/docs/ir.schema.json",
+  "title": "unmesh IR v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ir_version", "tolerances", "source", "shells", "regions", "adjacencies", "vertices"],
+  "properties": {
+    "ir_version": { "const": 0 },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["linear", "angular_snap_deg", "tangent_threshold_deg", "vertex_merge"],
+      "properties": {
+        "linear": { "$ref": "#/$defs/positive" },
+        "angular_snap_deg": { "type": "number", "minimum": 0 },
+        "tangent_threshold_deg": { "type": "number", "exclusiveMinimum": 0, "maximum": 90 },
+        "vertex_merge": { "$ref": "#/$defs/positive" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triangle_count", "vertex_count"],
+      "properties": {
+        "triangle_count": { "$ref": "#/$defs/index" },
+        "vertex_count": {
+          "$ref": "#/$defs/index",
+          "description": "Unique vertices of the input after the converter's weld at vertex_merge. Informational."
+        }
+      }
+    },
+    "shells": { "type": "array", "items": { "$ref": "#/$defs/shell" } },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
+    "adjacencies": { "type": "array", "items": { "$ref": "#/$defs/adjacency" } },
+    "vertices": { "type": "array", "items": { "$ref": "#/$defs/vertex" } }
+  },
+  "$defs": {
+    "positive": { "type": "number", "exclusiveMinimum": 0 },
+    "index": { "type": "integer", "minimum": 0 },
+    "point": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "orientation": { "enum": ["same", "reversed"] },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["closed", "role", "parent", "regions"],
+      "properties": {
+        "closed": { "type": "boolean" },
+        "role": { "enum": ["outer", "cavity"] },
+        "parent": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/index" }] },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 1 }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "surface", "triangles", "residual"],
+      "properties": {
+        "id": { "$ref": "#/$defs/index" },
+        "surface": { "$ref": "#/$defs/surface" },
+        "triangles": { "type": "array", "items": { "$ref": "#/$defs/index" } },
+        "residual": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rms", "max"],
+              "properties": {
+                "rms": { "type": "number", "minimum": 0 },
+                "max": { "type": "number", "minimum": 0 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "surface": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "origin", "normal"],
+          "properties": {
+            "type": { "const": "plane" },
+            "origin": { "$ref": "#/$defs/point" },
+            "normal": { "$ref": "#/$defs/point" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "origin", "axis", "radius", "orientation"],
+          "properties": {
+            "type": { "const": "cylinder" },
+            "origin": { "$ref": "#/$defs/point" },
+            "axis": { "$ref": "#/$defs/point" },
+            "radius": { "$ref": "#/$defs/positive" },
+            "orientation": { "$ref": "#/$defs/orientation" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "apex", "axis", "half_angle", "orientation"],
+          "properties": {
+            "type": { "const": "cone" },
+            "apex": { "$ref": "#/$defs/point" },
+            "axis": { "$ref": "#/$defs/point" },
+            "half_angle": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1.5707963267948966 },
+            "orientation": { "$ref": "#/$defs/orientation" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "center", "radius", "orientation"],
+          "properties": {
+            "type": { "const": "sphere" },
+            "center": { "$ref": "#/$defs/point" },
+            "radius": { "$ref": "#/$defs/positive" },
+            "orientation": { "$ref": "#/$defs/orientation" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "center", "axis", "major_radius", "minor_radius", "orientation"],
+          "properties": {
+            "type": { "const": "torus" },
+            "center": { "$ref": "#/$defs/point" },
+            "axis": { "$ref": "#/$defs/point" },
+            "major_radius": { "$ref": "#/$defs/positive" },
+            "minor_radius": { "$ref": "#/$defs/positive" },
+            "orientation": { "$ref": "#/$defs/orientation" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "vertices", "faces"],
+          "properties": {
+            "type": { "const": "facets" },
+            "vertices": { "type": "array", "items": { "$ref": "#/$defs/point" } },
+            "faces": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/index" },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            }
+          }
+        }
+      ]
+    },
+    "adjacency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["regions", "boundaries"],
+      "properties": {
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 2, "maxItems": 2 },
+        "boundaries": { "type": "array", "items": { "$ref": "#/$defs/boundary" }, "minItems": 1 }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "dihedral_deg", "closed", "start_vertex", "end_vertex", "points"],
+      "properties": {
+        "kind": { "enum": ["transversal", "tangent"] },
+        "dihedral_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+        "closed": { "type": "boolean" },
+        "start_vertex": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/index" }] },
+        "end_vertex": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/index" }] },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/point" }, "minItems": 2 }
+      },
+      "if": { "properties": { "closed": { "const": true } } },
+      "then": {
+        "properties": {
+          "start_vertex": { "type": "null" },
+          "end_vertex": { "type": "null" },
+          "points": { "minItems": 3 }
+        }
+      },
+      "else": {
+        "properties": {
+          "start_vertex": { "type": "integer" },
+          "end_vertex": { "type": "integer" }
+        }
+      }
+    },
+    "vertex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "position", "regions", "source_positions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/index" },
+        "role": { "enum": ["junction", "kind_change"] },
+        "position": { "$ref": "#/$defs/point" },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/index" }, "minItems": 2 },
+        "source_positions": { "type": "array", "items": { "$ref": "#/$defs/point" }, "minItems": 1 }
+      },
+      "if": { "properties": { "role": { "const": "junction" } } },
+      "then": { "properties": { "regions": { "minItems": 3 } } },
+      "else": { "properties": { "regions": { "maxItems": 2 } } }
+    }
+  }
+}

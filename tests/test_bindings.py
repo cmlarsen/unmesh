@@ -74,9 +74,9 @@ def test_weld_cracked_mesh():
         ],
         dtype=np.float64,
     )
-    verts, faces, report = unmesh.weld(tris, 0.0)
+    verts, faces, _, report = unmesh.weld(tris, 0.0)
     assert len(verts) == 5
-    verts, faces, report = unmesh.weld(tris, 1e-6)
+    verts, faces, _, report = unmesh.weld(tris, 1e-6)
     assert verts.shape == (4, 3) and verts.dtype == np.float64
     assert faces.shape == (2, 3) and faces.dtype == np.uint32
     assert report == {"input_corners": 6, "unique_vertices": 4, "degenerate_dropped": 0}
@@ -84,8 +84,24 @@ def test_weld_cracked_mesh():
 
 def test_weld_drops_degenerate():
     tris = np.array([[[0, 0, 0], [1e-9, 0, 0], [0, 1, 0]]])
-    verts, faces, report = unmesh.weld(tris, 1e-6)
+    verts, faces, _, report = unmesh.weld(tris, 1e-6)
     assert faces.shape == (0, 3)
+    assert report["degenerate_dropped"] == 1
+
+
+def test_weld_returns_source_triangle_map():
+    tris = np.array(
+        [
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            [[0, 0, 0], [1e-9, 0, 0], [0, 1, 0]],
+            [[1, 0, 0], [1, 1, 0], [0, 1, 0]],
+        ],
+        dtype=np.float64,
+    )
+    verts, faces, source, report = unmesh.weld(tris, 1e-6)
+    assert faces.shape == (2, 3)
+    assert source.dtype == np.uint32
+    assert source.tolist() == [0, 2]
     assert report["degenerate_dropped"] == 1
 
 
@@ -101,7 +117,7 @@ def test_weld_rejects_non_finite_and_handles_huge():
         with pytest.raises(ValueError, match="non-finite"):
             unmesh.weld(tris, 1e-6)
     huge = np.array([[[1e20, 0, 0], [-1e20, 0, 0], [0, 1e20, 0]]])
-    verts, faces, report = unmesh.weld(huge, 1e-6)
+    verts, faces, _, report = unmesh.weld(huge, 1e-6)
     assert report["unique_vertices"] == 3
 
 
@@ -134,7 +150,7 @@ def million_soup_weld(tmp_path):
     unmesh.write_stl(path, tris)
     soup = unmesh.read_stl(path)
     start = time.perf_counter()
-    verts, faces, report = unmesh.weld(soup, 1e-6)
+    verts, faces, _, report = unmesh.weld(soup, 1e-6)
     elapsed = time.perf_counter() - start
     assert report["unique_vertices"] == 709 * 709
     assert len(faces) == len(tris)
