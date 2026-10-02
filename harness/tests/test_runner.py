@@ -173,6 +173,14 @@ def shifted(p):
     return parsed.dumps(), step, _report(rep, max_deviation=json.loads(rep)["max_deviation"] + 0.06)
 
 
+def moved_step(p):
+    from build123d import Pos, export_step, import_step
+
+    ir, step, rep = convert_unmesh(p)
+    export_step(Pos(0.05, 0, 0) * import_step(step), step)
+    return ir, step, rep
+
+
 def bad_ir(p):
     ir, step, rep = convert_unmesh(p)
     d = json.loads(ir)
@@ -188,6 +196,7 @@ ADVERSARY_NAMES = [
     "skip_step",
     "empty_step",
     "shifted",
+    "moved_step",
     "bad_ir",
 ]
 

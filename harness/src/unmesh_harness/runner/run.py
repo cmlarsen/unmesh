@@ -104,6 +104,7 @@ def run_grid(
             "steps": spec["steps"],
             "samples_per_mm2": grid.judge_samples_per_mm2,
             "judge_truth": bool(spec.get("judge_truth")),
+            "step_deviation": cell.seed in grid.step_deviation_seeds,
             "seed": cell.seed,
             "converter": cell.converter,
         }

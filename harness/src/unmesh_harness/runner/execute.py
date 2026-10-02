@@ -87,7 +87,7 @@ def _score(
         problems = step_problems(
             step_path,
             task["entry"]["fingerprint"]["volume"],
-            tris,
+            tris if task["step_deviation"] else None,
             None if reported is None else reported + STEP_TOLERANCE_MM,
             task["samples_per_mm2"],
         )

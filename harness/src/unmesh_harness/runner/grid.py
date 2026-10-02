@@ -46,6 +46,7 @@ class Grid:
     cells: list[dict[str, Any]]
     judge_samples_per_mm2: float
     grid_hash: str
+    step_deviation_seeds: list[int]
     entries: list[dict[str, Any]]
 
     @property
@@ -101,6 +102,7 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         raw["cells"],
         float(raw.get("judge_samples_per_mm2", 10.0)),
         hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:12],
+        [int(x) for x in raw.get("step_deviation_seeds", raw["seeds"])],
         entries,
     )
 

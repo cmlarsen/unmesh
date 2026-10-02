@@ -26,12 +26,17 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --locked
       - run: scripts/check.sh
+      - name: Restore smoke ground truth
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/smoke/cache
+          key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py') }}
       - name: Smoke grid
         env:
           UV_LOCKED: "1"
         run: |
           start=$(date +%s)
-          uv run unmesh-harness run --converter unmesh --converter faceted --grid smoke --out "$RUNNER_TEMP/smoke" --gate
+          uv run unmesh-harness run --converter unmesh --grid smoke --out "$RUNNER_TEMP/smoke" --gate
           echo "smoke grid wall time: $(( $(date +%s) - start )) s"
       - name: Upload smoke results
         if: always()

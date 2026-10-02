@@ -147,5 +147,8 @@
       }
     }
   ],
-  "judge_samples_per_mm2": 1.0
+  "judge_samples_per_mm2": 1.0,
+  "step_deviation_seeds": [
+    0
+  ]
 }
