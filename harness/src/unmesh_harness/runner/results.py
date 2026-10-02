@@ -79,12 +79,13 @@ def summarize(records: list[dict[str, Any]]) -> str:
         f1 = [r["f1"] for r in ok]
         calib = [r["calibration"] for r in ok if r.get("calibration") is not None]
         times = [r["seconds"] for r in ok]
+        devs = [r["dev_input_max"] for r in ok if r["dev_input_max"] is not None]
         mean_f1 = float(np.mean(f1)) if f1 else float("nan")
         min_f1 = min(f1) if f1 else float("nan")
         lines.append(
             f"{converter:<10} {operator:<23} {severity:>8g}  {len(rs):>5}  "
             f"{mean_f1:>7.3f}  {min_f1:>6.3f}  "
-            f"{_um(max((r['dev_input_max'] for r in ok), default=None)):>10}  "
+            f"{_um(max(devs, default=None)):>10}  "
             f"{_um(min(calib) if calib else None):>12}  "
             f"{sum(1 for r in ok if r.get('under_report')):>5}  "
             f"{_valid_rate(rs):>5}  "

@@ -34,6 +34,8 @@ class Grid:
     input_deflection: tuple[float, float]
     truth_deflection: tuple[float, float]
     cells: list[dict[str, Any]]
+    judge_samples_per_mm2: float
+    judge_truth: bool
     entries: list[dict[str, Any]]
 
     def expand(self, converters: list[str], git_sha: str) -> list[tuple[Cell, dict[str, Any]]]:
@@ -41,7 +43,7 @@ class Grid:
         for converter in converters:
             for entry in self.entries:
                 for spec in self.cells:
-                    for seed in self.seeds:
+                    for seed in spec.get("seeds", self.seeds):
                         cell = Cell(
                             entry["id"],
                             spec["operator"],
@@ -76,6 +78,8 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         tuple(raw["input_deflection"]),
         tuple(raw["truth_deflection"]),
         raw["cells"],
+        float(raw.get("judge_samples_per_mm2", 10.0)),
+        bool(raw.get("judge_truth", True)),
         entries,
     )
 

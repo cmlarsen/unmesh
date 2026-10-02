@@ -2,30 +2,105 @@
   "version": 1,
   "name": "smoke",
   "corpus_grid": "smoke",
-  "seeds": [0, 1, 2],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
   "timeout_s": 60,
-  "input_deflection": [0.01, 0.2],
-  "truth_deflection": [0.001, 0.1],
+  "input_deflection": [
+    0.01,
+    0.2
+  ],
+  "truth_deflection": [
+    0.001,
+    0.1
+  ],
   "cells": [
-    {"operator": "identity", "severity": 0.0, "steps": []},
-    {"operator": "float32", "severity": 1.0, "steps": [["float32", 1.0]]},
-    {"operator": "rotation", "severity": 0.5, "steps": [["rotation", 0.5]]},
+    {
+      "operator": "identity",
+      "severity": 0.0,
+      "steps": [],
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 1.0,
+      "steps": [
+        [
+          "float32",
+          1.0
+        ]
+      ],
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.5,
+      "steps": [
+        [
+          "rotation",
+          0.5
+        ]
+      ]
+    },
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.02,
-      "steps": [["refine", 0.15], ["noise_off_plane", 0.02]]
+      "steps": [
+        [
+          "refine",
+          0.15
+        ],
+        [
+          "noise_off_plane",
+          0.02
+        ]
+      ]
     },
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.1,
-      "steps": [["refine", 0.15], ["noise_off_plane", 0.1]]
+      "steps": [
+        [
+          "refine",
+          0.15
+        ],
+        [
+          "noise_off_plane",
+          0.1
+        ]
+      ]
     },
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.2,
-      "steps": [["refine", 0.15], ["noise_off_plane", 0.2]]
+      "steps": [
+        [
+          "refine",
+          0.15
+        ],
+        [
+          "noise_off_plane",
+          0.2
+        ]
+      ]
     },
-    {"operator": "noise_isotropic", "severity": 0.02, "steps": [["noise_isotropic", 0.02]]},
-    {"operator": "noise_isotropic", "severity": 0.1, "steps": [["noise_isotropic", 0.1]]}
-  ]
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.1,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.1
+        ]
+      ]
+    }
+  ],
+  "judge_samples_per_mm2": 1.0,
+  "judge_truth": false
 }

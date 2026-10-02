@@ -85,6 +85,8 @@ def run_grid(
             "cache": str(cache),
             "work": str(work),
             "steps": spec["steps"],
+            "samples_per_mm2": grid.judge_samples_per_mm2,
+            "judge_truth": grid.judge_truth,
             "seed": cell.seed,
             "converter": cell.converter,
         }

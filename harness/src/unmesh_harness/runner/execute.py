@@ -52,7 +52,7 @@ def _score(
 
     from ..degrade import to_original
     from ..judge import judge, under_reports
-    from .converters import get_converter
+    from .converters import BASELINES, get_converter
     from .score import face_recovery, step_problems
 
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
@@ -83,17 +83,26 @@ def _score(
     frame = to_original(degraded)
     truth_in_input = (truth_tris.reshape(-1, 3) - frame[:3, 3]) @ frame[:3, :3]
     reported = None if report is None else report.get("max_deviation")
-    result = judge(ir, tris, truth_in_input.reshape(truth_tris.shape), reported)
-    record.update(
-        {
-            "dev_input_max": result.input.max,
-            "dev_input_p99": max(result.input.ir_to_mesh.p99, result.input.mesh_to_ir.p99),
-            "dev_truth_max": None if result.truth is None else result.truth.max,
-            "reported_deviation": reported,
-            "calibration": result.calibration,
-            "under_report": None if reported is None else under_reports(reported, result.input),
-        }
-    )
+    if task["converter"] in BASELINES:
+        record.update(dict.fromkeys(JUDGE_FIELDS))
+    else:
+        result = judge(
+            ir,
+            tris,
+            truth_in_input.reshape(truth_tris.shape) if task["judge_truth"] else None,
+            reported,
+            samples_per_mm2=task["samples_per_mm2"],
+        )
+        record.update(
+            {
+                "dev_input_max": result.input.max,
+                "dev_input_p99": max(result.input.ir_to_mesh.p99, result.input.mesh_to_ir.p99),
+                "dev_truth_max": None if result.truth is None else result.truth.max,
+                "reported_deviation": reported,
+                "calibration": result.calibration,
+                "under_report": None if reported is None else under_reports(reported, result.input),
+            }
+        )
     phases["judge"] = time.perf_counter() - mark
     mark = time.perf_counter()
     record.update(face_recovery(clean, degraded.face_id, ir, frame))
@@ -143,6 +152,14 @@ def run_prep(task: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok"}
 
 
+JUDGE_FIELDS = (
+    "dev_input_max",
+    "dev_input_p99",
+    "dev_truth_max",
+    "reported_deviation",
+    "calibration",
+    "under_report",
+)
 READY = "__ready__"
 SINGLE_THREAD_ENV = (
     "OMP_NUM_THREADS",

@@ -80,6 +80,8 @@ def convert_faceted(stl_path: Path) -> ConverterResult:
     return ir.dumps(), str(step_path) if step_path.exists() else None, json.dumps(payload)
 
 
+BASELINES = frozenset({"faceted"})
+
 CONVERTERS: dict[str, Converter] = {"unmesh": convert_unmesh, "faceted": convert_faceted}
 
 
