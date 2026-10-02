@@ -3,7 +3,7 @@ import json
 
 import numpy as np
 import pytest
-from build123d import Box, Cone, Cylinder, Sphere, Torus, fillet
+from build123d import Box, Cone, Cylinder, Solid, Sphere, Torus, fillet
 
 from unmesh.ir import Region
 from unmesh_harness.degrade import apply, to_original
@@ -36,7 +36,10 @@ def test_oracle_scores_f1_one(name):
     assert result["segmentation"]["over_segmented"] == 0
     assert result["segmentation"]["under_segmented"] == 0
     assert result["edge_error"]["missing"] == 0
-    assert result["edge_error"]["max"] == pytest.approx(0.0)
+    if result["edge_error"]["evaluated"]:
+        assert result["edge_error"]["max"] == pytest.approx(0.0)
+    else:
+        assert result["edge_error"]["max"] is None
     json.dumps(result)
 
 
@@ -144,3 +147,229 @@ def test_aggregate_groups_by_family_and_strata():
     assert by_family["plate_pockets"]["f1"] == pytest.approx(2 * 0.9 * 0.9 / 1.8)
     by_strata = aggregate(records, by="strata")
     assert by_strata["planar"]["f1"] == by_family["plate_pockets"]["f1"]
+
+
+def _perp(v):
+    v = np.asarray(v, float)
+    p = np.cross(v, [1, 0, 0])
+    if np.linalg.norm(p) < 1e-6:
+        p = np.cross(v, [0, 1, 0])
+    return p / np.linalg.norm(p)
+
+
+def _with_surface(ir, pred, fn):
+    regions = [dataclasses.replace(r, surface=fn(r.surface)) if pred(r) else r for r in ir.regions]
+    return dataclasses.replace(ir, regions=regions)
+
+
+def _detail(result, surface):
+    return next(d for d in result["faces_detail"] if d["type"] == surface)
+
+
+def test_cylinder_axis_line_shifted_two_mm_is_not_recovered():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_bore = lambda r: r.surface.type == "cylinder"  # noqa: E731
+    bore = next(r for r in ir.regions if is_bore(r))
+    shift = 2 * _perp(bore.surface.axis)
+    moved = _with_surface(
+        ir, is_bore, lambda s: dataclasses.replace(s, origin=tuple(np.array(s.origin) + shift))
+    )
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    detail = _detail(result, "cylinder")
+    assert detail["recovered"] is False
+    assert detail["errors"]["position_mm"] == pytest.approx(2.0, abs=0.01)
+
+
+@pytest.mark.parametrize("direction", ["along", "sideways"])
+def test_cone_apex_moved_three_mm_is_not_recovered(direction):
+    mesh = tessellate(Cone(5, 2, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_cone = lambda r: r.surface.type == "cone"  # noqa: E731
+    side = next(r for r in ir.regions if is_cone(r))
+    axis = np.array(side.surface.axis)
+    shift = 3 * (axis if direction == "along" else _perp(axis))
+    moved = _with_surface(
+        ir, is_cone, lambda s: dataclasses.replace(s, apex=tuple(np.array(s.apex) + shift))
+    )
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    detail = _detail(result, "cone")
+    assert detail["recovered"] is False
+    assert detail["errors"]["position_mm"] > 0.01
+
+
+@pytest.mark.parametrize("direction", ["in_plane", "along_axis"])
+def test_torus_center_moved_three_mm_is_not_recovered(direction):
+    mesh = tessellate(Torus(10, 2), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_torus = lambda r: r.surface.type == "torus"  # noqa: E731
+    ring = next(r for r in ir.regions if is_torus(r))
+    axis = np.array(ring.surface.axis)
+    shift = 3 * (axis if direction == "along_axis" else _perp(axis))
+    moved = _with_surface(
+        ir, is_torus, lambda s: dataclasses.replace(s, center=tuple(np.array(s.center) + shift))
+    )
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == 0
+    assert result["f1"] == 0.0
+
+
+def test_flipped_plane_normal_is_not_recovered():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    first = next(r.id for r in ir.regions if r.surface.type == "plane")
+    flipped = _with_surface(
+        ir,
+        lambda r: r.id == first,
+        lambda s: dataclasses.replace(s, normal=tuple(-np.array(s.normal))),
+    )
+    result = score_recovery(mesh, mesh.face_id, flipped, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    detail = next(d for d in result["faces_detail"] if d["face"] == first)
+    assert detail["recovered"] is False
+    assert detail["errors"]["normal_deg"] == pytest.approx(180.0)
+
+
+def _flipped_orientation(surface):
+    other = "same" if surface.orientation == "reversed" else "reversed"
+    return dataclasses.replace(surface, orientation=other)
+
+
+def test_bore_orientation_flipped_to_boss_is_not_recovered():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_bore = lambda r: r.surface.type == "cylinder"  # noqa: E731
+    assert next(r for r in ir.regions if is_bore(r)).surface.orientation == "reversed"
+    moved = _with_surface(ir, is_bore, _flipped_orientation)
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    assert _detail(result, "cylinder")["recovered"] is False
+
+
+def test_cone_orientation_flipped_is_not_recovered():
+    mesh = tessellate(Cone(5, 2, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_cone = lambda r: r.surface.type == "cone"  # noqa: E731
+    moved = _with_surface(ir, is_cone, _flipped_orientation)
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    assert _detail(result, "cone")["recovered"] is False
+
+
+def test_sphere_made_cavity_is_not_recovered():
+    mesh = tessellate(Sphere(5), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    assert ir.regions[0].surface.orientation == "same"
+    moved = _with_surface(ir, lambda r: True, _flipped_orientation)
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == 0
+    assert result["f1"] == 0.0
+
+
+def test_split_gt_circles_score_zero_edge_error():
+    from OCP.ShapeUpgrade import ShapeUpgrade_ShapeDivideClosedEdges
+
+    shape = Box(10, 10, 10) - Cylinder(2, 20)
+    divided = ShapeUpgrade_ShapeDivideClosedEdges(shape.wrapped)
+    divided.SetNbSplitPoints(1)
+    divided.Perform()
+    mesh = tessellate(Solid(divided.Result()), LIN, ANG)
+    assert len(mesh.adjacency) > len(build_oracle_ir(mesh).adjacencies)
+    result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
+    assert result["f1"] == 1.0
+    assert result["edge_error"]["missing"] == 0
+    assert result["edge_error"]["spurious"] == 0
+    assert result["edge_error"]["max"] == pytest.approx(0.0)
+
+
+def test_empty_ir_and_missing_adjacencies_report_none_edge_error():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    empty = dataclasses.replace(ir, regions=[], adjacencies=[], shells=[], vertices=[])
+    result = score_recovery(mesh, mesh.face_id, empty, np.eye(4))
+    assert result["f1"] == 0.0
+    assert result["edge_error"]["evaluated"] == 0
+    assert result["edge_error"]["missing"] > 0
+    assert result["edge_error"]["max"] is None
+    assert result["edge_error"]["mean"] is None
+    assert result["edge_error"]["sharp"]["max"] is None
+    no_adj = dataclasses.replace(ir, adjacencies=[])
+    result = score_recovery(mesh, mesh.face_id, no_adj, np.eye(4))
+    assert result["f1"] == 1.0
+    assert result["edge_error"]["evaluated"] == 0
+    assert result["edge_error"]["missing"] > 0
+    assert result["edge_error"]["max"] is None
+
+
+def test_unrecovered_face_pairs_are_missing_not_evaluated():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_bore = lambda r: r.surface.type == "cylinder"  # noqa: E731
+    bore = next(r for r in ir.regions if is_bore(r)).id
+    pairs = {(min(a.face_a, a.face_b), max(a.face_a, a.face_b)) for a in mesh.adjacency}
+    bore_pairs = {p for p in pairs if bore in p}
+    assert len(bore_pairs) == 2
+    wrong = _with_surface(ir, is_bore, lambda s: dataclasses.replace(s, radius=s.radius * 1.02))
+    result = score_recovery(mesh, mesh.face_id, wrong, np.eye(4))
+    assert result["matched"] == len(mesh.faces) - 1
+    assert result["edge_error"]["missing"] == len(bore_pairs)
+    assert result["edge_error"]["evaluated"] == len(pairs) - len(bore_pairs)
+
+
+def test_spurious_ir_adjacency_is_counted():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    pairs = {(min(a.face_a, a.face_b), max(a.face_a, a.face_b)) for a in mesh.adjacency}
+    hole = next((a, b) for a in range(7) for b in range(a + 1, 7) if (a, b) not in pairs)
+    extra = dataclasses.replace(ir.adjacencies[0], regions=hole)
+    result = score_recovery(
+        mesh, mesh.face_id, dataclasses.replace(ir, adjacencies=ir.adjacencies + [extra]), np.eye(4)
+    )
+    assert result["f1"] == 1.0
+    assert result["edge_error"]["spurious"] == 1
+    assert result["edge_error"]["missing"] == 0
+    assert result["edge_error"]["max"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("bad", [[-1], [10**6]])
+def test_triangle_ids_out_of_range_raise(bad):
+    from unmesh.ir import Region
+
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    first = ir.regions[0]
+    regions = [Region(0, first.surface, first.triangles + bad, first.residual)] + ir.regions[1:]
+    with pytest.raises(ValueError, match="outside"):
+        score_recovery(mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4))
+
+
+def test_runner_record_omits_details_but_function_keeps_them():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    full = score_recovery(mesh, mesh.face_id, ir, np.eye(4))
+    assert full["faces_detail"]
+    assert full["edge_error"]["details"]
+    record = face_recovery(mesh, mesh.face_id, ir, np.eye(4))
+    assert "faces_detail" not in record
+    assert "details" not in record["edge_error"]
+    assert record["edge_error"]["missing"] == 0
+    assert record["f1"] == 1.0
+
+
+def test_non_rigid_frame_raises():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    with pytest.raises(ValueError, match="rigid"):
+        score_recovery(mesh, mesh.face_id, ir, np.diag([2.0, 1.0, 1.0, 1.0]))
+
+
+def test_mirrored_oracle_still_scores_f1_one():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    moved = apply("mirror", mesh, 1.0, 3)
+    moved = apply("rotation", moved, 0.3, 4)
+    ir = build_oracle_ir(moved)
+    result = score_recovery(mesh, moved.face_id, ir, to_original(moved))
+    assert result["f1"] == 1.0
+    assert result["edge_error"]["max"] == pytest.approx(0.0)

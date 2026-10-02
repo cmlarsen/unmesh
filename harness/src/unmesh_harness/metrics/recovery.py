@@ -7,15 +7,17 @@ import numpy as np
 
 from unmesh.ir import Ir
 
-from ..labels import LabeledMesh
+from ..labels import FaceInfo, LabeledMesh, distance_to_surface
 
 IOU_MIN = 0.8
 ANGLE_TOL_DEG = 0.2
 OFFSET_TOL_MM = 0.01
+POSITION_TOL_MM = 0.01
 RADIUS_REL_TOL = 0.01
 RADIUS_ABS_TOL_MM = 0.01
 HALF_ANGLE_TOL_DEG = 0.2
 CENTER_TOL_MM = 0.01
+FRAME_ORTHO_TOL = 1e-6
 SPLIT_SHARE = 0.95
 
 ANALYTIC_TYPES = ("plane", "cylinder", "cone", "sphere", "torus")
@@ -25,10 +27,16 @@ def _frame(to_original: Any) -> np.ndarray:
     if isinstance(to_original, LabeledMesh):
         from ..degrade import to_original as frame_of
 
-        return np.array(frame_of(to_original), dtype=np.float64)
-    if to_original is None:
-        return np.eye(4)
-    return np.array(to_original, dtype=np.float64)
+        frame = np.array(frame_of(to_original), dtype=np.float64)
+    elif to_original is None:
+        frame = np.eye(4)
+    else:
+        frame = np.array(to_original, dtype=np.float64)
+    if frame.shape != (4, 4) or not np.allclose(
+        frame[:3, :3].T @ frame[:3, :3], np.eye(3), atol=FRAME_ORTHO_TOL
+    ):
+        raise ValueError("to_original frame must be rigid (orthonormal 3x3 part)")
+    return frame
 
 
 def _map_points(points: np.ndarray, frame: np.ndarray) -> np.ndarray:
@@ -98,9 +106,29 @@ def _radius_ok(radius: float, truth: float) -> tuple[bool, float, float]:
     )
 
 
+def _position_error(face: FaceInfo, gt_points: np.ndarray, mapped: dict[str, Any]) -> float:
+    params = {k: v for k, v in mapped.items() if k != "type"}
+    probe = FaceInfo(face.id, face.surface, params, False)
+    pts = np.asarray(gt_points, dtype=np.float64).reshape(-1, 3)
+    if len(pts) == 0:
+        return float("inf")
+    return float(distance_to_surface(probe, pts).max())
+
+
+def _orientation_mismatch(face: FaceInfo, ir_orientation: Any) -> float:
+    expected = "reversed" if face.reversed else "same"
+    return float(ir_orientation != expected)
+
+
 def surface_matches(
-    face_surface: str, face_params: dict[str, Any], centroid: np.ndarray, mapped: dict[str, Any]
+    face: FaceInfo,
+    gt_points: np.ndarray,
+    centroid: np.ndarray,
+    mapped: dict[str, Any],
+    ir_orientation: Any = None,
 ) -> tuple[bool, dict[str, float]]:
+    face_surface = face.surface
+    face_params = face.params
     if mapped["type"] != face_surface or face_surface not in ANALYTIC_TYPES:
         return False, {}
     errors: dict[str, float] = {}
@@ -108,12 +136,15 @@ def surface_matches(
         truth = np.asarray(face_params["normal"], dtype=np.float64)
         normal = np.asarray(mapped["normal"], dtype=np.float64)
         origin = np.asarray(mapped["origin"], dtype=np.float64)
-        errors["normal_deg"] = _unsigned_deg(truth, normal)
+        errors["normal_deg"] = _signed_deg(truth, normal)
         errors["offset_mm"] = abs(float((centroid - origin) @ normal)) / float(
             np.linalg.norm(normal)
         )
+        errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
-            errors["normal_deg"] <= ANGLE_TOL_DEG and errors["offset_mm"] <= OFFSET_TOL_MM,
+            errors["normal_deg"] <= ANGLE_TOL_DEG
+            and errors["offset_mm"] <= OFFSET_TOL_MM
+            and errors["position_mm"] <= POSITION_TOL_MM,
             errors,
         )
     if face_surface == "cylinder":
@@ -124,7 +155,15 @@ def surface_matches(
             np.asarray(face_params["axis"], dtype=np.float64),
             np.asarray(mapped["axis"], dtype=np.float64),
         )
-        return ok_r and errors["axis_deg"] <= ANGLE_TOL_DEG, errors
+        errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+        errors["position_mm"] = _position_error(face, gt_points, mapped)
+        return (
+            ok_r
+            and errors["axis_deg"] <= ANGLE_TOL_DEG
+            and not errors["orientation_mismatch"]
+            and errors["position_mm"] <= POSITION_TOL_MM,
+            errors,
+        )
     if face_surface == "cone":
         errors["axis_deg"] = _signed_deg(
             np.asarray(face_params["axis"], dtype=np.float64),
@@ -133,9 +172,15 @@ def surface_matches(
         errors["half_angle_deg"] = abs(
             math.degrees(mapped["half_angle"]) - math.degrees(face_params["half_angle"])
         )
+        errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+        errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
-            errors["axis_deg"] <= ANGLE_TOL_DEG and errors["half_angle_deg"] <= HALF_ANGLE_TOL_DEG
-        ), errors
+            errors["axis_deg"] <= ANGLE_TOL_DEG
+            and errors["half_angle_deg"] <= HALF_ANGLE_TOL_DEG
+            and not errors["orientation_mismatch"]
+            and errors["position_mm"] <= POSITION_TOL_MM,
+            errors,
+        )
     if face_surface == "sphere":
         ok_r, rel, absolute = _radius_ok(mapped["radius"], face_params["radius"])
         errors["radius_rel"] = rel
@@ -146,7 +191,15 @@ def surface_matches(
                 - np.asarray(face_params["center"], dtype=np.float64)
             )
         )
-        return ok_r and errors["center_mm"] <= CENTER_TOL_MM, errors
+        errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+        errors["position_mm"] = _position_error(face, gt_points, mapped)
+        return (
+            ok_r
+            and errors["center_mm"] <= CENTER_TOL_MM
+            and not errors["orientation_mismatch"]
+            and errors["position_mm"] <= POSITION_TOL_MM,
+            errors,
+        )
     ok_major, major_rel, major_abs = _radius_ok(mapped["major_radius"], face_params["major_radius"])
     ok_minor, minor_rel, minor_abs = _radius_ok(mapped["minor_radius"], face_params["minor_radius"])
     errors["major_rel"] = major_rel
@@ -157,7 +210,16 @@ def surface_matches(
         np.asarray(face_params["axis"], dtype=np.float64),
         np.asarray(mapped["axis"], dtype=np.float64),
     )
-    return ok_major and ok_minor and errors["axis_deg"] <= ANGLE_TOL_DEG, errors
+    errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+    errors["position_mm"] = _position_error(face, gt_points, mapped)
+    return (
+        ok_major
+        and ok_minor
+        and errors["axis_deg"] <= ANGLE_TOL_DEG
+        and not errors["orientation_mismatch"]
+        and errors["position_mm"] <= POSITION_TOL_MM,
+        errors,
+    )
 
 
 def _face_centroid(tris: np.ndarray) -> np.ndarray:
@@ -176,6 +238,14 @@ def _overlap(clean: LabeledMesh, face_id: np.ndarray, ir: Ir):
 
 
 def match_faces(clean: LabeledMesh, face_id: np.ndarray, ir: Ir) -> tuple[list[dict], np.ndarray]:
+    face_id = np.asarray(face_id)
+    for region in ir.regions:
+        tris = np.asarray(region.triangles, dtype=np.int64)
+        if len(tris) and (tris.min() < 0 or tris.max() >= len(face_id)):
+            bad = int(tris[tris < 0][0]) if (tris < 0).any() else int(tris[tris >= len(face_id)][0])
+            raise ValueError(
+                f"region {region.id}: source triangle {bad} outside [0, {len(face_id)})"
+            )
     regions, owner = _overlap(clean, face_id, ir)
     matches = []
     for face in clean.faces:
@@ -259,36 +329,34 @@ def _segmentation(
     }
 
 
-def _max_point_to_polyline(points: np.ndarray, poly: np.ndarray, closed: bool) -> float:
-    if len(poly) < 2 or len(points) == 0:
-        return 0.0 if len(points) == 0 else float("inf")
-    start = poly if closed else poly[:-1]
-    end = np.roll(poly, -1, axis=0) if closed else poly[1:]
-    ab = end - start
+def _poly_segments(poly: np.ndarray, closed: bool) -> np.ndarray:
+    p = np.asarray(poly, dtype=np.float64)
+    if len(p) < 2:
+        return np.zeros((0, 2, 3))
+    segs = np.stack([p[:-1], p[1:]], axis=1)
+    if closed and np.linalg.norm(p[0] - p[-1]) > 1e-9:
+        segs = np.concatenate([segs, np.stack([[p[-1]], [p[0]]], axis=1)])
+    return segs
+
+
+def _max_point_to_segments(points: np.ndarray, segs: np.ndarray) -> float:
+    p = np.asarray(points, dtype=np.float64)
+    if len(p) == 0 or len(segs) == 0:
+        return float("inf")
+    ab = segs[:, 1] - segs[:, 0]
     denom = (ab**2).sum(axis=1)
-    ap = points[:, None, :] - start[None, :, :]
-    t = np.zeros_like((ap * ab).sum(axis=2))
+    ap = p[:, None, :] - segs[None, :, 0]
+    t = np.zeros((len(p), len(segs)))
     valid = denom > 0
     t[:, valid] = (ap[:, valid, :] * ab[None, valid, :]).sum(axis=2) / denom[valid]
-    t = np.clip(t, 0.0, 1.0)
+    np.clip(t, 0.0, 1.0, out=t)
     d2 = ((ap - t[:, :, None] * ab[None, :, :]) ** 2).sum(axis=2)
     return float(np.sqrt(d2.min(axis=1)).max())
 
 
-def _symmetric_polyline_error(
-    gt_points: np.ndarray, ir_points: np.ndarray, ir_closed: bool
-) -> float:
-    gt_closed = (
-        len(gt_points) >= 2 and bool(np.linalg.norm(gt_points[0] - gt_points[-1]) < 1e-9)
-    ) or ir_closed
-    forward = _max_point_to_polyline(gt_points, ir_points, ir_closed)
-    backward = _max_point_to_polyline(ir_points, gt_points, gt_closed)
-    return max(forward, backward)
-
-
 def _edge_position_error(
     clean: LabeledMesh,
-    best_region: dict[int, int | None],
+    recovered_region: dict[int, int],
     ir: Ir,
     frame: np.ndarray,
 ) -> dict[str, Any]:
@@ -298,40 +366,74 @@ def _edge_position_error(
         if truth is not None
         else [np.asarray(a.points, dtype=np.float64) for a in clean.adjacency]
     )
-    ir_lines: dict[tuple[int, int], list[tuple[np.ndarray, bool]]] = {}
+    pairs: dict[tuple[int, int], list[int]] = {}
+    for i, adj in enumerate(clean.adjacency):
+        pairs.setdefault((min(adj.face_a, adj.face_b), max(adj.face_a, adj.face_b)), []).append(i)
+    ir_lines: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray, bool]]] = {}
     for adj in ir.adjacencies:
         key = (min(adj.regions), max(adj.regions))
-        ir_lines[key] = [
-            (_map_points(np.asarray(b.points, dtype=np.float64), frame), b.closed)
-            for b in adj.boundaries
-        ]
+        entries = []
+        for b in adj.boundaries:
+            pts = _map_points(np.asarray(b.points, dtype=np.float64), frame)
+            entries.append((_poly_segments(pts, b.closed), pts, b.closed))
+        ir_lines[key] = entries
     details = []
-    for i, adj in enumerate(clean.adjacency):
-        ra = best_region.get(adj.face_a)
-        rb = best_region.get(adj.face_b)
+    for (fa, fb), idxs in sorted(pairs.items()):
+        ra = recovered_region.get(fa)
+        rb = recovered_region.get(fb)
         entry: dict[str, Any] = {
-            "faces": [int(adj.face_a), int(adj.face_b)],
+            "faces": [int(fa), int(fb)],
             "regions": [None if ra is None else int(ra), None if rb is None else int(rb)],
-            "tangent": bool(adj.tangent),
-            "types": [clean.faces[adj.face_a].surface, clean.faces[adj.face_b].surface],
+            "tangent": bool(all(clean.adjacency[i].tangent for i in idxs)),
+            "types": [clean.faces[fa].surface, clean.faces[fb].surface],
+            "edges": len(idxs),
             "error": None,
         }
         key = None
         if ra is not None and rb is not None and ra != rb:
             key = (min(ra, rb), max(ra, rb))
-        if key is not None and key in ir_lines and i < len(gt_lines) and len(gt_lines[i]):
-            entry["error"] = min(
-                _symmetric_polyline_error(gt_lines[i], pts, closed) for pts, closed in ir_lines[key]
+        gt_lists = []
+        if key is not None and key in ir_lines:
+            gt_lists = [gt_lines[i] for i in idxs if i < len(gt_lines) and len(gt_lines[i]) >= 2]
+        if key is not None and key in ir_lines and gt_lists:
+            bounds = ir_lines[key]
+            ir_closed = any(closed for _, _, closed in bounds)
+            gt_segs = np.concatenate(
+                [
+                    _poly_segments(g, closed=(np.linalg.norm(g[0] - g[-1]) < 1e-9 or ir_closed))
+                    for g in gt_lists
+                ]
             )
+            forward = max(
+                min(_max_point_to_segments(g, segs) for segs, _, _ in bounds) for g in gt_lists
+            )
+            backward = _max_point_to_segments(
+                np.concatenate([pts for _, pts, _ in bounds]), gt_segs
+            )
+            entry["error"] = max(forward, backward)
         details.append(entry)
     evaluated = [d["error"] for d in details if d["error"] is not None]
 
     def stats(errors: list[float]) -> dict[str, Any]:
+        if not errors:
+            return {"evaluated": 0, "max": None, "mean": None}
         return {
             "evaluated": len(errors),
-            "max": float(max(errors)) if errors else 0.0,
-            "mean": float(sum(errors) / len(errors)) if errors else 0.0,
+            "max": float(max(errors)),
+            "mean": float(sum(errors) / len(errors)),
         }
+
+    region_face: dict[int, int] = {}
+    for face, region in recovered_region.items():
+        region_face.setdefault(region, face)
+    gt_pairs = set(pairs)
+    spurious = 0
+    for adj in ir.adjacencies:
+        a, b = adj.regions
+        fa = region_face.get(a)
+        fb = region_face.get(b)
+        if fa is not None and fb is not None and (min(fa, fb), max(fa, fb)) not in gt_pairs:
+            spurious += 1
 
     sharp = [d["error"] for d in details if d["error"] is not None and not d["tangent"]]
     tangent = [d["error"] for d in details if d["error"] is not None and d["tangent"]]
@@ -341,6 +443,7 @@ def _edge_position_error(
         **stats(evaluated),
         "sharp": stats(sharp),
         "tangent": stats(tangent),
+        "spurious": spurious,
         "details": details,
     }
 
@@ -354,7 +457,6 @@ def score_recovery(
     frame = _frame(to_original)
     face_id = np.asarray(face_id)
     matches, owner = match_faces(clean, face_id, ir)
-    best_region = {m["face"]: m["region"] for m in matches}
     matched_regions: set[int] = set()
     matched = unsupported = 0
     faces_detail = []
@@ -381,9 +483,14 @@ def score_recovery(
             faces_detail.append(detail)
             continue
         surface = ir.regions[match["region"]].surface
-        centroid = _face_centroid(clean.face_tris(face.id))
+        face_tris = clean.face_tris(face.id)
+        centroid = _face_centroid(face_tris)
         ok, errors = surface_matches(
-            face.surface, face.params, centroid, _mapped_surface(surface, frame)
+            face,
+            face_tris.reshape(-1, 3),
+            centroid,
+            _mapped_surface(surface, frame),
+            getattr(surface, "orientation", None),
         )
         detail["errors"] = {k: float(v) for k, v in errors.items()}
         if ok:
@@ -400,6 +507,7 @@ def score_recovery(
             per_type[region.surface.type]["regions"] += 1
     faces = len(clean.faces)
     precision, recall, f1 = _prf_regions(matched, len(matched_regions), faces, len(ir.regions))
+    recovered_region = {d["face"]: d["region"] for d in faces_detail if d["recovered"]}
     by_type = {}
     for surface, bucket in per_type.items():
         p, r, f = _prf_regions(
@@ -427,7 +535,7 @@ def score_recovery(
             k: {"n": len(v), "max": max(v), "mean": sum(v) / len(v)}
             for k, v in error_values.items()
         },
-        "edge_error": _edge_position_error(clean, best_region, ir, frame),
+        "edge_error": _edge_position_error(clean, recovered_region, ir, frame),
         "faces_detail": faces_detail,
     }
     return out
