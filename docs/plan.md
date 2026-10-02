@@ -178,8 +178,8 @@ No C++ is written in this project.
 ## Data and licensing
 
 - **Generated corpus:** license-clean, redistributable.
-- **Imported-STEP tier:** fetched by `scripts/fetch-datasets`, never committed. Settle the dataset
-  terms (ABC, Fusion 360 Gallery) in their own issue before the tier lands.
+- **Imported-STEP tier:** fetched by `scripts/fetch-datasets`, never committed. Dataset terms and the
+  redistributable / download-only / excluded decision per source are in [datasets.md](datasets.md).
 - **Hold-out STLs:** CC0 or CC-BY, or with the owner's consent. Stored outside this repo.
 
 ## Conventions for agents
@@ -199,4 +199,8 @@ No C++ is written in this project.
 
 ## Open decisions
 
-- Dataset terms for the imported-STEP tier (#22).
+- None.
+
+## Decided
+
+- Non-commercial datasets (Fusion 360 Gallery, Thingi10K NC files) are excluded, because OttoCAM is sold and consumes unmesh. ND, SA, GPL and ABC data stay download-only and unpublished. The owner can revisit; see [datasets.md](datasets.md).
