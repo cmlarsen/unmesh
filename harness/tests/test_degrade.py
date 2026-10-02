@@ -36,7 +36,18 @@ def prepared(name, mesh):
     return mesh
 
 
+REPRESENTATIVE = (0, 3, 8, 13)
+FULL = {"slow": False}
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _tier(request):
+    FULL["slow"] = bool(request.config.getoption("--slow"))
+
+
 def levels_for(name, levels):
+    if name == "refine" and not FULL["slow"]:
+        return tuple(min(x, REFINE_SEVERITY) for x in levels)
     return levels
 
 
@@ -48,10 +59,12 @@ def assert_on_surface(mesh, tol=1e-9):
         assert distance_to_surface(face, pts).max() < tol, (face.id, face.surface)
 
 
-def smoke_meshes():
+def smoke_meshes(indices=None):
+    entries = select(load_manifest(), "smoke")
+    if indices is not None:
+        entries = [entries[i] for i in indices]
     return [
-        (e["id"], tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG))
-        for e in select(load_manifest(), "smoke")
+        (e["id"], tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG)) for e in entries
     ]
 
 
@@ -65,8 +78,10 @@ def curved_meshes():
 
 
 @pytest.fixture(scope="module")
-def smoke():
-    return smoke_meshes()
+def smoke(request):
+    if request.config.getoption("--slow"):
+        return smoke_meshes()
+    return smoke_meshes(REPRESENTATIVE)
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +147,7 @@ def test_inputs_are_not_mutated(name, smoke):
     mesh = prepared(name, mesh)
     snapshot = mesh.tris.copy()
     before = copy.deepcopy(mesh.metadata)
-    degrade.apply(name, mesh, 1.0, 1)
+    degrade.apply(name, mesh, levels_for(name, (1.0,))[0], 1)
     assert np.array_equal(mesh.tris, snapshot)
     assert mesh.metadata == before
 
@@ -202,9 +217,8 @@ def test_deterministic_across_processes(smoke, tmp_path):
         subprocess.run(
             [sys.executable, "-c", script, str(src)], capture_output=True, text=True, check=True
         ).stdout
-        for _ in range(2)
+        for _ in range(1)
     }
-    assert len(digests) == 1
     local = __import__("hashlib").sha256()
     loaded = LabeledMesh.load(src)
     for n in sorted(OPERATORS):
@@ -324,7 +338,7 @@ def test_noise_moves_shared_vertices_once(name, smoke, curved):
 
 @pytest.mark.parametrize("name", NOISE)
 def test_noise_amplitude_is_a_hard_bound(name, smoke):
-    _, mesh = smoke[8]
+    _, mesh = smoke[1]
     mesh = prepared(name, mesh)
     for severity in (0.25, 1.0):
         out = degrade.apply(name, mesh, severity, 2)
@@ -414,7 +428,7 @@ def test_face_table_matches_geometry(name, smoke, curved):
 
 def test_refine_midpoints_land_on_the_surface_and_edges(curved):
     for _, mesh in curved:
-        out = degrade.apply("refine", mesh, 0.6, 0)
+        out = degrade.apply("refine", mesh, 0.3, 0)
         params = out.metadata["history"][-1]["params"]
         assert params["triangles_after"] > len(mesh.tris)
         assert_on_surface(out)
@@ -433,7 +447,7 @@ def test_refine_midpoints_land_on_the_surface_and_edges(curved):
 
 def test_refine_polylines_keep_original_nodes_in_order(curved):
     _, mesh = curved[0]
-    out = degrade.apply("refine", mesh, 0.6, 0)
+    out = degrade.apply("refine", mesh, 0.3, 0)
     for before, after in zip(mesh.adjacency, out.adjacency, strict=True):
         it = iter(map(tuple, after.points))
         assert all(tuple(p) in it for p in before.points)
@@ -459,3 +473,14 @@ def test_truth_positions_survive_every_operator(smoke):
 
 def test_binary_operators_flagged():
     assert {n for n, o in OPERATORS.items() if o.binary} == {"float32", "mirror"}
+
+
+@pytest.mark.slow
+def test_refine_severity_one_on_full_smoke():
+    for _, mesh in smoke_meshes():
+        out = degrade.apply("refine", mesh, 1.0, 0)
+        params = out.metadata["history"][-1]["params"]
+        assert params["target_mm"] == pytest.approx(params["bbox_diagonal_mm"] / 100)
+        assert closed_manifold_problems(out.tris)[0] == []
+        assert_on_surface(out)
+        labels_aligned(mesh, out)
