@@ -26,6 +26,7 @@ dev = [
 python-source = "python"
 module-name = "unmesh._core"
 manifest-path = "crates/unmesh-py/Cargo.toml"
+profile = "release"
 features = ["pyo3/extension-module"]
 
 [tool.uv]
