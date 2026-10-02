@@ -35,6 +35,7 @@ scripts/check.sh
   The full `standard` validity test runs with `uv run pytest harness/tests --slow`.
 - `harness/src/unmesh_harness/labels.py`: `tessellate(shape, lin, ang)` gives a `LabeledMesh` (per-triangle face id, analytic face table, edge adjacency); deflection settings in `DEFLECTION_SETTINGS`.
 - `harness/src/unmesh_harness/oracle.py`: `build_oracle_ir(mesh)` builds the IR straight from a `LabeledMesh` (oracle input for fitting and edge-building).
+- `harness/src/unmesh_harness/judge.py`: `judge(ir, input_mesh, truth_mesh, report, samples_per_mm2, seed)`, the independent fidelity judge (Rust: `unmesh_core::judge`, parry3d BVH). Samples each region on its own source triangles projected onto the analytic surface, and measures both directions (IR to mesh, mesh to IR footprint) against the input mesh and the fine ground truth. `calibration` is the converter's reported `max_deviation` minus the measured two-sided max; negative means it under-reports. It imports nothing from the converter path.
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions
