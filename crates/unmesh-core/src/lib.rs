@@ -1,6 +1,7 @@
 pub mod api;
 mod convert;
 pub mod ir;
+pub mod judge;
 pub mod mesh;
 pub mod stl;
 pub mod weld;
