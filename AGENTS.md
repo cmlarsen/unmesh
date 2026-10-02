@@ -34,6 +34,7 @@ scripts/check.sh
   writes STEP + metadata JSON to `$UNMESH_CACHE_DIR/corpus` or `~/.cache/unmesh/corpus` (never committed).
   The full `standard` validity test runs with `uv run pytest harness/tests --slow`.
 - `harness/src/unmesh_harness/labels.py`: `tessellate(shape, lin, ang)` gives a `LabeledMesh` (per-triangle face id, analytic face table, edge adjacency); deflection settings in `DEFLECTION_SETTINGS`.
+- `harness/src/unmesh_harness/oracle.py`: `build_oracle_ir(mesh)` builds the IR straight from a `LabeledMesh` (oracle input for fitting and edge-building).
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions

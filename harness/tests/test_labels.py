@@ -9,7 +9,7 @@ from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import (
     DEFLECTION_SETTINGS,
-    TANGENT_THRESHOLD_RAD,
+    TANGENT_THRESHOLD_DEG,
     LabeledMesh,
     distance_to_surface,
     tessellate,
@@ -17,7 +17,7 @@ from unmesh_harness.labels import (
 
 
 def closed_manifold_problems(tris):
-    verts, idx, _ = unmesh.weld(tris, 0.0)
+    verts, idx, *_ = unmesh.weld(tris, 0.0)
     directed: dict[tuple[int, int], int] = {}
     for a, b, c in idx.tolist():
         for e in ((a, b), (b, c), (c, a)):
@@ -130,8 +130,10 @@ def test_adjacency_tangent_versus_transversal():
     assert {mesh.faces[a.face_a].surface for a in tangent} | {
         mesh.faces[a.face_b].surface for a in tangent
     } == {"plane", "cylinder"}
-    assert all(a.dihedral < TANGENT_THRESHOLD_RAD for a in tangent)
-    assert all(a.dihedral > TANGENT_THRESHOLD_RAD for a in mesh.adjacency if not a.tangent)
+    assert all(math.degrees(a.dihedral) < TANGENT_THRESHOLD_DEG for a in tangent)
+    assert all(
+        math.degrees(a.dihedral) >= TANGENT_THRESHOLD_DEG for a in mesh.adjacency if not a.tangent
+    )
 
 
 def test_cylinder_edges_are_circles():

@@ -10,6 +10,7 @@ import numpy as np
 from build123d import Shape
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+from OCP.BRepClass3d import BRepClass3d
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GeomAbs import (
     GeomAbs_BezierCurve,
@@ -31,13 +32,21 @@ from OCP.GeomAbs import (
     GeomAbs_Torus,
 )
 from OCP.GeomLProp import GeomLProp_SLProps
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
+from OCP.TopAbs import (
+    TopAbs_EDGE,
+    TopAbs_FACE,
+    TopAbs_FORWARD,
+    TopAbs_REVERSED,
+    TopAbs_SHELL,
+    TopAbs_SOLID,
+    TopAbs_VERTEX,
+)
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_IndexedMapOfShape
 
-TANGENT_THRESHOLD_RAD = 0.01
+TANGENT_THRESHOLD_DEG = 3.0
 
 DEFLECTION_SETTINGS = ((0.1, 0.5), (0.01, 0.2), (0.001, 0.1))
 
@@ -81,6 +90,18 @@ class EdgeAdjacency:
     curve: str
     tangent: bool
     dihedral: float
+    points: list[list[float]]
+    start_vertex: int
+    end_vertex: int
+    forward_in_a: bool
+
+
+@dataclass
+class ShellInfo:
+    role: str
+    parent: int | None
+    closed: bool
+    faces: list[int]
 
 
 @dataclass
@@ -91,7 +112,8 @@ class LabeledMesh:
     adjacency: list[EdgeAdjacency]
     linear_deflection: float
     angular_deflection: float
-    meta: dict[str, Any] = field(default_factory=dict)
+    vertices: list[list[float]] = field(default_factory=list)
+    shells: list[ShellInfo] = field(default_factory=list)
 
     def save(self, path: str | Path) -> None:
         np.savez_compressed(
@@ -100,6 +122,8 @@ class LabeledMesh:
             face_id=self.face_id,
             faces=json.dumps([f.__dict__ for f in self.faces]),
             adjacency=json.dumps([a.__dict__ for a in self.adjacency]),
+            vertices=json.dumps(self.vertices),
+            shells=json.dumps([x.__dict__ for x in self.shells]),
             deflection=np.array([self.linear_deflection, self.angular_deflection]),
         )
 
@@ -114,6 +138,8 @@ class LabeledMesh:
                 adjacency=[EdgeAdjacency(**a) for a in json.loads(str(z["adjacency"]))],
                 linear_deflection=lin,
                 angular_deflection=ang,
+                vertices=json.loads(str(z["vertices"])),
+                shells=[ShellInfo(**x) for x in json.loads(str(z["shells"]))],
             )
 
     def write_stl(self, path: str | Path) -> None:
@@ -149,9 +175,10 @@ def _surface_params(face, adaptor: BRepAdaptor_Surface) -> tuple[str, dict[str, 
         }
     if kind == GeomAbs_Cone:
         cone = adaptor.Cone()
+        axis = _vec(cone.Axis().Direction())
         return name, {
             "apex": _vec(cone.Apex()),
-            "axis": _vec(cone.Axis().Direction()),
+            "axis": [-c for c in axis] if cone.SemiAngle() < 0 else axis,
             "half_angle": abs(cone.SemiAngle()),
         }
     if kind == GeomAbs_Sphere:
@@ -183,21 +210,36 @@ def _face_normal(face, edge, t: float) -> np.ndarray | None:
 
 def _edge_dihedral(edge, face_a, face_b, samples: int = 5) -> float:
     first, last = BRep_Tool.Range_s(edge, face_a)
-    worst = 0.0
+    angles = []
     for k in range(samples):
         t = first + (last - first) * (k + 0.5) / samples
         na, nb = _face_normal(face_a, edge, t), _face_normal(face_b, edge, t)
         if na is None or nb is None:
             continue
         cos = float(np.clip(na @ nb, -1.0, 1.0))
-        worst = max(worst, math.acos(cos))
-    return worst
+        angles.append(math.acos(cos))
+    return float(np.median(angles)) if angles else 0.0
+
+
+def _forward_in_face(face, edge) -> bool:
+    exp = TopExp_Explorer(face, TopAbs_EDGE)
+    while exp.More():
+        cur = exp.Current()
+        if cur.IsSame(edge):
+            return cur.Orientation() == TopAbs_FORWARD
+        exp.Next()
+    raise RuntimeError("edge not in face")
 
 
 def _indexed(shape, kind) -> TopTools_IndexedMapOfShape:
     m = TopTools_IndexedMapOfShape()
     TopExp.MapShapes_s(shape, kind, m)
     return m
+
+
+def _vertex_point(vertex) -> tuple[float, float, float]:
+    p = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertex))
+    return (p.X(), p.Y(), p.Z())
 
 
 def _point(p, trsf) -> tuple[float, float, float]:
@@ -216,6 +258,7 @@ def tessellate(
     vertex_map = _indexed(wrapped, TopAbs_VERTEX)
 
     canonical: dict[tuple, tuple[float, float, float]] = {}
+    polylines: dict[int, list[tuple[float, float, float]]] = {}
     tri_blocks: list[np.ndarray] = []
     id_blocks: list[np.ndarray] = []
     faces: list[FaceInfo] = []
@@ -246,6 +289,7 @@ def tessellate(
             v_first = TopExp.FirstVertex_s(edge)
             v_last = TopExp.LastVertex_s(edge)
             last = len(idx) - 1
+            line = []
             for k, node in enumerate(idx):
                 if k == 0 and not v_first.IsNull():
                     key = ("v", vertex_map.FindIndex(v_first))
@@ -254,6 +298,8 @@ def tessellate(
                 else:
                     key = ("e", eid, k)
                 nodes[node - 1] = canonical.setdefault(key, nodes[node - 1])
+                line.append(nodes[node - 1])
+            polylines.setdefault(eid, line)
 
         pts = np.array(nodes, dtype=np.float64)
         t = np.array(
@@ -285,18 +331,54 @@ def tessellate(
                 owners.append(f)
         if len(owners) != 2:
             continue
-        fa, fb = (TopoDS.Face_s(f) for f in owners)
+        ia, ib = sorted(face_map.FindIndex(f) for f in owners)
+        if ia == ib or ei not in polylines:
+            continue
+        fa, fb = (TopoDS.Face_s(face_map.FindKey(i)) for i in (ia, ib))
         dihedral = _edge_dihedral(edge, fa, fb)
+        v_first = TopExp.FirstVertex_s(edge)
+        v_last = TopExp.LastVertex_s(edge)
         adjacency.append(
             EdgeAdjacency(
                 edge_id=ei - 1,
-                face_a=face_map.FindIndex(fa) - 1,
-                face_b=face_map.FindIndex(fb) - 1,
+                face_a=ia - 1,
+                face_b=ib - 1,
                 curve=_CURVE_TYPES.get(BRepAdaptor_Curve(edge).GetType(), "other"),
-                tangent=dihedral < TANGENT_THRESHOLD_RAD,
+                tangent=math.degrees(dihedral) < TANGENT_THRESHOLD_DEG,
                 dihedral=dihedral,
+                points=[list(p) for p in polylines[ei]],
+                start_vertex=vertex_map.FindIndex(v_first) - 1,
+                end_vertex=vertex_map.FindIndex(v_last) - 1,
+                forward_in_a=_forward_in_face(fa, edge),
             )
         )
+
+    shells: list[ShellInfo] = []
+    solids = TopExp_Explorer(wrapped, TopAbs_SOLID)
+    while solids.More():
+        solid = solids.Current()
+        solids.Next()
+        outer = BRepClass3d.OuterShell_s(TopoDS.Solid_s(solid))
+        parent = len(shells)
+        shells.append(ShellInfo("outer", None, True, []))
+        other = []
+        sh = TopExp_Explorer(solid, TopAbs_SHELL)
+        while sh.More():
+            cur = sh.Current()
+            sh.Next()
+            if cur.IsSame(outer):
+                other.append((0, cur))
+            else:
+                other.append((1, cur))
+        for is_cavity, shell in sorted(other, key=lambda x: x[0]):
+            faces_of = _indexed(shell, TopAbs_FACE)
+            ids = sorted(
+                face_map.FindIndex(faces_of.FindKey(i)) - 1 for i in range(1, faces_of.Extent() + 1)
+            )
+            if is_cavity:
+                shells.append(ShellInfo("cavity", parent, True, ids))
+            else:
+                shells[parent].faces = ids
 
     return LabeledMesh(
         tris=np.concatenate(tri_blocks) if tri_blocks else np.zeros((0, 3, 3)),
@@ -305,6 +387,11 @@ def tessellate(
         adjacency=adjacency,
         linear_deflection=linear_deflection,
         angular_deflection=angular_deflection,
+        vertices=[
+            list(canonical.get(("v", i), _vertex_point(vertex_map.FindKey(i))))
+            for i in range(1, vertex_map.Extent() + 1)
+        ],
+        shells=shells,
     )
 
 
