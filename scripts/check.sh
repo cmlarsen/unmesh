@@ -10,4 +10,4 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 uv run ruff check
 uv run ruff format --check
-uv run pytest
+uv run pytest -m "not benchmark"

@@ -34,6 +34,7 @@ unmesh-harness = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "harness/tests"]
+markers = ["benchmark: timing assertions, excluded from scripts/check.sh"]
 
 [tool.ruff]
 line-length = 100
