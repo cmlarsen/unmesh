@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 import pytest
-from build123d import Box, Cone, Cylinder, Sphere, Torus, fillet
+from build123d import Box, Cone, Cylinder, Plane, Sphere, Torus, fillet, mirror
 
 import unmesh
 from unmesh_harness.corpus import load_manifest, select
@@ -12,6 +12,7 @@ from unmesh_harness.labels import (
     TANGENT_THRESHOLD_DEG,
     LabeledMesh,
     distance_to_surface,
+    outward_normals,
     tessellate,
 )
 
@@ -56,6 +57,12 @@ def check_part(shape, lin, ang, exact_volume=True):
     for face in mesh.faces:
         d = distance_to_surface(face, mesh.face_tris(face.id).mean(axis=1))
         assert d.max() <= lin + 1e-9, (face.id, face.surface, d.max())
+    for face in mesh.faces:
+        tris = mesh.face_tris(face.id)
+        n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+        area = np.linalg.norm(n, axis=1)
+        keep = area > 1e-12
+        assert (outward_normals(face, tris.mean(axis=1)[keep]) * n[keep]).sum(axis=1).min() > 0
     pairs = {tuple(sorted((a.face_a, a.face_b))) for a in mesh.adjacency}
     assert pairs == mesh_face_pairs(mesh)
     return mesh
@@ -80,6 +87,11 @@ PRIMITIVES = {
     "cone": (lambda: Cone(5, 2, 10), {"cone", "plane"}),
     "sphere": (lambda: Sphere(5), {"sphere"}),
     "torus": (lambda: Torus(10, 2), {"torus"}),
+    "filleted_all": (lambda: fillet(Box(20, 20, 20).edges(), 3), {"plane", "cylinder", "sphere"}),
+    "mirrored_drilled": (
+        lambda: mirror(Box(10, 10, 10) - Cylinder(2, 20), Plane.YZ),
+        {"plane", "cylinder"},
+    ),
     "drilled": (lambda: Box(10, 10, 10) - Cylinder(2, 20), {"plane", "cylinder"}),
 }
 

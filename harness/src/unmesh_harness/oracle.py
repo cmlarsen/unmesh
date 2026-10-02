@@ -83,16 +83,17 @@ def _merge(chain):
 
 
 def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_THRESHOLD_DEG) -> Ir:
+    verts, _, kept_src, _ = unmesh.weld(mesh.tris, 1e-6)
+    kept = np.zeros(len(mesh.tris), dtype=bool)
+    kept[kept_src] = True
+    order = np.argsort(mesh.face_id, kind="stable")
+    bounds = np.searchsorted(mesh.face_id[order], np.arange(len(mesh.faces) + 1))
     regions = []
     for face in mesh.faces:
-        tris = mesh.face_tris(face.id)
+        ids = order[bounds[face.id] : bounds[face.id + 1]]
+        ids = ids[kept[ids]]
         regions.append(
-            Region(
-                face.id,
-                _surface(face),
-                np.nonzero(mesh.face_id == face.id)[0].tolist(),
-                _residual(face, tris),
-            )
+            Region(face.id, _surface(face), ids.tolist(), _residual(face, mesh.tris[ids]))
         )
 
     def kind_of(deg: float) -> str:
@@ -171,7 +172,6 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     else:
         shells = [Shell(True, "outer", None, [f.id for f in mesh.faces])]
 
-    verts, _, _, _ = unmesh.weld(mesh.tris, 1e-6)
     return Ir(
         Tolerances(linear=mesh.linear_deflection, tangent_threshold_deg=tangent_threshold_deg),
         Source(len(mesh.tris), len(verts)),

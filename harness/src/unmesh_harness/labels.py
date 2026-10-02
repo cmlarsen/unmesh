@@ -10,6 +10,7 @@ import numpy as np
 from build123d import Shape
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCP.BRepClass3d import BRepClass3d
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GeomAbs import (
@@ -90,6 +91,8 @@ class EdgeAdjacency:
     curve: str
     tangent: bool
     dihedral: float
+    dihedral_min: float
+    dihedral_max: float
     points: list[list[float]]
     start_vertex: int
     end_vertex: int
@@ -155,17 +158,35 @@ def _vec(v) -> list[float]:
     return [v.X(), v.Y(), v.Z()]
 
 
-def _surface_params(face, adaptor: BRepAdaptor_Surface) -> tuple[str, dict[str, Any]]:
+def _surface_params(face, adaptor: BRepAdaptor_Surface) -> tuple[str, dict[str, Any], bool]:
     kind = adaptor.GetType()
     name = _SURFACE_TYPES.get(kind, "other")
-    flip = face.Orientation() == TopAbs_REVERSED
+    reversed_face = face.Orientation() == TopAbs_REVERSED
     if kind == GeomAbs_Plane:
         pln = adaptor.Plane()
-        n = _vec(pln.Axis().Direction())
-        return name, {
-            "origin": _vec(pln.Location()),
-            "normal": [-c for c in n] if flip else n,
-        }
+        pos = pln.Position()
+        natural = np.cross(_vec(pos.XDirection()), _vec(pos.YDirection()))
+        flip = reversed_face
+        return (
+            name,
+            {
+                "origin": _vec(pln.Location()),
+                "normal": (-natural if flip else natural).tolist(),
+            },
+            flip,
+        )
+    position = {
+        GeomAbs_Cylinder: lambda: adaptor.Cylinder().Position(),
+        GeomAbs_Cone: lambda: adaptor.Cone().Position(),
+        GeomAbs_Sphere: lambda: adaptor.Sphere().Position(),
+        GeomAbs_Torus: lambda: adaptor.Torus().Position(),
+    }.get(kind)
+    flip = reversed_face != (position is not None and not position().Direct())
+    name, params = _analytic_params(kind, name, adaptor)
+    return name, params, flip
+
+
+def _analytic_params(kind, name, adaptor) -> tuple[str, dict[str, Any]]:
     if kind == GeomAbs_Cylinder:
         cyl = adaptor.Cylinder()
         return name, {
@@ -208,7 +229,7 @@ def _face_normal(face, edge, t: float) -> np.ndarray | None:
     return -n if face.Orientation() == TopAbs_REVERSED else n
 
 
-def _edge_dihedral(edge, face_a, face_b, samples: int = 5) -> float:
+def _edge_dihedral(edge, face_a, face_b, samples: int = 16) -> tuple[float, float, float]:
     first, last = BRep_Tool.Range_s(edge, face_a)
     angles = []
     for k in range(samples):
@@ -218,7 +239,9 @@ def _edge_dihedral(edge, face_a, face_b, samples: int = 5) -> float:
             continue
         cos = float(np.clip(na @ nb, -1.0, 1.0))
         angles.append(math.acos(cos))
-    return float(np.median(angles)) if angles else 0.0
+    if not angles:
+        raise RuntimeError("no surface normals could be sampled along an edge")
+    return float(np.median(angles)), min(angles), max(angles)
 
 
 def _forward_in_face(face, edge) -> bool:
@@ -250,7 +273,7 @@ def _point(p, trsf) -> tuple[float, float, float]:
 def tessellate(
     shape: Shape | Any, linear_deflection: float, angular_deflection: float
 ) -> LabeledMesh:
-    wrapped = getattr(shape, "wrapped", shape)
+    wrapped = BRepBuilderAPI_Copy(getattr(shape, "wrapped", shape)).Shape()
     BRepMesh_IncrementalMesh(wrapped, linear_deflection, False, angular_deflection, True)
 
     face_map = _indexed(wrapped, TopAbs_FACE)
@@ -266,9 +289,9 @@ def tessellate(
     for fi in range(1, face_map.Extent() + 1):
         face = TopoDS.Face_s(face_map.FindKey(fi))
         adaptor = BRepAdaptor_Surface(face)
-        name, params = _surface_params(face, adaptor)
+        name, params, orientation_reversed = _surface_params(face, adaptor)
         flipped = face.Orientation() == TopAbs_REVERSED
-        faces.append(FaceInfo(fi - 1, name, params, flipped))
+        faces.append(FaceInfo(fi - 1, name, params, orientation_reversed))
 
         loc = TopLoc_Location()
         tri = BRep_Tool.Triangulation_s(face, loc)
@@ -335,7 +358,7 @@ def tessellate(
         if ia == ib or ei not in polylines:
             continue
         fa, fb = (TopoDS.Face_s(face_map.FindKey(i)) for i in (ia, ib))
-        dihedral = _edge_dihedral(edge, fa, fb)
+        dihedral, dihedral_min, dihedral_max = _edge_dihedral(edge, fa, fb)
         v_first = TopExp.FirstVertex_s(edge)
         v_last = TopExp.LastVertex_s(edge)
         adjacency.append(
@@ -346,6 +369,8 @@ def tessellate(
                 curve=_CURVE_TYPES.get(BRepAdaptor_Curve(edge).GetType(), "other"),
                 tangent=math.degrees(dihedral) < TANGENT_THRESHOLD_DEG,
                 dihedral=dihedral,
+                dihedral_min=dihedral_min,
+                dihedral_max=dihedral_max,
                 points=[list(p) for p in polylines[ei]],
                 start_vertex=vertex_map.FindIndex(v_first) - 1,
                 end_vertex=vertex_map.FindIndex(v_last) - 1,
@@ -421,3 +446,27 @@ def distance_to_surface(face: FaceInfo, points: np.ndarray) -> np.ndarray:
             best = np.minimum(best, np.where(along >= 0, perp, np.hypot(h, rho)))
         return best
     return np.full(len(p), np.nan)
+
+
+def outward_normals(face: FaceInfo, points: np.ndarray) -> np.ndarray:
+    p = np.asarray(points, dtype=np.float64)
+    prm = face.params
+    if face.surface == "plane":
+        return np.tile(prm["normal"], (len(p), 1))
+    if face.surface == "sphere":
+        n = p - np.array(prm["center"])
+    else:
+        origin = np.array(prm.get("origin", prm.get("apex", prm.get("center"))))
+        axis = np.array(prm["axis"])
+        v = p - origin
+        radial = v - np.outer(v @ axis, axis)
+        radial /= np.linalg.norm(radial, axis=1, keepdims=True)
+        if face.surface == "cylinder":
+            n = radial
+        elif face.surface == "cone":
+            a = prm["half_angle"]
+            n = math.cos(a) * radial - math.sin(a) * axis
+        else:
+            n = p - (origin + prm["major_radius"] * radial)
+    n = n / np.linalg.norm(n, axis=1, keepdims=True)
+    return -n if face.reversed else n
