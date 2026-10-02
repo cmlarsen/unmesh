@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 import pytest
@@ -16,9 +17,15 @@ def test_result_unpacks():
 
 
 def test_step_namespace_is_lazy_and_ocp_free():
-    import unmesh.step as step
-
-    assert unmesh.step is step
-    assert "OCP" not in sys.modules
-    with pytest.raises(NotImplementedError):
-        step.write(None, "out.step")
+    code = (
+        "import sys, unmesh, unmesh.step as step\n"
+        "assert unmesh.step is step\n"
+        "assert 'OCP' not in sys.modules\n"
+        "try:\n"
+        "    step.write(None, 'out.step')\n"
+        "except NotImplementedError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise SystemExit(1)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
