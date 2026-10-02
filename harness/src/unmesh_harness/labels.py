@@ -117,6 +117,7 @@ class LabeledMesh:
     angular_deflection: float
     vertices: list[list[float]] = field(default_factory=list)
     shells: list[ShellInfo] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: str | Path) -> None:
         np.savez_compressed(
@@ -128,6 +129,7 @@ class LabeledMesh:
             vertices=json.dumps(self.vertices),
             shells=json.dumps([x.__dict__ for x in self.shells]),
             deflection=np.array([self.linear_deflection, self.angular_deflection]),
+            metadata=json.dumps(self.metadata),
         )
 
     @classmethod
@@ -143,6 +145,7 @@ class LabeledMesh:
                 angular_deflection=ang,
                 vertices=json.loads(str(z["vertices"])),
                 shells=[ShellInfo(**x) for x in json.loads(str(z["shells"]))],
+                metadata=json.loads(str(z["metadata"])) if "metadata" in z.files else {},
             )
 
     def write_stl(self, path: str | Path) -> None:
