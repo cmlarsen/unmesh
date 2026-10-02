@@ -3,9 +3,9 @@
 Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` writer, and the Rust
 crate `unmesh-core`. They share one contract, the [IR](ir.md).
 
-Everything here is v0 and may change freely before the first release. `convert` and `step.write` are
-specified now and implemented by later issues (#15, #5); until then they raise `NotImplementedError`
-(Python) or return `ConvertError::NotImplemented` (Rust).
+Everything here is v0 and may change freely before the first release. `convert` is specified now and implemented by a later issue (#15); until then it raises
+`NotImplementedError` (Python) or returns `ConvertError::NotImplemented` (Rust). `step.write` is implemented for planes and
+`facets` (#5).
 
 ## Python
 
@@ -54,30 +54,60 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
 come back as `facets`.
 
-### `unmesh.step.write(ir, path, options=None) -> WriteReport`
+### `unmesh.step.write(ir, path, options=None, *, mesh=None) -> WriteReport`
 
 An optional extra: `pip install unmesh[step]` installs OCP. `import unmesh` never imports OCP;
 `unmesh.step` imports it only when `write` runs, and raises `ImportError` with the install hint when
 it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 
-`options` is a `WriteOptions`: `max_shape_tolerance` (default `1e-3`), the largest OCCT shape
-tolerance a written face may need before the writer falls back.
+`options` is a `WriteOptions`:
 
-`write` never produces an invalid solid and does not raise for a hard IR. If building or validating the
-analytic solid fails, it writes the faceted solid (one face per triangle, merging only exactly
-coplanar faces) and says so. It raises only for I/O errors and for an `ir` that fails
-`Ir.validate()`.
+- `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
+- `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
+
+`mesh` is the source mesh the IR was converted from, in any form `convert` accepts (path, `(n, 3, 3)`
+array, `(vertices, faces)` tuple). The IR does not embed the mesh, and analytic regions carry no
+triangles, so the faceted fallback can only be built when the caller passes it. Region triangle ids index
+this mesh. **Callers that went through `convert` must pass the mesh** (the converter, #15, will wire
+this); `mesh=None` is for callers that only have an IR. Without `mesh`, if any shell fails, `write`
+writes nothing (no partial part, no file), returns `valid=False`, and says why in `issues` and
+`shells[*].issues`; it still does not raise.
+
+Building (v0, planes and `facets` only): a vertex with at least two incident plane regions is moved
+onto those planes (least-squares, pulled toward the IR position along any free direction, so two planes
+give the point on their line nearest the IR position and one plane plus facets is not snapped). Patch
+vertices of a `facets` region that coincide with a moved IR vertex move with it. Plane-plane edges are
+straight lines between vertices, and every boundary point (closed plane-plane boundaries included, measured
+against both planes) must lie within the deviation limit of the built edge. Loops are chained
+from the boundaries in each region's direction, faces are built on the analytic planes, sewn, and
+passed through ShapeFix. Boundaries touching a `facets` region keep their polyline. An outer shell and
+the cavity shells that name it become one solid; an open shell becomes a sewn shell, never a solid;
+several outer shells become a compound. A region with a non-plane surface (cylinder, cone, sphere,
+torus) is not supported yet and triggers the fallback.
+
+Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
+`max_shape_tolerance`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
+solid: one planar face per source triangle, winding corrected per shell from its signed volume, merging
+only exactly coplanar faces, sewn at 1e-6.
+
+`write` never produces an invalid solid and does not raise for a hard IR. It raises only for I/O errors
+and for an `ir` that fails `Ir.validate()`.
 
 `WriteReport`:
 
 | field | meaning |
 |---|---|
-| `valid` | Whether the written file passed validation (`BRepCheck`, positive volume, tolerance limit). |
+| `valid` | Whether every outer shell was written and passed validation. |
 | `solids` | Number of solids in the written compound. |
 | `max_shape_tolerance` | Largest shape tolerance in the written shape. |
-| `faces` | `FaceReport(region, surface_type, max_shape_tolerance)` for each written analytic face. |
+| `faces` | `FaceReport(region, surface_type, max_shape_tolerance, max_vertex_displacement, max_boundary_deviation)` for each written region (empty after a fallback). Tolerances are measured on the final healed shape. |
+| `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. `0.0` for the faceted fallback, which uses source triangles as they are. |
+| `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built. |
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
+| `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
+| `seams` | `SeamReport(regions, surface_type, points, max_gap)` for each facets/analytic boundary: the largest distance from the boundary points to the analytic surface. |
+| `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on. |
 
 ### `unmesh.ir`
 
