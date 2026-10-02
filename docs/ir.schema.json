@@ -24,7 +24,10 @@
       "required": ["triangle_count", "vertex_count"],
       "properties": {
         "triangle_count": { "$ref": "#/$defs/index" },
-        "vertex_count": { "$ref": "#/$defs/index" }
+        "vertex_count": {
+          "$ref": "#/$defs/index",
+          "description": "Unique vertices of the input after the converter's weld at vertex_merge. Informational."
+        }
       }
     },
     "shells": { "type": "array", "items": { "$ref": "#/$defs/shell" } },

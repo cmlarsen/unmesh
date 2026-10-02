@@ -317,6 +317,7 @@ def test_cavity_validation():
         lambda d: d["shells"][1].update(parent=1),
         lambda d: d["shells"][0].update(parent=1),
         lambda d: d["shells"][1].update(closed=False),
+        lambda d: d["shells"][0].update(closed=False),
     ):
         with pytest.raises(IrError):
             Ir.from_dict(mutate("cavity", fn))

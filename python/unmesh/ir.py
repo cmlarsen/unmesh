@@ -514,8 +514,9 @@ def validate(ir: Ir) -> list[str]:
                 parent is None
                 or not 0 <= parent < len(ir.shells)
                 or ir.shells[parent].role != "outer"
+                or not ir.shells[parent].closed
             ):
-                e.append(f"cavity shell {si} must have an outer shell as parent")
+                e.append(f"cavity shell {si} must have a closed outer shell as parent")
             if not shell.closed:
                 e.append(f"cavity shell {si} must be closed")
         if not shell.closed:

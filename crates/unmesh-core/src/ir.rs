@@ -457,10 +457,10 @@ pub fn validate(ir: &Ir) -> Vec<String> {
                 let parent_ok = shell
                     .parent
                     .and_then(|p| ir.shells.get(p as usize))
-                    .is_some_and(|p| p.role == ShellRole::Outer);
+                    .is_some_and(|p| p.role == ShellRole::Outer && p.closed);
                 if !parent_ok {
                     e.push(format!(
-                        "cavity shell {si} must have an outer shell as parent"
+                        "cavity shell {si} must have a closed outer shell as parent"
                     ));
                 }
                 if !shell.closed {
@@ -809,6 +809,9 @@ mod tests {
         assert!(bad.validate().is_err());
         let mut cav = fixture("cavity");
         assert_eq!(cav.shells[1].role, ShellRole::Cavity);
+        let mut open_parent = cav.clone();
+        open_parent.shells[0].closed = false;
+        assert!(open_parent.validate().is_err());
         cav.shells[1].parent = None;
         assert!(cav.validate().is_err());
         let mut far = fixture("box");

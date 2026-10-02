@@ -112,7 +112,7 @@ Public surface:
 - `weld`: `weld(&TriangleSoup, tolerance) -> (IndexedMesh, Vec<u32>, WeldReport)`, `WeldReport`, `WeldError`. The
   `Vec<u32>` maps each welded face to its index in the input soup; degenerate triangles are dropped, so
   welded face `i` is input triangle `map[i]`. IR source triangle ids are input indices.
-- `ir`: the IR types (`Ir`, `Tolerances`, `Shell`, `Region`, `Residual`, `Surface`, `Orientation`,
+- `ir`: the IR types (`Ir`, `Tolerances`, `Shell`, `Region`, `Residual`, `Surface`, `Orientation`, `Source`, `ShellRole`, `VertexRole`,
   `Adjacency`, `Boundary`, `Kind`, `Vertex`), `IR_VERSION`, `validate`, `canonicalize`, `format_f64`,
   `IrError`. All types are `serde` `Serialize`/`Deserialize`; JSON field names equal the Rust names.
 - `api` (re-exported at the crate root): `convert(&IndexedMesh, &ConvertOptions) -> Result<ConvertOutput,

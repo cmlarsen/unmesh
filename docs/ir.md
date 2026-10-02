@@ -71,10 +71,11 @@ Rust: `Ir::to_canonical_json`, `Ir::from_json`. Python: `Ir.dumps`, `Ir.loads`.
 
 ## Source
 
-`source.triangle_count` and `source.vertex_count` describe the **input** mesh the IR was built from:
-the triangles as the user supplied them (STL order, or the face list of a `(vertices, faces)` input)
-and the vertices of that input. They are the bounds for every source triangle id in the IR, which a
-validator checks. The IR does not embed the mesh.
+`source.triangle_count` is the number of input triangles as the user supplied them (STL order, or the
+face list of a `(vertices, faces)` input). It bounds every source triangle id in the IR, which a
+validator checks. `source.vertex_count` is the number of unique vertices of the input after the
+converter's weld at `tolerances.vertex_merge`; it is informational, kept as a cheap fingerprint of the
+input, and no id is validated against it. The IR does not embed the mesh.
 
 ## Tolerances
 
@@ -279,7 +280,7 @@ region is in exactly one shell, and an adjacency never crosses shells.
 
 - `role: "outer"` shells have `parent: null`. Their normals point out of the material.
 - `role: "cavity"` shells are closed shells inside an outer shell: a void in the material. `parent` is the
-  index of the enclosing outer shell. Cavity normals point into the void (still out of the material), so
+  index of the enclosing outer shell, which must itself be closed. Cavity normals point into the void (still out of the material), so
   their signed volume is negative, and they are not flipped. Cavities do not nest: a body floating
   inside a void is a separate `outer` shell.
 - The writer builds **one solid** from each outer shell together with all the cavities whose `parent` is
