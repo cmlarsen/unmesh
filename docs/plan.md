@@ -199,4 +199,8 @@ No C++ is written in this project.
 
 ## Open decisions
 
-- Whether non-commercial datasets (Fusion 360 Gallery, Thingi10K NC/ND files) may be used at all; see docs/datasets.md.
+- None.
+
+## Decided
+
+- Non-commercial datasets (Fusion 360 Gallery, Thingi10K NC files) are excluded, because OttoCAM is sold and consumes unmesh. ND, SA, GPL and ABC data stay download-only and unpublished. The owner can revisit; see [datasets.md](datasets.md).

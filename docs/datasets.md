@@ -5,6 +5,8 @@ Decision rule (owner, [#22](https://github.com/cmlarsen/unmesh/issues/22)):
 - **Redistributable** (may be committed or published as derived meshes): CC0, CC-BY, MIT, BSD, Apache or public domain only.
 - **Download-only** (fetched by `scripts/fetch-datasets`, never committed): any other license that allows research or benchmark use.
 - **Excluded**: terms forbid automated download or benchmark use, or the license cannot be established. A license that is unclear is excluded.
+- **Non-commercial data is excluded** (coordinator's conservative default, 2026-10-02): the owner sells OttoCAM, which will consume unmesh, so any license limited to non-commercial use is out even for benchmarking. The owner can revisit this.
+- **Download-only data stays on the machine that fetched it.** Do not publish derived artifacts of it in reports, issues, PRs or CI artifacts: no renders, meshes, per-part images, or numbers that can be tied to an identifiable part (model id, name, file). Aggregates over at least 20 parts with no ids are fine. Only the redistributable tier may appear in published per-part results.
 
 Nothing in this document is committed as data. `scripts/fetch-datasets` writes to `$UNMESH_CACHE_DIR/datasets` or `~/.cache/unmesh/datasets`, one directory per dataset id, each with a `manifest.json` (per-file path, bytes, sha256, license, source URL, attribution). Evidence was read on 2026-10-02.
 
@@ -14,9 +16,9 @@ Nothing in this document is committed as data. `scripts/fetch-datasets` writes t
 | --- | --- | --- | --- | --- |
 | [NIST MBE PMI test models](#nist-mbe-pmi-test-models) | 33 STEP AP242 files (CTC/FTC/STC), mechanical, 54 MB | "can be used without any restrictions" | redistributable | **Use** (`nist-pmi`) |
 | [FreeCAD parts library](#freecad-parts-library) | 1,970 STEP+STL pairs under `Mechanical Parts/` (of 2,814 STEP, 2,553 STL), mechanical | CC-BY-3.0 | redistributable | **Use** (`freecad-library`) |
-| [Thingi10K](#thingi10k) | 10,000 STL (3,142 CC0/CC-BY/PD/BSD, 6,854 other open licenses), mixed mechanical and organic, no STEP | per file, Thingiverse license field | per file | **Use** (`thingi10k`), redistributable tier by default |
+| [Thingi10K](#thingi10k) | 10,000 STL (3,142 CC0/CC-BY/PD/BSD redistributable; 3,968 SA/GPL/LGPL/ND download-only; 2,886 NC and 4 unknown excluded), mixed mechanical and organic, no STEP | per file, Thingiverse license field | per file | **Use** (`thingi10k`), redistributable tier by default |
 | [ABC](#abc) | 1M STEP, plus Parasolid and STL, Onshape public documents, mostly mechanical | copyright with creators, Onshape ToU 1.g.ii | download-only | **Use**, opt-in (`abc`) |
-| [Fusion 360 Gallery](#fusion-360-gallery) | 42,912 STEP (segmentation, extended), 8,625 reconstruction sequences | non-commercial research only | download-only | **Use**, opt-in, needs `--accept-terms` (`fusion360-segmentation`) |
+| [Fusion 360 Gallery](#fusion-360-gallery) | 42,912 STEP (segmentation, extended), 8,625 reconstruction sequences | non-commercial research only | n/a | **Excluded**: non-commercial |
 | [DeepCAD](#deepcad) | 178k construction-sequence JSON, no STEP | data license not stated | n/a | Excluded: unclear, and derived from ABC |
 | [MCB](#mcb-mechanical-components-benchmark) | 58,696 STEP/STL/OFF components | code MIT, data license not stated | n/a | Excluded: unclear, scraped from third-party sites |
 | [CADParser](#cadparser) | ~40,000 STEP | no license found | n/a | Excluded: unclear |
@@ -45,11 +47,11 @@ Nothing in this document is committed as data. `scripts/fetch-datasets` writes t
 ### Thingi10K
 
 - Source: <https://github.com/Thingi10K/Thingi10K>, mirrored by the authors at <https://huggingface.co/datasets/Thingi10K/Thingi10K> (pinned to commit `2d5d3b2f3cd3711028ad75b12788c13b25559ec6`).
-- License: "each thing in the dataset has its own license, refer to the license field" (README of the `thingi10k` package; the package code is Apache-2.0). Per-file license is in `metadata/input_summary.csv`, with author and name in `metadata/contextual_data.csv`. The HF dataset card carries no license tag of its own.
-- Count by license over the 10,000 files: CC-BY-SA 3,680; CC-BY 2,945; CC-BY-NC 1,581; CC-BY-NC-SA 975; CC-BY-NC-ND 330; GPL 202; CC0 99; Public Domain 88; CC-BY-ND 84; BSD 10; LGPL 2; unknown 4. Redistributable (CC0, CC-BY, PD, BSD): 3,142 files, 2,481 of them closed and edge-manifold. Download-only: 6,854. Excluded (unknown): 4.
+- License (README, "License" section): "The source code for organizing and filtering the Thingi10K dataset is licensed under the Apache License, Version 2.0. Each "thing" in the dataset has its own license. Please refer to the `license` field associated with each entry in the dataset." Per-file license is in `metadata/input_summary.csv`, with author and name in `metadata/contextual_data.csv`. The HF dataset card carries no license tag of its own.
+- Count by license over the 10,000 files: CC-BY-SA 3,680; CC-BY 2,945; CC-BY-NC 1,581; CC-BY-NC-SA 975; CC-BY-NC-ND 330; GPL 202; CC0 99; Public Domain 88; CC-BY-ND 84; BSD 10; LGPL 2; unknown 4. Redistributable (CC0, CC-BY, PD, BSD): 3,142 files, 2,481 of them closed and edge-manifold. Download-only (CC-BY-SA 3,680, GPL 202, CC-BY-ND 84, LGPL 2): 3,968, of which SA and GPL carry copyleft terms for anything distributed. Excluded: the three NC variants (2,886) and unknown (4).
 - Contents: STL meshes of 3D-printing models from Thingiverse, 2009 to 2015. Mixed mechanical and organic; Thingiverse categories are noisy (462 are "None"). No STEP. 9.6 GB for the full archive.
 - Automated download: the full archive is one 9.6 GB tarball. `fetch-datasets` instead reads the per-file `npz/<id>.npz` (vertices and facets) from the pinned HF commit and writes a binary STL, so a subset costs only what it selects. The STL is rebuilt from the welded mesh, not the original Thingiverse bytes. The original S3 links in `input_summary.csv` are Thingiverse assets and are not used.
-- Decision: use. The default selects only the redistributable tier and only closed, edge-manifold meshes; `--license-tier download-only` adds SA, GPL, NC and ND files. `unknown_license` is always excluded. CC-BY files need attribution, which the manifest carries (name, author, Thingiverse URL).
+- Decision: use. The default selects only the redistributable tier and only closed, edge-manifold meshes; `--license-tier download-only` adds SA, GPL, LGPL and ND files. The NC variants and `unknown_license` are always excluded. CC-BY files need attribution, which the manifest carries per entry (name, author, Thingiverse URL, license, license URL). Thingiverse does not record the CC version per file, so `license_version` is null; read it from the thing page before publishing.
 
 ### ABC
 
@@ -61,11 +63,14 @@ Nothing in this document is committed as data. `scripts/fetch-datasets` writes t
 
 ### Fusion 360 Gallery
 
-- Source: <https://github.com/AutodeskAILab/Fusion360GalleryDataset>.
-- License ([LICENSE.md](https://github.com/AutodeskAILab/Fusion360GalleryDataset/blob/master/LICENSE.md)): "You may access, use, reproduce and modify the Dataset, in each case, only for non-commercial research purposes." Also: "You may not redistribute or make available to others the Dataset in its entirety" and modified portions only under the same non-commercial terms; "If you are employed by a for-profit, commercial entity, your employer shall also be bound by this License".
-- Contents: reconstruction (8,625 sketch-and-extrude sequences, 2.0 GB), segmentation (35,680 parts, 3.1 GB), assembly (154,468 parts). The `s2.0.1_extended_step.zip` (483 MB) holds 42,912 STEP files with per-face modeling-operation labels. Mechanical-ish user designs, many simple.
-- Automated download: public S3 URLs with HTTP Range support, linked from the README. `fetch-datasets` reads the zip directory by range requests and downloads only the K selected STEP files.
-- Decision: download-only. Opt-in, and refuses to run without `--accept-terms fusion360-gallery`. See "Owner judgment" below.
+- Source: <https://github.com/AutodeskAILab/Fusion360GalleryDataset>. Terms: [LICENSE.md](https://github.com/AutodeskAILab/Fusion360GalleryDataset/blob/master/LICENSE.md) (updated 11/2021).
+- §1: "You may access, use, reproduce and modify the Dataset, in each case, only for non-commercial research purposes." Even access and use are limited to non-commercial research.
+- §3.2: "You may not allow others to access, use, reproduce or modify the Modified Set except for non-commercial research purposes." Derived sets inherit the limit.
+- §8: "You accept full responsibility for your use of the Dataset and shall defend and indemnify Autodesk, Inc. including its employees, officers and agents, against any and all claims arising from your use of the Dataset".
+- §9: "Autodesk reserves the right to terminate this license at any time and may cease access to the Dataset at any time in its sole discretion."
+- §11: "If you are employed by a for-profit, commercial entity, your employer shall also be bound by this License".
+- Contents: 42,912 STEP files with per-face modeling-operation labels (segmentation, extended), 8,625 reconstruction sequences, 154,468 assembly parts.
+- Decision: **excluded.** The owner sells a product that consumes unmesh, so non-commercial research terms cannot be met safely. The fetcher was removed; no Fusion data is cached. The owner can revisit.
 
 ### DeepCAD
 
@@ -100,7 +105,7 @@ Nothing in this document is committed as data. `scripts/fetch-datasets` writes t
 **(a) Imported-STEP tier (#25).** Ground-truth STEP we tessellate ourselves.
 
 - Always on: `freecad-library` (1,970 pairs available, simple to medium mechanical parts) and `nist-pmi` (33 machined parts). Both are redistributable, so manifests may name them and CI may fetch them. This alone gives well over the 200 imported parts #25 asks for.
-- Opt-in for breadth and complexity: `abc` (complex, real-world, noisy) and `fusion360-segmentation` (labeled faces). Manifest entries reference them by dataset id and model id, and the standard grid must treat their absence as a skip, not a failure.
+- Opt-in for breadth and complexity: `abc` (complex, real-world, noisy), download-only. Manifest entries reference them by dataset id and model id, and the standard grid must treat their absence as a skip, not a failure.
 - Strata (face count, smallest feature) are computed from the STEP after download, not stored here.
 
 **(b) Real-exporter row (#29).** STL written by a CAD tool, ideally with its STEP.
@@ -117,12 +122,20 @@ Nothing in this document is committed as data. `scripts/fetch-datasets` writes t
 - Reference STEP does not exist for Thingi10K; the rubric path in #13 (measured dimensions, per-face check) applies.
 - `freecad-library` is deliberately not hold-out material: it is the agent-visible imported tier.
 
-## Owner judgment needed
+## Attribution when publishing
 
-1. **Fusion 360 Gallery is non-commercial research only**, and clause 11 binds a for-profit employer. unmesh is Apache-2.0 and public, but if it feeds a commercial product the benchmark use may not qualify. It is included as download-only behind `--accept-terms fusion360-gallery` and no code, test or manifest depends on it. Drop it if there is doubt.
-2. **ABC license cannot be verified per file.** Onshape's grant is MIT-like for most public documents but not those with a LICENSE tab. Kept download-only. If the owner accepts the ToU grant as sufficient, it could be promoted to redistributable, but nothing needs it.
-3. **Thingi10K NC and ND files** (CC-BY-NC, NC-SA, NC-ND, ND) allow use but not commercial use or derivatives. They are off by default and only fetched with `--license-tier download-only`. The same commercial-use question as Fusion applies.
-4. **Thingi10K STL are rebuilt from the HF npz mesh**, not the original bytes. If bit-exact exporter output matters for #29, the 9.6 GB tarball is the alternative.
+Applies to anything published that contains or derives from redistributable data (committed meshes, released corpora, reports with per-part images). CC-BY 3.0 §4(b) requires, for each work: the author's name (or pseudonym), the title, the source URI, the license URI, and, for an adaptation, a credit identifying the use ("modified"). Credit line format:
+
+```
+"<title>" by <author>, <source URI>, licensed under <license name> (<license URI>). Modified: <what we did>.
+```
+
+For example: `"Spiral bevel gear" by GeneralRulofDumb, https://www.thingiverse.com/thing:10955, licensed under CC BY (https://creativecommons.org/licenses/by/<version>/). Modified: rebuilt as binary STL from the Thingi10K npz mesh, resampled and degraded by unmesh-harness.`
+
+- **Thingi10K** (CC-BY, CC0, public domain, BSD): the manifest entry has `attribution` (name and author), `source_url` (the thing page), `license`, `license_url` and `modified`. Our STLs are always modified: they are rebuilt from the npz mesh, and the harness degrades them further. Thingiverse does not store the CC version per file, so `license_version` is null and the license URL is not versioned; resolve the version on the thing page before publishing. CC0 and public domain need no credit but should keep the source URL.
+- **FreeCAD library** (CC-BY-3.0): the license says authorship lives in the git history and the FCStd properties. Resolving the author per file costs one GitHub API call per file (unauthenticated limit 60 per hour), so the fetcher does not do it. Each manifest entry carries `attribution_note` naming the path to look up at the pinned commit; publishing requires resolving it first. The license URI is <https://creativecommons.org/licenses/by/3.0/>.
+- **NIST**: the NIST Disclaimer says "We would appreciate acknowledgement if any of the test cases, CAD models, STEP files, or screenshots of the models are used", and <https://www.nist.gov/copyrights-disclaimers> asks for "appropriate byline/photo/image credits". Credit "NIST MBE PMI Validation and Conformance Testing Project, test case CAD models" with the page URL. Do not use the NIST logo or name in a way that implies endorsement ("Their use in other software or hardware products does not imply a recommendation or endorsement of those products by NIST"). I did not find a NIST page granting use of its logo, so treat the logo as not licensed and do not reproduce it.
+- **Download-only data** (ABC, Thingi10K SA/GPL/LGPL/ND): not published at all, see the rule above. Copyleft and ND terms would also attach to anything we shared.
 
 ## Using the script
 
@@ -131,7 +144,6 @@ uv run scripts/fetch-datasets --list
 uv run scripts/fetch-datasets --dataset all --limit 60
 uv run scripts/fetch-datasets --dataset thingi10k --category tools --limit 100
 uv run scripts/fetch-datasets --dataset abc --limit 50
-uv run scripts/fetch-datasets --dataset fusion360-segmentation --accept-terms fusion360-gallery
 uv run scripts/fetch-datasets --verify --dataset freecad-library
 ```
 

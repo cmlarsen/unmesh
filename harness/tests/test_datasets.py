@@ -1,7 +1,5 @@
 import hashlib
-import io
 import json
-import zipfile
 
 import numpy as np
 import pytest
@@ -16,10 +14,18 @@ def test_classify_thingi_license():
     )
     assert d.classify_thingi_license("Creative Commons - Public Domain Dedication")[1] == "CC0-1.0"
     assert d.classify_thingi_license("GNU - GPL") == (d.DOWNLOAD_ONLY, "GPL")
-    assert (
-        d.classify_thingi_license("Attribution - Non-Commercial - Share Alike")[0]
-        == d.DOWNLOAD_ONLY
+    assert d.classify_thingi_license("Creative Commons - Attribution - Share Alike")[0] == (
+        d.DOWNLOAD_ONLY
     )
+    assert d.classify_thingi_license("Creative Commons - Attribution - No Derivatives")[0] == (
+        d.DOWNLOAD_ONLY
+    )
+    for nc in (
+        "Creative Commons - Attribution - Non-Commercial",
+        "Attribution - Non-Commercial - Share Alike",
+        "Attribution - Non-Commercial - No Derivatives",
+    ):
+        assert d.classify_thingi_license(nc) == ("excluded", None)
     assert d.classify_thingi_license("unknown_license") == ("excluded", None)
     assert d.classify_thingi_license("anything new") == ("excluded", None)
 
@@ -178,31 +184,6 @@ def test_every_dataset_has_license_evidence_and_fetcher():
         assert ds.tier in (d.REDISTRIBUTABLE, d.DOWNLOAD_ONLY)
 
 
-def test_non_commercial_dataset_requires_explicit_terms():
-    ds = d.DATASETS["fusion360-segmentation"]
-    with pytest.raises(SystemExit):
-        d.check_terms(ds, set())
-    d.check_terms(ds, {"fusion360-gallery"})
-    d.check_terms(d.DATASETS["nist-pmi"], set())
-
-
-def test_range_file_serves_zip_without_full_download():
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("a.stp", b"A" * 5000)
-        z.writestr("b.stp", b"B" * 5000)
-    blob = buf.getvalue()
-    calls = []
-
-    def fetch(start, end):
-        calls.append((start, end))
-        return blob[start : end + 1]
-
-    z = zipfile.ZipFile(io.BufferedReader(d.RangeFile(len(blob), fetch), 64))
-    assert z.read("b.stp") == b"B" * 5000
-    assert calls
-
-
 def test_main_list_and_verify(tmp_path, capsys):
     assert d.main(["--list"]) == 0
     assert "thingi10k" in capsys.readouterr().out
@@ -215,3 +196,44 @@ def test_main_list_and_verify(tmp_path, capsys):
 def test_default_cache_dir_honours_env(monkeypatch, tmp_path):
     monkeypatch.setenv("UNMESH_CACHE_DIR", str(tmp_path))
     assert d.default_datasets_dir() == tmp_path / "datasets"
+
+
+def test_non_commercial_never_selected():
+    base = {"Closed": "TRUE", "Edge manifold": "TRUE"}
+    names = (
+        "Creative Commons - Attribution - Non-Commercial",
+        "Attribution - Non-Commercial - No Derivatives",
+    )
+    summary = [
+        {"ID": str(i), "Thing ID": str(i), "License": n, **base} for i, n in enumerate(names)
+    ]
+    assert d.select_thingi(summary, [], d.DOWNLOAD_ONLY) == []
+
+
+def test_no_fusion_dataset():
+    assert "fusion360-segmentation" not in d.DATASETS
+
+
+def test_overall_tier_is_computed_from_entries():
+    red = {"license_tier": d.REDISTRIBUTABLE}
+    dl = {"license_tier": d.DOWNLOAD_ONLY}
+    assert d.overall_tier([red, red], d.DOWNLOAD_ONLY) == d.REDISTRIBUTABLE
+    assert d.overall_tier([red, dl], d.REDISTRIBUTABLE) == d.DOWNLOAD_ONLY
+    assert d.overall_tier([], d.REDISTRIBUTABLE) == d.REDISTRIBUTABLE
+    manifest = d._manifest_for(d.DATASETS["thingi10k"])
+    manifest.entries = [red, dl]
+    manifest.finalize()
+    assert manifest.tier == d.DOWNLOAD_ONLY
+    manifest.entries = [red]
+    manifest.finalize()
+    assert manifest.tier == d.REDISTRIBUTABLE
+
+
+def test_abc_md5_mismatch_quarantines_archive(tmp_path, monkeypatch):
+    archive = tmp_path / "_archive" / "abc_0000_meta_v00.7z"
+    archive.parent.mkdir()
+    archive.write_bytes(b"corrupt")
+    with pytest.raises(RuntimeError, match="md5 mismatch"):
+        d._abc_archive(tmp_path, "meta")
+    assert not archive.exists()
+    assert archive.with_name(archive.name + ".bad").exists()

@@ -27,6 +27,7 @@ USER_AGENT = "unmesh-fetch-datasets/0.1 (+https://github.com/cmlarsen/unmesh)"
 REDISTRIBUTABLE = "redistributable"
 DOWNLOAD_ONLY = "download-only"
 MANIFEST_NAME = "manifest.json"
+REQUEST_DELAY = 0.25
 
 THINGI_REDISTRIBUTABLE = {
     "Public Domain": "Public-Domain",
@@ -34,13 +35,17 @@ THINGI_REDISTRIBUTABLE = {
     "Creative Commons - Attribution": "CC-BY",
     "BSD License": "BSD",
 }
+THINGI_LICENSE_URLS = {
+    "CC0-1.0": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "CC-BY-SA": "https://creativecommons.org/licenses/by-sa/",
+    "CC-BY-ND": "https://creativecommons.org/licenses/by-nd/",
+    "GPL": "https://www.gnu.org/licenses/gpl-3.0.html",
+    "LGPL": "https://www.gnu.org/licenses/lgpl-3.0.html",
+}
 THINGI_DOWNLOAD_ONLY = {
     "Creative Commons - Attribution - Share Alike": "CC-BY-SA",
     "GNU - GPL": "GPL",
     "GNU - LGPL": "LGPL",
-    "Creative Commons - Attribution - Non-Commercial": "CC-BY-NC",
-    "Attribution - Non-Commercial - Share Alike": "CC-BY-NC-SA",
-    "Attribution - Non-Commercial - No Derivatives": "CC-BY-NC-ND",
     "Creative Commons - Attribution - No Derivatives": "CC-BY-ND",
 }
 
@@ -61,11 +66,6 @@ ABC_ARCHIVES = {
         "7a489538af88b2788b19e916ccdcabbc",
     ),
 }
-FUSION_URL = (
-    "https://fusion-360-gallery-dataset.s3.us-west-2.amazonaws.com/"
-    "segmentation/s2.0.1/s2.0.1_extended_step.zip"
-)
-FUSION_SIZE = 506333119
 THINGI_COMMIT = "2d5d3b2f3cd3711028ad75b12788c13b25559ec6"
 THINGI_BASE = f"https://huggingface.co/datasets/Thingi10K/Thingi10K/resolve/{THINGI_COMMIT}"
 
@@ -80,7 +80,6 @@ class Dataset:
     license_quote: str
     source_url: str
     default: bool
-    terms_key: str | None = None
 
 
 DATASETS: dict[str, Dataset] = {
@@ -102,7 +101,7 @@ DATASETS: dict[str, Dataset] = {
             "FreeCAD parts library (STEP + STL pairs)",
             REDISTRIBUTABLE,
             "CC-BY-3.0",
-            "https://raw.githubusercontent.com/FreeCAD/FreeCAD-library/master/LICENSE-Assets",
+            f"https://raw.githubusercontent.com/{FREECAD_REPO}/{FREECAD_COMMIT}/LICENSE-Assets",
             "All of it is licensed under the Creative Commons Attribution 3.0 Unported license "
             "(SPDX identifier: CC-BY-3.0)",
             f"https://github.com/{FREECAD_REPO}/tree/{FREECAD_COMMIT}",
@@ -114,7 +113,8 @@ DATASETS: dict[str, Dataset] = {
             REDISTRIBUTABLE,
             "per file (Thingiverse license field)",
             "https://github.com/Thingi10K/Thingi10K",
-            "each thing in the dataset has its own license; refer to the license field",
+            'Each "thing" in the dataset has its own license. Please refer to the `license` '
+            "field associated with each entry in the dataset.",
             "https://huggingface.co/datasets/Thingi10K/Thingi10K",
             True,
         ),
@@ -128,18 +128,6 @@ DATASETS: dict[str, Dataset] = {
             "see Onshape Terms of Use 1.g.ii.",
             "https://deep-geometry.github.io/abc-dataset/",
             False,
-        ),
-        Dataset(
-            "fusion360-segmentation",
-            "Fusion 360 Gallery segmentation, extended STEP",
-            DOWNLOAD_ONLY,
-            "Autodesk Fusion 360 Gallery Dataset License (non-commercial research)",
-            "https://github.com/AutodeskAILab/Fusion360GalleryDataset/blob/master/LICENSE.md",
-            "You may access, use, reproduce and modify the Dataset, in each case, only for "
-            "non-commercial research purposes.",
-            "https://github.com/AutodeskAILab/Fusion360GalleryDataset",
-            False,
-            terms_key="fusion360-gallery",
         ),
     ]
 }
@@ -254,36 +242,6 @@ def select_thingi(
     return picked
 
 
-class RangeFile(io.RawIOBase):
-    def __init__(self, size: int, fetch: Callable[[int, int], bytes]):
-        self._size = size
-        self._fetch = fetch
-        self._pos = 0
-
-    def seekable(self) -> bool:
-        return True
-
-    def readable(self) -> bool:
-        return True
-
-    def tell(self) -> int:
-        return self._pos
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        base = {0: 0, 1: self._pos, 2: self._size}[whence]
-        self._pos = max(0, base + offset)
-        return self._pos
-
-    def readinto(self, buf) -> int:
-        n = min(len(buf), self._size - self._pos)
-        if n <= 0:
-            return 0
-        data = self._fetch(self._pos, self._pos + n - 1)
-        buf[: len(data)] = data
-        self._pos += len(data)
-        return len(data)
-
-
 @dataclass
 class Manifest:
     dataset: str
@@ -294,6 +252,9 @@ class Manifest:
     source_url: str
     entries: list[dict[str, Any]] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
+
+    def finalize(self) -> None:
+        self.tier = overall_tier(self.entries, self.tier)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -316,6 +277,13 @@ class Manifest:
     @staticmethod
     def read(root: Path) -> dict[str, Any]:
         return json.loads((root / MANIFEST_NAME).read_text())
+
+
+def overall_tier(entries: Iterable[dict[str, Any]], default: str) -> str:
+    tiers = {e["license_tier"] for e in entries if "license_tier" in e}
+    if not tiers:
+        return default
+    return REDISTRIBUTABLE if tiers == {REDISTRIBUTABLE} else DOWNLOAD_ONLY
 
 
 def file_record(root: Path, path: Path, **extra: Any) -> dict[str, Any]:
@@ -347,6 +315,7 @@ def _open(url: str, headers: dict[str, str] | None = None):
 
 def http_bytes(url: str, headers: dict[str, str] | None = None, retries: int = 3) -> bytes:
     for attempt in range(retries):
+        time.sleep(REQUEST_DELAY)
         try:
             with _open(url, headers) as r:
                 return r.read()
@@ -385,18 +354,6 @@ def http_download(url: str, dest: Path, expected_size: int | None = None) -> Non
     if expected_size is not None and part.stat().st_size != expected_size:
         raise RuntimeError(f"{url}: expected {expected_size} bytes, got {part.stat().st_size}")
     part.replace(dest)
-
-
-def ranged_zip(url: str, expected_size: int | None = None) -> zipfile.ZipFile:
-    with _open(url, {"Range": "bytes=0-0"}) as r:
-        total = int(r.headers["Content-Range"].rpartition("/")[2])
-    if expected_size is not None and total != expected_size:
-        raise RuntimeError(f"{url}: expected {expected_size} bytes, server reports {total}")
-
-    def fetch(start: int, end: int) -> bytes:
-        return http_bytes(url, {"Range": f"bytes={start}-{end}"})
-
-    return zipfile.ZipFile(io.BufferedReader(RangeFile(total, fetch), 1 << 22))
 
 
 def _manifest_for(ds: Dataset, **params: Any) -> Manifest:
@@ -462,7 +419,10 @@ def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Mani
                 "id": f"freecad-library/{pair['id']}",
                 "license": "CC-BY-3.0",
                 "license_tier": ds.tier,
-                "attribution": "FreeCAD-library contributors; see git history at the pinned commit",
+                "attribution": None,
+                "attribution_note": "author unresolved: take it from the git history of "
+                + pair["step"]["path"]
+                + " at the pinned commit before publishing",
                 "source_url": f"https://github.com/{FREECAD_REPO}/blob/{FREECAD_COMMIT}/"
                 + urllib.parse.quote(pair["step"]["path"]),
                 "files": files,
@@ -505,6 +465,7 @@ def fetch_thingi10k(
             raise
         with np.load(io.BytesIO(blob)) as z:
             data = stl_bytes(z["vertices"], z["facets"])
+        thing_url = f"https://www.thingiverse.com/thing:{item['thing_id']}"
         dest = root / "stl" / f"{item['file_id']}.stl"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
@@ -512,11 +473,14 @@ def fetch_thingi10k(
             {
                 "id": f"thingi10k/{item['file_id']}",
                 "license": item["license"],
+                "license_url": THINGI_LICENSE_URLS.get(item["license"], thing_url),
+                "license_version": None,
                 "license_text": item["license_text"],
                 "license_tier": item["tier"],
                 "attribution": f"{item['name']} by {item['author']}",
                 "category": item["category"],
-                "source_url": f"https://www.thingiverse.com/thing:{item['thing_id']}",
+                "source_url": thing_url,
+                "modified": "rebuilt as binary STL from the Thingi10K npz mesh",
                 "files": {
                     "stl": file_record(
                         root, dest, source_npz_sha256=hashlib.sha256(blob).hexdigest()
@@ -578,6 +542,7 @@ def _abc_archive(root: Path, kind: str) -> Path:
     if not dest.is_file():
         http_download(url, dest, size)
     if md5_file(dest) != md5:
+        dest.rename(dest.with_name(dest.name + ".bad"))
         raise RuntimeError(f"{dest.name}: md5 mismatch (expected {md5})")
     return dest
 
@@ -646,41 +611,12 @@ def fetch_abc(
     return manifest
 
 
-def fetch_fusion360(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
-    manifest = _manifest_for(ds, limit=limit, archive_bytes=FUSION_SIZE)
-    z = ranged_zip(FUSION_URL, FUSION_SIZE)
-    names = sorted(i.filename for i in z.infolist() if i.filename.endswith(".stp"))[:limit]
-    for name in names:
-        dest = root / "step" / Path(name).name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(z.read(name))
-        manifest.entries.append(
-            {
-                "id": f"fusion360-segmentation/{dest.stem}",
-                "license": ds.license,
-                "license_tier": ds.tier,
-                "source_url": ds.source_url,
-                "files": {"step": file_record(root, dest)},
-            }
-        )
-    return manifest
-
-
 FETCHERS: dict[str, Callable[..., Manifest]] = {
     "nist-pmi": fetch_nist_pmi,
     "freecad-library": fetch_freecad_library,
     "thingi10k": fetch_thingi10k,
     "abc": fetch_abc,
-    "fusion360-segmentation": fetch_fusion360,
 }
-
-
-def check_terms(ds: Dataset, accepted: set[str]) -> None:
-    if ds.terms_key and ds.terms_key not in accepted:
-        raise SystemExit(
-            f"{ds.name}: license is {ds.license!r} ({ds.license_url}). "
-            f"Review it, then pass --accept-terms {ds.terms_key}"
-        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -693,12 +629,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--limit", type=int, default=25, help="models per dataset (stable id order)")
     p.add_argument("--cache-dir", type=Path, default=None)
-    p.add_argument("--accept-terms", action="append", default=[])
     p.add_argument(
         "--license-tier",
         choices=[REDISTRIBUTABLE, DOWNLOAD_ONLY],
         default=REDISTRIBUTABLE,
-        help="thingi10k: also include download-only licenses (SA, GPL, NC, ND)",
+        help="thingi10k: also include download-only licenses (SA, GPL, LGPL, ND)",
     )
     p.add_argument("--category", action="append", default=[], help="thingi10k category filter")
     p.add_argument("--keep-archives", action="store_true")
@@ -731,7 +666,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {problem}")
             status |= bool(problems)
             continue
-        check_terms(ds, set(args.accept_terms))
         root.mkdir(parents=True, exist_ok=True)
         manifest = FETCHERS[name](
             ds,
@@ -741,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
             categories=set(args.category) or None,
             keep_archives=args.keep_archives,
         )
+        manifest.finalize()
         path = manifest.write(root)
         total = sum(f["bytes"] for e in manifest.entries for f in e["files"].values())
         print(f"{name}: {len(manifest.entries)} entries, {total / 1e6:.1f} MB, manifest {path}")
