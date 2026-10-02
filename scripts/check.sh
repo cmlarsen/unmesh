@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+uv run ruff check
+uv run ruff format --check
+uv run pytest

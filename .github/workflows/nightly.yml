@@ -1,0 +1,15 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: [self-hosted, shop16]
+    steps:
+      - uses: actions/checkout@v4
+      - run: uv python install 3.12
+      - run: uv sync
+      - run: scripts/check.sh

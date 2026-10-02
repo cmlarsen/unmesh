@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "unmesh-harness"
+version = "0.1.0"
+description = "Evaluation harness for unmesh."
+requires-python = ">=3.11"
+dependencies = ["unmesh"]
+
+[project.optional-dependencies]
+gpl = ["pymeshlab"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unmesh_harness"]
+
+[tool.uv.sources]
+unmesh = { workspace = true }
