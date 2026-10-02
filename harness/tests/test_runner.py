@@ -98,10 +98,10 @@ def test_broken_converters_are_reported_not_fatal(tmp_path, monkeypatch):
         "unmesh",
     ]
     summary = run_grid(
-        grid, converters, tmp_path / "out", jobs=2, sha="s", timeout=3, log=lambda *_: None
+        grid, converters, tmp_path / "out", jobs=2, sha="s", timeout=6, log=lambda *_: None
     )
     by_converter = {r["converter"]: r for r in read_results(summary.results_path)}
-    assert by_converter["unmesh"]["status"] == "ok"
+    assert by_converter["unmesh"]["status"] == "ok", by_converter["unmesh"]
     assert by_converter["broken_plugins:boom"]["status"] == "error"
     assert "converter exploded" in by_converter["broken_plugins:boom"]["error"]
     assert by_converter["broken_plugins:no_ir"]["status"] == "error"

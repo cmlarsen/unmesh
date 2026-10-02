@@ -11,6 +11,8 @@ from .execute import run_pool
 from .grid import Grid, git_sha
 from .results import append_result, completed_keys, latest, read_results
 
+PREP_TIMEOUT_S = 120.0
+
 
 @dataclass
 class RunSummary:
@@ -70,7 +72,7 @@ def run_grid(
         for part in needed
     ]
     ready: set[str] = set()
-    for part, result in run_pool(prep_jobs, jobs, timeout):
+    for part, result in run_pool(prep_jobs, jobs, max(timeout, PREP_TIMEOUT_S)):
         if result["status"] != "ok":
             log(f"prep failed for {part}: {result.get('error')}")
         else:
