@@ -2,7 +2,10 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayMethods, PyUntyped
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use unmesh_core::{StlError, TriangleSoup};
+use pyo3::types::PyList;
+use unmesh_core::{
+    ConvertError, ConvertOptions, ConvertOutput, IndexedMesh, StlError, TriangleSoup,
+};
 
 #[pyfunction]
 fn core_version() -> &'static str {
@@ -110,11 +113,154 @@ fn weld<'py>(
     ))
 }
 
+fn convert_err(e: ConvertError) -> PyErr {
+    PyValueError::new_err(e.to_string())
+}
+
+fn options_from(
+    linear_tolerance: Option<f64>,
+    angular_snap_deg: f64,
+    tangent_threshold_deg: f64,
+    vertex_merge: f64,
+) -> ConvertOptions {
+    ConvertOptions {
+        linear_tolerance,
+        angular_snap_deg,
+        tangent_threshold_deg,
+        vertex_merge,
+    }
+}
+
+fn output_to_py<'py>(
+    py: Python<'py>,
+    out: ConvertOutput,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let text = out
+        .ir
+        .to_canonical_json()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let report = PyDict::new(py);
+    report.set_item("max_deviation", out.report.max_deviation)?;
+    report.set_item("rms_deviation", out.report.rms_deviation)?;
+    report.set_item("analytic_area_fraction", out.report.analytic_area_fraction)?;
+    let counts = PyDict::new(py);
+    for (k, v) in &out.report.region_counts {
+        counts.set_item(k, v)?;
+    }
+    report.set_item("region_counts", counts)?;
+    let warnings = PyList::empty(py);
+    for w in &out.report.warnings {
+        warnings.append((&w.code, &w.message))?;
+    }
+    report.set_item("warnings", warnings)?;
+    Ok((text, report))
+}
+
+#[pyfunction]
+#[pyo3(signature = (tris, linear_tolerance, angular_snap_deg, tangent_threshold_deg, vertex_merge))]
+fn convert_soup<'py>(
+    py: Python<'py>,
+    tris: &Bound<'py, PyAny>,
+    linear_tolerance: Option<f64>,
+    angular_snap_deg: f64,
+    tangent_threshold_deg: f64,
+    vertex_merge: f64,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let soup = soup_from_array(py, tris)?;
+    let options = options_from(
+        linear_tolerance,
+        angular_snap_deg,
+        tangent_threshold_deg,
+        vertex_merge,
+    );
+    let out = py
+        .detach(|| unmesh_core::convert_soup(&soup, &options))
+        .map_err(convert_err)?;
+    output_to_py(py, out)
+}
+
+#[pyfunction]
+#[pyo3(signature = (vertices, faces, linear_tolerance, angular_snap_deg, tangent_threshold_deg, vertex_merge))]
+fn convert_indexed<'py>(
+    py: Python<'py>,
+    vertices: &Bound<'py, PyAny>,
+    faces: &Bound<'py, PyAny>,
+    linear_tolerance: Option<f64>,
+    angular_snap_deg: f64,
+    tangent_threshold_deg: f64,
+    vertex_merge: f64,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let np = py.import("numpy")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", np.getattr("float64")?)?;
+    let varr = np.call_method("ascontiguousarray", (vertices,), Some(&kwargs))?;
+    let varr = varr
+        .cast_into::<numpy::PyArrayDyn<f64>>()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    if !matches!(varr.shape(), [_, 3]) {
+        return Err(PyValueError::new_err(format!(
+            "expected vertices of shape (v, 3), got {:?}",
+            varr.shape()
+        )));
+    }
+    let vdata = varr.readonly();
+    let vdata = vdata.as_slice()?;
+    if vdata.iter().any(|c| !c.is_finite()) {
+        return Err(PyValueError::new_err(
+            "vertices have a non-finite coordinate",
+        ));
+    }
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", np.getattr("int64")?)?;
+    let farr = np.call_method("ascontiguousarray", (faces,), Some(&kwargs))?;
+    let farr = farr
+        .cast_into::<numpy::PyArrayDyn<i64>>()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    if !matches!(farr.shape(), [_, 3] | [0]) {
+        return Err(PyValueError::new_err(format!(
+            "expected faces of shape (f, 3), got {:?}",
+            farr.shape()
+        )));
+    }
+    let fdata = farr.readonly();
+    let fdata = fdata.as_slice()?;
+    let nv = vdata.len() / 3;
+    if fdata.iter().any(|&i| i < 0 || i as usize >= nv) {
+        return Err(PyValueError::new_err("face index out of range"));
+    }
+    let mesh = IndexedMesh {
+        vertices: vdata
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        faces: fdata
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [c[0] as u32, c[1] as u32, c[2] as u32])
+            .collect(),
+    };
+    let options = options_from(
+        linear_tolerance,
+        angular_snap_deg,
+        tangent_threshold_deg,
+        vertex_merge,
+    );
+    let out = py
+        .detach(|| unmesh_core::convert(&mesh, &options))
+        .map_err(convert_err)?;
+    output_to_py(py, out)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core_version, m)?)?;
     m.add_function(wrap_pyfunction!(read_stl, m)?)?;
     m.add_function(wrap_pyfunction!(write_stl, m)?)?;
     m.add_function(wrap_pyfunction!(weld, m)?)?;
+    m.add_function(wrap_pyfunction!(convert_soup, m)?)?;
+    m.add_function(wrap_pyfunction!(convert_indexed, m)?)?;
     Ok(())
 }

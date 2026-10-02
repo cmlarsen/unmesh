@@ -3,9 +3,9 @@
 Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` writer, and the Rust
 crate `unmesh-core`. They share one contract, the [IR](ir.md).
 
-Everything here is v0 and may change freely before the first release. `convert` is specified now and implemented by a later issue (#15); until then it raises
-`NotImplementedError` (Python) or returns `ConvertError::NotImplemented` (Rust). `step.write` is implemented for planes and
-`facets` (#5).
+Everything here is v0 and may change freely before the first release. `convert` handles all-planar
+parts today (what it cannot fit stays `facets`). `step.write` is implemented for planes and `facets`
+(#5).
 
 ## Python
 
@@ -33,7 +33,7 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh. Becomes `ir.tolerances.linear`. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter estimates the vertex noise of its planar regions and uses five times that, between a floor of 1e-3 and 5e-4 of the bounding-box diagonal. Becomes `ir.tolerances.linear`. |
 | `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
@@ -49,6 +49,9 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `analytic_area_fraction` | Share of mesh area in analytic (non-`facets`) regions. A report only, not a quality measure. |
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
+
+A clean mesh therefore gets the 1e-3 floor and a noisy one a tolerance that follows its noise, so snapping
+(see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
@@ -116,6 +119,18 @@ The IR as dataclasses: `Ir`, `Region`, `Plane`, `Cylinder`, `Cone`, `Sphere`, `T
 write [canonical JSON](ir.md#canonical-json); `ir.validate()` raises `IrError` listing every
 structural problem; `unmesh.ir.validate(ir)` returns the list instead. `Ir.loads` validates.
 
+### `unmesh.convert` internals
+
+The planar converter welds the input, groups triangles into regions by growing them while every
+vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each
+plane robustly (Huber IRLS), snaps normals to the world axes and to exact parallel and perpendicular
+relations when the snapped plane still fits within the estimated noise, and moves every vertex onto
+the planes it belongs to (one plane: projection; two: their line; three or more: their
+least-squares point, with a conditioning guard). `report.max_deviation` is the largest distance any
+vertex moved plus its remaining distance to its planes, so it bounds the distance between the input
+mesh and the IR in both directions. Shells follow [IR § Non-manifold and open
+input](ir.md#non-manifold-and-open-input).
+
 ### `unmesh.weld(tris, tolerance)`
 
 Returns `(vertices, faces, source_triangles, report)`: the welded arrays, a `uint32` array giving the input
@@ -146,7 +161,10 @@ Public surface:
   `Adjacency`, `Boundary`, `Kind`, `Vertex`), `IR_VERSION`, `validate`, `canonicalize`, `format_f64`,
   `IrError`. All types are `serde` `Serialize`/`Deserialize`; JSON field names equal the Rust names.
 - `api` (re-exported at the crate root): `convert(&IndexedMesh, &ConvertOptions) -> Result<ConvertOutput,
-  ConvertError>`, `ConvertOptions`, `Report`, `ConvertWarning`, `ConvertOutput`, `ConvertError`.
+  ConvertError>`, `convert_soup(&TriangleSoup, &ConvertOptions)` (the same for a triangle soup, which
+  is what STL files and `(n, 3, 3)` arrays are), `ConvertOptions`, `Report`, `ConvertWarning`,
+  `ConvertOutput`, `ConvertError` (`EmptyMesh`, `InvalidInput`). Source triangle ids in the IR are
+  indices into the soup, or into `mesh.faces`.
 
 The `ir_canon` example (`cargo run -p unmesh-core --example ir_canon < ir.json`) prints the canonical
 form of an IR read from stdin; the cross-language tests use it.

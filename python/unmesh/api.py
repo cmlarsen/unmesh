@@ -6,6 +6,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from unmesh import _core
 from unmesh.ir import Ir, Tolerances
 
 MeshLike = str | os.PathLike | np.ndarray | tuple[np.ndarray, np.ndarray]
@@ -39,5 +40,31 @@ class Result(NamedTuple):
     report: Report
 
 
+def _report(raw: dict) -> Report:
+    return Report(
+        max_deviation=raw["max_deviation"],
+        rms_deviation=raw["rms_deviation"],
+        analytic_area_fraction=raw["analytic_area_fraction"],
+        region_counts=dict(raw["region_counts"]),
+        warnings=[ConvertWarning(code, message) for code, message in raw["warnings"]],
+    )
+
+
 def convert(mesh_or_path: MeshLike, options: ConvertOptions | None = None) -> Result:
-    raise NotImplementedError("unmesh.convert is not implemented yet")
+    opts = options or ConvertOptions()
+    args = (
+        opts.linear_tolerance,
+        opts.angular_snap_deg,
+        opts.tangent_threshold_deg,
+        opts.vertex_merge,
+    )
+    if isinstance(mesh_or_path, tuple):
+        vertices, faces = mesh_or_path
+        text, raw = _core.convert_indexed(vertices, faces, *args)
+    else:
+        if isinstance(mesh_or_path, str | os.PathLike):
+            tris = _core.read_stl(mesh_or_path)
+        else:
+            tris = mesh_or_path
+        text, raw = _core.convert_soup(tris, *args)
+    return Result(Ir.loads(text), _report(raw))
