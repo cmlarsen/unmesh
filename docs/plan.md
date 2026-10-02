@@ -170,8 +170,10 @@ No C++ is written in this project.
 
 - **Every PR:** the `smoke` grid (under 2 min) plus the Rust and Python gates, on GitHub-hosted
   runners.
-- **Nightly on the self-hosted `shop16` runner:** the `standard` and `full` grids, the hidden seeds and
-  the hold-out set. `shop16` is a shared laptop that also serves OttoCAM, so per-PR grids stay off it.
+- **Nightly on GitHub-hosted runners:** the slow test tier, then the `standard` and `full` grids. The
+  repo is public, so hosted runners are free. No self-hosted runner is used: on a public repo a fork
+  pull request could run its own code on one. Hidden seeds and the hold-out set run from a private
+  companion repo, so their files and results never appear here.
 
 ## Data and licensing
 
@@ -198,4 +200,3 @@ No C++ is written in this project.
 ## Open decisions
 
 - Dataset terms for the imported-STEP tier (#22).
-- Registering `shop16` as a runner for this repo (#2).
