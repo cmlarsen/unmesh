@@ -9,7 +9,7 @@ use parry3d_f64::shape::TriMesh;
 
 use crate::ir::{Ir, Point, Surface};
 
-pub use sample::{Triangle, sample_triangles, total_area, triangle_area};
+pub use sample::{Sample, Triangle, point_at, sample_triangles, total_area, triangle_area};
 pub use surface::project_onto_surface;
 
 #[derive(Debug)]
@@ -118,6 +118,18 @@ pub fn calibration(reported_max_deviation: f64, input: &Comparison) -> f64 {
     reported_max_deviation - input.max()
 }
 
+pub const UNDER_REPORT_ABS_TOL: f64 = 1e-9;
+pub const UNDER_REPORT_REL_TOL: f64 = 0.005;
+
+/// True when the converter reports less than the measured max by more than the judge's own sampling
+/// uncertainty (`UNDER_REPORT_ABS_TOL` plus `UNDER_REPORT_REL_TOL` of the measured value).
+pub fn under_reports(reported_max_deviation: f64, input: &Comparison) -> bool {
+    let measured = input.max();
+    reported_max_deviation < measured - UNDER_REPORT_ABS_TOL - UNDER_REPORT_REL_TOL * measured
+}
+
+pub const REFINE_TOP_K: usize = 256;
+
 fn vec3(p: &Point) -> Vector {
     Vector::new(p[0], p[1], p[2])
 }
@@ -164,32 +176,6 @@ pub fn mesh_distances(tris: &[Triangle], pts: &[Point]) -> Result<Vec<f64>, Judg
     Ok(distances_to_mesh(&build_trimesh(tris, "mesh")?, pts))
 }
 
-/// The IR's surfaces bounded by their footprints. Each analytic region's footprint is its source
-/// triangles with every corner projected onto the region's surface; a facets region's footprint is
-/// its own triangles. The nearest point of the IR to a query is found by the nearest point on the
-/// flat footprint triangles, then moved onto the analytic surface by the closed-form projection.
-/// The flat triangle only locates the footprint: it is within the chord sagitta of the curved
-/// surface, and the final projection removes that error except where the nearest point sits within
-/// one chord of the footprint boundary.
-pub struct Footprint<'a> {
-    mesh: TriMesh,
-    tri_region: Vec<u32>,
-    surfaces: Vec<&'a Surface>,
-}
-
-impl Footprint<'_> {
-    fn distance(&self, p: &Point) -> f64 {
-        let (proj, _) = self.mesh.project_local_point_and_get_feature(vec3(p));
-        let q = [proj.point.x, proj.point.y, proj.point.z];
-        let surface = self.surfaces[self.tri_region[proj.subshape as usize] as usize];
-        dist(*p, project_onto_surface(surface, q))
-    }
-
-    fn distances(&self, pts: &[Point]) -> Vec<f64> {
-        par_map(pts, |p| self.distance(p))
-    }
-}
-
 fn region_triangles(
     region: &crate::ir::Region,
     input: &[Triangle],
@@ -224,91 +210,239 @@ fn region_triangles(
         .collect()
 }
 
-pub fn build_footprint<'a>(ir: &'a Ir, input: &[Triangle]) -> Result<Footprint<'a>, JudgeError> {
-    let mut tris = Vec::new();
-    let mut tri_region = Vec::new();
-    for (ri, region) in ir.regions.iter().enumerate() {
-        for mut t in region_triangles(region, input)? {
-            if !region.surface.is_facets() {
-                for c in &mut t {
-                    *c = project_onto_surface(&region.surface, *c);
-                }
-            }
-            tris.push(t);
-            tri_region.push(ri as u32);
-        }
-    }
-    Ok(Footprint {
-        mesh: build_trimesh(&tris, "IR footprint")?,
-        tri_region,
-        surfaces: ir.regions.iter().map(|r| &r.surface).collect(),
-    })
+struct IrTriangles {
+    tris: Vec<Triangle>,
+    region: Vec<u32>,
 }
 
-/// Region index and point for every sample. An analytic region is sampled uniformly by area on its
-/// source triangles and each sample is moved onto the analytic surface by closed-form projection;
-/// the region's analytic surface is therefore only sampled inside the footprint of its source
-/// triangles, shifted by at most the region's own residual.
-pub fn sample_ir(
-    ir: &Ir,
-    input: &[Triangle],
-    opts: &JudgeOptions,
-) -> Result<(Vec<Point>, Vec<u32>), JudgeError> {
+fn ir_triangles(ir: &Ir, input: &[Triangle]) -> Result<IrTriangles, JudgeError> {
     if ir.source.triangle_count as usize != input.len() {
         return Err(JudgeError::SourceMismatch {
             ir: ir.source.triangle_count,
             input: input.len(),
         });
     }
-    let mut points = Vec::new();
-    let mut owner = Vec::new();
-    for (ri, region) in ir.regions.iter().enumerate() {
-        let tris = region_triangles(region, input)?;
-        let salt = 0x1000 + ri as u64;
-        for (p, _) in sample_triangles(
-            &tris,
+    let mut tris = Vec::new();
+    let mut region = Vec::new();
+    for (ri, r) in ir.regions.iter().enumerate() {
+        for t in region_triangles(r, input)? {
+            tris.push(t);
+            region.push(ri as u32);
+        }
+    }
+    Ok(IrTriangles { tris, region })
+}
+
+fn on_surface(surface: &Surface, p: Point) -> Point {
+    if surface.is_facets() {
+        p
+    } else {
+        project_onto_surface(surface, p)
+    }
+}
+
+/// The IR's surfaces bounded by their footprints. Each analytic region's footprint is its source
+/// triangles with every corner projected onto the surface (a facets region's own triangles). The
+/// nearest point of the IR to a query is found on the flat footprint triangles, over all regions,
+/// then moved onto its region's analytic surface by the closed-form projection. That removes the
+/// chord error of the flat triangle inside a face, except within one chord of a footprint boundary.
+pub struct Footprint<'a> {
+    mesh: TriMesh,
+    tri_region: Vec<u32>,
+    surfaces: Vec<&'a Surface>,
+}
+
+impl Footprint<'_> {
+    fn distance(&self, p: &Point) -> f64 {
+        let (proj, _) = self.mesh.project_local_point_and_get_feature(vec3(p));
+        let q = [proj.point.x, proj.point.y, proj.point.z];
+        let surface = self.surfaces[self.tri_region[proj.subshape as usize] as usize];
+        dist(*p, on_surface(surface, q))
+    }
+
+    fn distances(&self, pts: &[Point]) -> Vec<f64> {
+        par_map(pts, |p| self.distance(p))
+    }
+}
+
+fn build_footprint<'a>(ir: &'a Ir, it: &IrTriangles) -> Result<Footprint<'a>, JudgeError> {
+    let surfaces: Vec<&Surface> = ir.regions.iter().map(|r| &r.surface).collect();
+    let tris: Vec<Triangle> = it
+        .tris
+        .iter()
+        .zip(&it.region)
+        .map(|(t, &r)| t.map(|c| on_surface(surfaces[r as usize], c)))
+        .collect();
+    Ok(Footprint {
+        mesh: build_trimesh(&tris, "IR footprint")?,
+        tri_region: it.region.clone(),
+        surfaces,
+    })
+}
+
+fn ir_point(ir: &Ir, it: &IrTriangles, s: &Sample) -> Point {
+    let surface = &ir.regions[it.region[s.tri as usize] as usize].surface;
+    on_surface(surface, point_at(&it.tris[s.tri as usize], s.b, s.c))
+}
+
+/// Region index and point for every sample. An analytic region is sampled uniformly by area on its
+/// source triangles (plus corners and edge midpoints) and each sample is moved onto the analytic
+/// surface by closed-form projection. The judged patch is therefore the source triangles projected
+/// onto the surface; area a writer extends a wrong surface over beyond them is not judged.
+pub fn sample_ir(
+    ir: &Ir,
+    input: &[Triangle],
+    opts: &JudgeOptions,
+) -> Result<(Vec<Point>, Vec<u32>), JudgeError> {
+    let it = ir_triangles(ir, input)?;
+    let samples = ir_samples(&it, opts);
+    Ok((
+        samples.iter().map(|s| ir_point(ir, &it, s)).collect(),
+        samples.iter().map(|s| it.region[s.tri as usize]).collect(),
+    ))
+}
+
+fn ir_samples(it: &IrTriangles, opts: &JudgeOptions) -> Vec<Sample> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < it.tris.len() {
+        let r = it.region[start];
+        let end = start + it.region[start..].iter().take_while(|&&x| x == r).count();
+        let salt = 0x1000 + u64::from(r);
+        for mut s in sample_triangles(
+            &it.tris[start..end],
             opts.samples_per_mm2,
             opts.seed,
             salt,
             opts.include_vertices,
         ) {
-            points.push(if region.surface.is_facets() {
-                p
-            } else {
-                project_onto_surface(&region.surface, p)
-            });
-            owner.push(ri as u32);
+            s.tri += start as u32;
+            out.push(s);
+        }
+        start = end;
+    }
+    out
+}
+
+fn maximize(start: &Sample, f: &(impl Fn(&Sample) -> f64 + Sync)) -> (u32, f64) {
+    let clamp = |b: f64, c: f64| {
+        let (b, c) = (b.clamp(0.0, 1.0), c.clamp(0.0, 1.0));
+        let sum = b + c;
+        if sum > 1.0 {
+            (b / sum, c / sum)
+        } else {
+            (b, c)
+        }
+    };
+    let mut cur = *start;
+    let mut best = f(&cur);
+    let mut step = 0.25;
+    for _ in 0..200 {
+        if step < 1e-6 {
+            break;
+        }
+        let mut moved = None;
+        for (db, dc) in [
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (1.0, 1.0),
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+        ] {
+            let (b, c) = clamp(cur.b + db * step, cur.c + dc * step);
+            let cand = Sample { tri: cur.tri, b, c };
+            let v = f(&cand);
+            if v > best {
+                best = v;
+                moved = Some(cand);
+            }
+        }
+        match moved {
+            Some(c) => cur = c,
+            None => step /= 2.0,
         }
     }
-    Ok((points, owner))
+    (cur.tri, best)
+}
+
+fn refine_top(
+    samples: &[Sample],
+    d: &[f64],
+    f: &(impl Fn(&Sample) -> f64 + Sync),
+) -> Vec<(u32, f64)> {
+    let mut order: Vec<usize> = (0..d.len()).collect();
+    let k = REFINE_TOP_K.min(order.len());
+    if k == 0 {
+        return Vec::new();
+    }
+    order.select_nth_unstable_by(k - 1, |&a, &b| d[b].total_cmp(&d[a]));
+    let starts: Vec<Sample> = order[..k].iter().map(|&i| samples[i]).collect();
+    par_map(&starts, |s| maximize(s, f))
+}
+
+fn with_refined_max(mut stats: Stats, refined: &[(u32, f64)]) -> Stats {
+    for (_, v) in refined {
+        stats.max = stats.max.max(*v);
+    }
+    stats.p99 = stats.p99.min(stats.max);
+    stats
+}
+
+type Compared = (Comparison, Vec<f64>, Vec<(u32, f64)>);
+
+struct Setup<'a> {
+    ir: &'a Ir,
+    it: IrTriangles,
+    samples: Vec<Sample>,
+    footprint: Footprint<'a>,
 }
 
 fn compare(
-    ir_points: &[Point],
-    footprint: &Footprint<'_>,
+    setup: &Setup<'_>,
     reference: &[Triangle],
     what: &'static str,
     opts: &JudgeOptions,
     salt: u64,
-) -> Result<(Comparison, Vec<f64>), JudgeError> {
+) -> Result<Compared, JudgeError> {
+    let Setup {
+        ir,
+        it,
+        samples,
+        footprint,
+    } = setup;
     let mesh = build_trimesh(reference, what)?;
-    let forward = distances_to_mesh(&mesh, ir_points);
-    let ref_samples: Vec<Point> = sample_triangles(
+    let ir_points: Vec<Point> = samples.iter().map(|s| ir_point(ir, it, s)).collect();
+    let forward = distances_to_mesh(&mesh, &ir_points);
+    let forward_refined = refine_top(samples, &forward, &|s| {
+        let p = ir_point(ir, it, s);
+        let q = mesh.project_local_point(vec3(&p), false).point;
+        dist(p, [q.x, q.y, q.z])
+    });
+
+    let ref_samples = sample_triangles(
         reference,
         opts.samples_per_mm2,
         opts.seed,
         salt,
         opts.include_vertices,
-    )
-    .into_iter()
-    .map(|(p, _)| p)
-    .collect();
-    let reverse = footprint.distances(&ref_samples);
+    );
+    let ref_points: Vec<Point> = ref_samples
+        .iter()
+        .map(|s| point_at(&reference[s.tri as usize], s.b, s.c))
+        .collect();
+    let reverse = footprint.distances(&ref_points);
+    let reverse_refined = refine_top(&ref_samples, &reverse, &|s| {
+        footprint.distance(&point_at(&reference[s.tri as usize], s.b, s.c))
+    });
+
     let comparison = Comparison {
-        ir_to_mesh: Stats::of(forward.clone()),
-        mesh_to_ir: Stats::of(reverse),
+        ir_to_mesh: with_refined_max(Stats::of(forward.clone()), &forward_refined),
+        mesh_to_ir: with_refined_max(Stats::of(reverse), &reverse_refined),
     };
-    Ok((comparison, forward))
+    Ok((comparison, forward, forward_refined))
 }
 
 pub fn judge(
@@ -317,16 +451,27 @@ pub fn judge(
     truth: Option<&[Triangle]>,
     opts: &JudgeOptions,
 ) -> Result<JudgeResult, JudgeError> {
-    let (points, owner) = sample_ir(ir, input, opts)?;
-    let footprint = build_footprint(ir, input)?;
-    let (input_cmp, forward) = compare(&points, &footprint, input, "input mesh", opts, 1)?;
+    let it = ir_triangles(ir, input)?;
+    let samples = ir_samples(&it, opts);
+    let footprint = build_footprint(ir, &it)?;
+    let setup = Setup {
+        ir,
+        it,
+        samples,
+        footprint,
+    };
+    let (input_cmp, forward, refined) = compare(&setup, input, "input mesh", opts, 1)?;
     let mut region_max = vec![0.0_f64; ir.regions.len()];
-    for (d, r) in forward.iter().zip(&owner) {
-        let slot = &mut region_max[*r as usize];
+    for (s, d) in setup.samples.iter().zip(&forward) {
+        let slot = &mut region_max[setup.it.region[s.tri as usize] as usize];
         *slot = slot.max(*d);
     }
+    for (tri, v) in refined {
+        let slot = &mut region_max[setup.it.region[tri as usize] as usize];
+        *slot = slot.max(v);
+    }
     let truth_cmp = truth
-        .map(|t| compare(&points, &footprint, t, "truth mesh", opts, 2).map(|c| c.0))
+        .map(|t| compare(&setup, t, "truth mesh", opts, 2).map(|c| c.0))
         .transpose()?;
     Ok(JudgeResult {
         input: input_cmp,

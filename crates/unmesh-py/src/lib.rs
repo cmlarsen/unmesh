@@ -252,6 +252,8 @@ fn convert_indexed<'py>(
         .detach(|| unmesh_core::convert(&mesh, &options))
         .map_err(convert_err)?;
     output_to_py(py, out)
+}
+
 type SampleOutput<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<u32>>);
 
 fn stats_dict<'py>(py: Python<'py>, s: &unmesh_core::judge::Stats) -> PyResult<Bound<'py, PyDict>> {

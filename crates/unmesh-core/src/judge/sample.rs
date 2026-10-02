@@ -27,9 +27,8 @@ pub fn triangle_area(t: &Triangle) -> f64 {
     0.5 * (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt()
 }
 
-fn point_in(t: &Triangle, r1: f64, r2: f64) -> Point {
-    let s = r1.sqrt();
-    let (a, b, c) = (1.0 - s, s * (1.0 - r2), s * r2);
+pub fn point_at(t: &Triangle, b: f64, c: f64) -> Point {
+    let a = 1.0 - b - c;
     [
         a * t[0][0] + b * t[1][0] + c * t[2][0],
         a * t[0][1] + b * t[1][1] + c * t[2][1],
@@ -41,20 +40,48 @@ fn key(p: &Point) -> [u64; 3] {
     [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()]
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sample {
+    pub tri: u32,
+    pub b: f64,
+    pub c: f64,
+}
+
+const CORNERS_AND_MIDPOINTS: [(f64, f64); 6] = [
+    (0.0, 0.0),
+    (1.0, 0.0),
+    (0.0, 1.0),
+    (0.5, 0.0),
+    (0.0, 0.5),
+    (0.5, 0.5),
+];
+
 /// Draws points uniformly by area on `tris`. A triangle of area `A` receives `floor(A*density)`
 /// points plus one more with probability `frac(A*density)`, so the count is exact in expectation
-/// and the draw for a triangle depends only on `(seed, salt, index)`. With `include_vertices`,
-/// every distinct triangle corner is also emitted once. Each point carries its triangle index.
+/// and the draw for a triangle depends only on `(seed, salt, index)`. With `include_vertices`, every
+/// distinct triangle corner and edge midpoint is also emitted once, including those of zero-area
+/// triangles. Each sample is a triangle index with barycentric weights `(b, c)` of corners 1 and 2.
 pub fn sample_triangles(
     tris: &[Triangle],
     density: f64,
     seed: u64,
     salt: u64,
     include_vertices: bool,
-) -> Vec<(Point, u32)> {
+) -> Vec<Sample> {
     let mut out = Vec::new();
     let mut seen: FxHashSet<[u64; 3]> = FxHashSet::default();
     for (i, t) in tris.iter().enumerate() {
+        if include_vertices {
+            for (b, c) in CORNERS_AND_MIDPOINTS {
+                if seen.insert(key(&point_at(t, b, c))) {
+                    out.push(Sample {
+                        tri: i as u32,
+                        b,
+                        c,
+                    });
+                }
+            }
+        }
         let area = triangle_area(t);
         if area == 0.0 || !area.is_finite() {
             continue;
@@ -69,14 +96,12 @@ pub fn sample_triangles(
         }
         for _ in 0..n {
             let (r1, r2) = (unit_f64(&mut state), unit_f64(&mut state));
-            out.push((point_in(t, r1, r2), i as u32));
-        }
-        if include_vertices {
-            for p in t {
-                if seen.insert(key(p)) {
-                    out.push((*p, i as u32));
-                }
-            }
+            let s = r1.sqrt();
+            out.push(Sample {
+                tri: i as u32,
+                b: s * (1.0 - r2),
+                c: s * r2,
+            });
         }
     }
     out
@@ -97,7 +122,7 @@ mod tests {
         assert!((pts.len() as f64 - 1000.0).abs() <= 1.0);
         assert!(
             pts.iter()
-                .all(|(p, _)| p[0] + p[1] <= 10.0 + 1e-9 && p[2] == 0.0)
+                .all(|q| q.b >= 0.0 && q.c >= 0.0 && q.b + q.c <= 1.0 + 1e-12)
         );
     }
 
@@ -115,7 +140,13 @@ mod tests {
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
         ];
-        assert_eq!(sample_triangles(&tris, 0.0, 0, 0, true).len(), 4);
+        assert_eq!(sample_triangles(&tris, 0.0, 0, 0, true).len(), 4 + 5);
+    }
+
+    #[test]
+    fn zero_area_triangles_still_contribute_corners() {
+        let tris = vec![[[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]];
+        assert!(!sample_triangles(&tris, 10.0, 0, 0, true).is_empty());
     }
 
     #[test]
@@ -125,8 +156,8 @@ mod tests {
             [[0.0, 0.0, 1.0], [4.0, 0.0, 1.0], [0.0, 4.0, 1.0]],
         ];
         let pts = sample_triangles(&tris, 500.0, 1, 1, false);
-        let big = pts.iter().filter(|(_, i)| *i == 1).count() as f64;
-        let small = pts.iter().filter(|(_, i)| *i == 0).count() as f64;
+        let big = pts.iter().filter(|q| q.tri == 1).count() as f64;
+        let small = pts.iter().filter(|q| q.tri == 0).count() as f64;
         assert!((big / small - 16.0).abs() < 0.5);
     }
 }

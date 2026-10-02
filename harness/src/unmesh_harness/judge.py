@@ -61,6 +61,17 @@ def _reported(report: Any) -> float | None:
     return float(report.max_deviation)
 
 
+UNDER_REPORT_ABS_TOL = 1e-9
+UNDER_REPORT_REL_TOL = 0.005
+
+
+def under_reports(reported_max_deviation: float, input: Comparison) -> bool:
+    measured = input.max
+    return (
+        reported_max_deviation < measured - UNDER_REPORT_ABS_TOL - UNDER_REPORT_REL_TOL * measured
+    )
+
+
 def calibration(reported_max_deviation: float, input: Comparison) -> float:
     return reported_max_deviation - input.max
 
