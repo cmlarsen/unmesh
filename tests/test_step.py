@@ -1,6 +1,8 @@
 import copy
 import math
 import pathlib
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -178,3 +180,76 @@ def test_malformed_ir_raises(tmp_path):
     ir.regions[0].id = 99
     with pytest.raises(IrError):
         step.write(ir, tmp_path / "bad.step")
+
+
+def shift(ir, normal, d):
+    out = copy.deepcopy(ir)
+    for r in out.regions:
+        if isinstance(r.surface, Plane) and r.surface.normal == normal:
+            r.surface.origin = tuple(
+                o + d * n for o, n in zip(r.surface.origin, r.surface.normal, strict=True)
+            )
+    return out
+
+
+def test_report_measures_how_far_geometry_moved(tmp_path):
+    clean = step.write(load("box"), tmp_path / "a.step")
+    assert clean.max_vertex_displacement < 1e-9
+    assert clean.max_boundary_deviation < 1e-9
+    moved = step.write(shift(load("box"), (0.0, 0.0, 1.0), 0.002), tmp_path / "b.step")
+    assert moved.valid
+    assert moved.max_vertex_displacement == pytest.approx(0.002, abs=1e-9)
+    assert moved.max_boundary_deviation == pytest.approx(0.002, abs=1e-9)
+    assert moved.shells[0].max_vertex_displacement == pytest.approx(0.002, abs=1e-9)
+    top = next(f for f in moved.faces if f.max_vertex_displacement > 1e-3)
+    assert top.surface_type == "plane"
+    assert top.max_boundary_deviation == pytest.approx(0.002, abs=1e-9)
+
+
+def test_deviation_cap_is_enforced(tmp_path):
+    bad = shift(load("box"), (0.0, 0.0, 1.0), 0.002)
+    path = tmp_path / "c.step"
+    report = step.write(bad, path, step.WriteOptions(max_deviation=1e-3))
+    assert not report.valid
+    assert not path.exists()
+    assert any("limit" in i for i in report.issues)
+
+
+def test_no_mesh_and_one_bad_shell_writes_nothing(tmp_path):
+    ir = load("two_bodies")
+    bad = copy.deepcopy(ir)
+    bad.regions[0].surface.origin = tuple(c + 1.0 for c in bad.regions[0].surface.origin)
+    path = tmp_path / "p.step"
+    report = step.write(bad, path)
+    assert not report.valid
+    assert report.solids == 0
+    assert not path.exists()
+    assert [s.valid for s in report.shells] == [False, True]
+
+
+def test_two_plane_vertices_snap_with_facets_neighbour(tmp_path):
+    ir = load("mixed_facets")
+    bad = shift(ir, (0.0, -1.0, 0.0), 0.002)
+    path = tmp_path / "m.step"
+    report = step.write(bad, path)
+    assert report.valid
+    assert report.max_vertex_displacement == pytest.approx(0.002, abs=1e-9)
+    shape, _ = reimported_faces(path)
+    assert occ.volume_of(shape) == pytest.approx(VOLUMES["mixed_facets"] - 0.002 * 20 * 5, rel=1e-3)
+
+
+def test_missing_ocp_gives_install_hint():
+    code = (
+        "import sys\n"
+        "sys.modules['OCP'] = None\n"
+        "from unmesh import Ir\n"
+        "import unmesh.step as step\n"
+        f"ir = Ir.loads(open({str(FIXTURES / 'box.json')!r}).read())\n"
+        "try:\n"
+        "    step.write(ir, 'x.step')\n"
+        "except ImportError as e:\n"
+        "    assert 'pip install unmesh[step]' in str(e), e\n"
+        "else:\n"
+        "    raise SystemExit(1)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

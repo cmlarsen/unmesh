@@ -12,6 +12,7 @@ from unmesh.ir import Ir
 @dataclass(frozen=True)
 class WriteOptions:
     max_shape_tolerance: float = 1e-3
+    max_deviation: float = 5e-3
 
 
 @dataclass
@@ -19,6 +20,8 @@ class FaceReport:
     region: int
     surface_type: str
     max_shape_tolerance: float
+    max_vertex_displacement: float = 0.0
+    max_boundary_deviation: float = 0.0
 
 
 @dataclass
@@ -37,6 +40,8 @@ class ShellReport:
     volume: float | None
     max_shape_tolerance: float
     issues: list[str] = field(default_factory=list)
+    max_vertex_displacement: float = 0.0
+    max_boundary_deviation: float = 0.0
 
 
 @dataclass
@@ -50,6 +55,8 @@ class WriteReport:
     shells: list[ShellReport] = field(default_factory=list)
     seams: list[SeamReport] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    max_vertex_displacement: float = 0.0
+    max_boundary_deviation: float = 0.0
 
 
 @dataclass
@@ -62,6 +69,10 @@ class _Group:
     valid: bool = False
     volume: float | None = None
     tolerance: float = 0.0
+    context: Any = None
+    mapping: list = field(default_factory=list)
+    moved: float = 0.0
+    deviation: float = 0.0
 
 
 def _triangles(mesh) -> np.ndarray:
@@ -105,7 +116,7 @@ def _check(g: _Group, occ, max_tol: float) -> None:
 def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
     if g.kind == "solid":
         solid = occ.make_solid(outer_shell, cavities)
-        g.shape = occ.fix_shape(solid)
+        g.shape, g.context = occ.fix_shape(solid)
     else:
         g.shape = outer_shell
     _check(g, occ, options.max_shape_tolerance)
@@ -114,36 +125,35 @@ def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
 def _analytic(ir: Ir, options: WriteOptions, occ, topology):
     groups: list[_Group] = []
     seams: list[SeamReport] = []
-    vpos = None
-    try:
-        vpos = topology.vertex_positions(ir)
-        vertex_error = None
-    except topology.BuildError as e:
-        vertex_error = str(e)
+    limit = topology.deviation_limit(ir, options.max_deviation)
+    vpos, vmoved, bad = topology.vertex_positions(ir, limit)
     for outer, shell in enumerate(ir.shells):
         if shell.role != "outer":
             continue
         g = _Group(outer, "solid" if shell.closed else "shell")
         groups.append(g)
         try:
-            if vertex_error is not None:
-                raise topology.BuildError(vertex_error)
             built = []
+            moved: dict[int, float] = {}
+            dev: dict[int, float] = {}
             for idx in _members(ir, outer):
-                plan = topology.plan_shell(ir, idx, vpos)
+                plan = topology.plan_shell(ir, idx, vpos, vmoved, bad, limit)
                 seams.extend(
                     SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in plan.seams
                 )
+                moved.update(plan.vertex_displacement)
+                dev.update(plan.boundary_deviation)
                 built.append((idx, *occ.build_plan_shell(plan)))
-            per_region: dict[int, float] = {}
-            for _, _, tols in built:
-                for region, tol in tols:
-                    per_region[region] = max(per_region.get(region, 0.0), tol)
-            g.faces = [
-                FaceReport(r, ir.regions[r].surface.type, t) for r, t in sorted(per_region.items())
-            ]
+            g.mapping = [m for _, _, mapping in built for m in mapping]
             cavities = [sh for idx, sh, _ in built if idx != outer]
             _finish_group(g, occ, built[0][1], cavities, options)
+            tols = occ.face_tolerances(g.shape, g.mapping, g.context)
+            g.faces = [
+                FaceReport(r, ir.regions[r].surface.type, t, moved[r], dev[r])
+                for r, t in sorted(tols.items())
+            ]
+            g.moved = max(moved.values(), default=0.0)
+            g.deviation = max(dev.values(), default=0.0)
         except topology.BuildError as e:
             g.issues.append(str(e))
         except Exception as e:
@@ -210,23 +220,31 @@ def write(
             fallback = "faceted"
         else:
             reason += "; no mesh given, so no faceted fallback"
-    written = [g for g in groups if g.valid]
+    complete = all(g.valid for g in groups)
+    written = groups if complete else []
     issues = []
     if written:
         occ.write_step(occ.compound_of([g.shape for g in written]), path)
     else:
         issues.append("nothing was written")
     faces = [f for g in written for f in g.faces] if fallback is None else []
+    if fallback is None and not complete and reason is not None:
+        issues.append(reason)
     return WriteReport(
-        valid=len(written) == n_outer,
+        valid=complete and len(written) == n_outer,
         solids=sum(occ.count_solids(g.shape) for g in written),
         max_shape_tolerance=max((g.tolerance for g in written), default=0.0),
         faces=faces,
         fallback=fallback,
         fallback_reason=reason if fallback else None,
         shells=[
-            ShellReport(g.outer, g.kind, g.valid, g.volume, g.tolerance, g.issues) for g in groups
+            ShellReport(
+                g.outer, g.kind, g.valid, g.volume, g.tolerance, g.issues, g.moved, g.deviation
+            )
+            for g in groups
         ],
         seams=seams,
-        issues=issues if reason is None or fallback else [*issues, reason],
+        issues=issues,
+        max_vertex_displacement=max((g.moved for g in groups), default=0.0),
+        max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
     )

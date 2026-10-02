@@ -60,19 +60,25 @@ An optional extra: `pip install unmesh[step]` installs OCP. `import unmesh` neve
 `unmesh.step` imports it only when `write` runs, and raises `ImportError` with the install hint when
 it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 
-`options` is a `WriteOptions`: `max_shape_tolerance` (default `1e-3`), the largest OCCT shape
-tolerance a written shell may need before the writer falls back.
+`options` is a `WriteOptions`:
+
+- `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
+- `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
 
 `mesh` is the source mesh the IR was converted from, in any form `convert` accepts (path, `(n, 3, 3)`
 array, `(vertices, faces)` tuple). The IR does not embed the mesh, and analytic regions carry no
 triangles, so the faceted fallback can only be built when the caller passes it. Region triangle ids index
-this mesh. Without `mesh`, `write` writes the shells that built and validated, omits the others, and
-reports why (`valid=False`, `issues`); it still does not raise.
+this mesh. **Callers that went through `convert` must pass the mesh** (the converter, #15, will wire
+this); `mesh=None` is for callers that only have an IR. Without `mesh`, if any shell fails, `write`
+writes nothing (no partial part, no file), returns `valid=False`, and says why in `issues` and
+`shells[*].issues`; it still does not raise.
 
-Building (v0, planes and `facets` only): vertices are the least-squares intersection of the planes of
-the regions meeting there (pulled toward the IR position when near-degenerate; a vertex more than 5
-linear tolerances from the IR position is a failure). Plane-plane edges are straight lines between
-vertices, and every boundary point must lie within 5 linear tolerances of the line. Loops are chained
+Building (v0, planes and `facets` only): a vertex with at least two incident plane regions is moved
+onto those planes (least-squares, pulled toward the IR position along any free direction, so two planes
+give the point on their line nearest the IR position and one plane plus facets is not snapped). Patch
+vertices of a `facets` region that coincide with a moved IR vertex move with it. Plane-plane edges are
+straight lines between vertices, and every boundary point (closed plane-plane boundaries included, measured
+against both planes) must lie within the deviation limit of the built edge. Loops are chained
 from the boundaries in each region's direction, faces are built on the analytic planes, sewn, and
 passed through ShapeFix. Boundaries touching a `facets` region keep their polyline. An outer shell and
 the cavity shells that name it become one solid; an open shell becomes a sewn shell, never a solid;
@@ -94,10 +100,12 @@ and for an `ir` that fails `Ir.validate()`.
 | `valid` | Whether every outer shell was written and passed validation. |
 | `solids` | Number of solids in the written compound. |
 | `max_shape_tolerance` | Largest shape tolerance in the written shape. |
-| `faces` | `FaceReport(region, surface_type, max_shape_tolerance)` for each written analytic region (empty after a fallback). |
+| `faces` | `FaceReport(region, surface_type, max_shape_tolerance, max_vertex_displacement, max_boundary_deviation)` for each written region (empty after a fallback). Tolerances are measured on the final healed shape. |
+| `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. `0.0` for the faceted fallback, which uses source triangles as they are. |
+| `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built. |
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
-| `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues)` per outer shell; `kind` is `"solid"` or `"shell"`. |
+| `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
 | `seams` | `SeamReport(regions, surface_type, points, max_gap)` for each facets/analytic boundary: the largest distance from the boundary points to the analytic surface. |
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on. |
 

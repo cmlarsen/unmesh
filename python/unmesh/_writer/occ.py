@@ -125,9 +125,12 @@ def is_valid(shape) -> bool:
     return bool(BRepCheck_Analyzer(shape).IsValid())
 
 
-def _orient_shell(shell):
+def _orient_shell(shell, mapping=None):
     fix = ShapeFix_Shell(shell)
     fix.Perform()
+    if mapping is not None:
+        ctx = fix.Context()
+        mapping[:] = [(r, TopoDS.Face_s(ctx.Apply(f))) for r, f in mapping]
     return fix.Shell()
 
 
@@ -159,12 +162,14 @@ def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):
     return shells[0], mapping
 
 
-def face_tolerances(shell, mapping) -> list[tuple[int, float]]:
-    final = _faces_of(shell)
-    out = []
+def face_tolerances(shape, mapping, context=None) -> dict[int, float]:
+    final = _faces_of(shape)
+    out: dict[int, float] = {}
     for region, g in mapping:
+        if context is not None:
+            g = context.Apply(g)
         match = next((h for h in final if h.IsSame(g)), g)
-        out.append((region, tolerance_of(match)))
+        out[region] = max(out.get(region, 0.0), tolerance_of(match))
     return out
 
 
@@ -172,8 +177,8 @@ def build_plan_shell(plan: ShellPlan):
     pool = _Pool()
     faces = [(f.region, _face(pool, f)) for f in plan.faces]
     shell, mapping = build_sewn_shell(faces)
-    shell = _orient_shell(shell)
-    return shell, face_tolerances(shell, mapping)
+    shell = _orient_shell(shell, mapping)
+    return shell, mapping
 
 
 def build_triangle_shell(triangles: np.ndarray):
@@ -253,4 +258,4 @@ def triangle_face(pool: _Pool, a, b, c):
 def fix_shape(shape):
     fix = ShapeFix_Shape(shape)
     fix.Perform()
-    return fix.Shape()
+    return fix.Shape(), fix.Context()

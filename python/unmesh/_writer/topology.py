@@ -9,6 +9,15 @@ from unmesh.ir import Facets, Ir, Plane
 
 VERTEX_PULL = 1e-8
 DEVIATION_FACTOR = 5.0
+KEY_SCALE = 1e7
+
+
+def deviation_limit(ir: Ir, cap: float) -> float:
+    return min(DEVIATION_FACTOR * ir.tolerances.linear, cap)
+
+
+def _key(p) -> tuple[int, int, int]:
+    return (round(p[0] * KEY_SCALE), round(p[1] * KEY_SCALE), round(p[2] * KEY_SCALE))
 
 
 class BuildError(Exception):
@@ -40,6 +49,8 @@ class ShellPlan:
     parent: int | None
     faces: list[FacePlan] = field(default_factory=list)
     seams: list[SeamGap] = field(default_factory=list)
+    vertex_displacement: dict[int, float] = field(default_factory=dict)
+    boundary_deviation: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -57,49 +68,63 @@ def _unit(v) -> np.ndarray:
     return v / n
 
 
-def vertex_positions(ir: Ir) -> list[np.ndarray]:
-    limit = DEVIATION_FACTOR * ir.tolerances.linear
+def vertex_positions(ir: Ir, limit: float):
     out = []
+    moved = []
+    bad: dict[int, str] = {}
     for v in ir.vertices:
         p0 = np.asarray(v.position, dtype=float)
-        surfaces = [ir.regions[r].surface for r in v.regions]
-        if len(surfaces) >= 3 and all(isinstance(s, Plane) for s in surfaces):
-            n = np.array([_unit(s.normal) for s in surfaces])
-            d = np.array([n[i] @ np.asarray(s.origin, dtype=float) for i, s in enumerate(surfaces)])
-            lam = VERTEX_PULL
-            x = np.linalg.solve(n.T @ n + lam * np.eye(3), n.T @ d + lam * p0)
-            gap = float(np.linalg.norm(x - p0))
-            if gap > limit:
-                raise BuildError(
-                    f"vertex {v.id}: plane intersection is {gap:.6g} from its IR position"
-                )
-            out.append(x)
+        planes = [
+            ir.regions[r].surface for r in v.regions if isinstance(ir.regions[r].surface, Plane)
+        ]
+        if len(planes) >= 2:
+            n = np.array([_unit(s.normal) for s in planes])
+            d = np.array([n[i] @ np.asarray(s.origin, dtype=float) for i, s in enumerate(planes)])
+            x = np.linalg.solve(n.T @ n + VERTEX_PULL * np.eye(3), n.T @ d + VERTEX_PULL * p0)
         else:
-            out.append(p0)
-    return out
+            x = p0
+        gap = float(np.linalg.norm(x - p0))
+        if gap > limit:
+            bad[v.id] = (
+                f"vertex {v.id}: plane intersection is {gap:.6g} from its IR position,"
+                f" over the {limit:.6g} limit"
+            )
+        out.append(x)
+        moved.append(gap)
+    return out, moved, bad
 
 
-def _boundary_nodes(ir, bd, a, b, vpos) -> list[np.ndarray]:
+def _boundary_nodes(ir, bd, a, b, vpos, limit):
     pts = [np.asarray(p, dtype=float) for p in bd.points]
     sa, sb = ir.regions[a].surface, ir.regions[b].surface
+    both_planes = isinstance(sa, Plane) and isinstance(sb, Plane)
+    dev = 0.0
     if bd.closed:
-        return pts
-    start, end = vpos[bd.start_vertex], vpos[bd.end_vertex]
-    if isinstance(sa, Plane) and isinstance(sb, Plane):
-        chord = end - start
-        length = float(np.linalg.norm(chord))
-        if length > 0:
-            u = chord / length
-            limit = DEVIATION_FACTOR * ir.tolerances.linear
-            for p in pts:
-                q = p - start
-                dev = float(np.linalg.norm(q - (q @ u) * u))
-                if dev > limit:
-                    raise BuildError(
-                        f"regions {a}/{b}: boundary point {dev:.6g} off the plane-plane edge"
-                    )
-        return [start, end]
-    return [start, *pts[1:-1], end]
+        nodes = pts
+        if both_planes:
+            for plane in (sa, sb):
+                n = _unit(plane.normal)
+                o = np.asarray(plane.origin, dtype=float)
+                dev = max(dev, max(abs(float(n @ (p - o))) for p in pts))
+    else:
+        start, end = vpos[bd.start_vertex], vpos[bd.end_vertex]
+        if both_planes:
+            nodes = [start, end]
+            chord = end - start
+            length = float(np.linalg.norm(chord))
+            if length > 0:
+                u = chord / length
+                for p in pts:
+                    q = p - start
+                    dev = max(dev, float(np.linalg.norm(q - (q @ u) * u)))
+        else:
+            nodes = [start, *pts[1:-1], end]
+    if dev > limit:
+        raise BuildError(
+            f"regions {a}/{b}: boundary point {dev:.6g} off the built edge,"
+            f" over the {limit:.6g} limit"
+        )
+    return nodes, dev
 
 
 def _signed_area(loop: list[np.ndarray], normal: np.ndarray) -> float:
@@ -174,8 +199,8 @@ def _plane_face(ir, region, segments) -> FacePlan:
     return FacePlan(region, "plane", np.asarray(plane.origin, dtype=float), normal, ordered)
 
 
-def _facets_faces(region: int, surface: Facets) -> list[FacePlan]:
-    v = np.asarray(surface.vertices, dtype=float)
+def _facets_faces(region: int, surface: Facets, snapped) -> list[FacePlan]:
+    v = np.array([snapped.get(_key(p), np.asarray(p, dtype=float)) for p in surface.vertices])
     faces = []
     for f in surface.faces:
         a, b, c = v[list(f)]
@@ -187,17 +212,32 @@ def _facets_faces(region: int, surface: Facets) -> list[FacePlan]:
     return faces
 
 
-def plan_shell(ir: Ir, index: int, vpos: list[np.ndarray]) -> ShellPlan:
+def plan_shell(ir: Ir, index: int, vpos, vmoved, bad, limit: float) -> ShellPlan:
     shell = ir.shells[index]
     plan = ShellPlan(index, shell.closed, shell.role, shell.parent)
     members = set(shell.regions)
+    snapped = {}
+    for v, x in zip(ir.vertices, vpos, strict=True):
+        for p in (v.position, *v.source_positions):
+            snapped[_key(p)] = x
+    for r in shell.regions:
+        plan.vertex_displacement[r] = 0.0
+        plan.boundary_deviation[r] = 0.0
+    for v, m in zip(ir.vertices, vmoved, strict=True):
+        for r in v.regions:
+            if r in members:
+                if v.id in bad:
+                    raise BuildError(bad[v.id])
+                plan.vertex_displacement[r] = max(plan.vertex_displacement[r], m)
     segments: dict[int, list[_Segment]] = {r: [] for r in shell.regions}
     for adj in ir.adjacencies:
         a, b = adj.regions
         if a not in members:
             continue
         for bd in adj.boundaries:
-            nodes = _boundary_nodes(ir, bd, a, b, vpos)
+            nodes, dev = _boundary_nodes(ir, bd, a, b, vpos, limit)
+            for r in (a, b):
+                plan.boundary_deviation[r] = max(plan.boundary_deviation[r], dev)
             segments[a].append(_Segment(nodes, bd.start_vertex, bd.end_vertex))
             segments[b].append(_Segment(nodes[::-1], bd.end_vertex, bd.start_vertex))
             sa, sb = ir.regions[a].surface, ir.regions[b].surface
@@ -213,7 +253,7 @@ def plan_shell(ir: Ir, index: int, vpos: list[np.ndarray]) -> ShellPlan:
         if isinstance(surface, Plane):
             plan.faces.append(_plane_face(ir, r, segments[r]))
         elif isinstance(surface, Facets):
-            plan.faces.extend(_facets_faces(r, surface))
+            plan.faces.extend(_facets_faces(r, surface, snapped))
         else:
             raise BuildError(f"region {r}: {surface.type} surfaces are not supported yet")
     return plan
