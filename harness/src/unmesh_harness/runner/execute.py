@@ -45,7 +45,9 @@ def _load_part(cache: str, part: str):
     return _PARTS[part]
 
 
-def _score(task: dict[str, Any], degraded, tris, stl_path: Path) -> dict[str, Any]:
+def _score(
+    task: dict[str, Any], degraded, tris, stl_path: Path, phases: dict[str, float]
+) -> dict[str, Any]:
     from unmesh.ir import Ir
 
     from ..degrade import to_original
@@ -57,11 +59,13 @@ def _score(task: dict[str, Any], degraded, tris, stl_path: Path) -> dict[str, An
     started = time.perf_counter()
     ir_json, step_path, report_json = get_converter(task["converter"])(stl_path)
     seconds = time.perf_counter() - started
-    record: dict[str, Any] = {"seconds": seconds, "triangles": len(tris)}
+    record: dict[str, Any] = {"seconds": seconds, "triangles": len(tris), "phases": phases}
     report = json.loads(report_json) if report_json else None
     write = (report or {}).get("write") or {}
     record["writer_valid"] = write.get("valid")
     record["fallback"] = write.get("fallback") is not None
+    phases["convert"] = seconds
+    mark = time.perf_counter()
     if write.get("skipped"):
         record["valid"] = None
         record["step_problems"] = []
@@ -69,6 +73,8 @@ def _score(task: dict[str, Any], degraded, tris, stl_path: Path) -> dict[str, An
         problems = step_problems(step_path, task["entry"]["fingerprint"]["volume"])
         record["valid"] = not problems and write.get("valid", True) is not False
         record["step_problems"] = problems
+    phases["validity"] = time.perf_counter() - mark
+    mark = time.perf_counter()
     if ir_json is None:
         record["status"] = "error"
         record["error"] = "converter returned no IR"
@@ -88,7 +94,10 @@ def _score(task: dict[str, Any], degraded, tris, stl_path: Path) -> dict[str, An
             "under_report": None if reported is None else under_reports(reported, result.input),
         }
     )
+    phases["judge"] = time.perf_counter() - mark
+    mark = time.perf_counter()
     record.update(face_recovery(clean, degraded.face_id, ir, frame))
+    phases["f1"] = time.perf_counter() - mark
     record["analytic_area_fraction"] = (report or {}).get("analytic_area_fraction")
     record["warnings"] = (report or {}).get("warnings", [])
     record["status"] = "ok"
@@ -100,6 +109,8 @@ def run_cell(task: dict[str, Any]) -> dict[str, Any]:
 
     from ..degrade import apply_chain
 
+    phases: dict[str, float] = {}
+    mark = time.perf_counter()
     clean, _ = _load_part(task["cache"], task["entry"]["id"])
     steps = [(name, float(sev)) for name, sev in task["steps"]]
     degraded = apply_chain(clean, steps, task["seed"])
@@ -108,7 +119,8 @@ def run_cell(task: dict[str, Any]) -> dict[str, Any]:
         stl_path = work / "input.stl"
         degraded.write_stl(stl_path)
         tris = unmesh.read_stl(stl_path)
-        return _score(task, degraded, tris, stl_path)
+        phases["degrade"] = time.perf_counter() - mark
+        return _score(task, degraded, tris, stl_path, phases)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
