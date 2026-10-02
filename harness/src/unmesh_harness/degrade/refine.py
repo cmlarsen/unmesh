@@ -7,13 +7,13 @@ import numpy as np
 from ..labels import FaceInfo
 from .core import register
 
-MAX_EDGE_AT_ZERO_MM = 10.0
+DIAGONAL_FRACTION_AT_ZERO = 0.1
 MAX_PASSES = 40
 _EPS = 1e-6
 
 
-def target_edge_mm(severity: float) -> float:
-    return MAX_EDGE_AT_ZERO_MM * 0.1**severity
+def target_edge_mm(severity: float, diagonal: float) -> float:
+    return diagonal * DIAGONAL_FRACTION_AT_ZERO * 0.1**severity
 
 
 def implicit(face: FaceInfo, p: np.ndarray) -> np.ndarray:
@@ -91,12 +91,15 @@ def _expand(p, q, mids):
     "refine",
     "tessellation",
     "identity",
-    "edges bisected until none exceeds 1 mm (10 mm at severity 0+, 3.2 mm at 0.5); "
-    "midpoints on curved faces are projected onto the analytic surface",
+    "edges bisected until none exceeds a target of bbox diagonal / 10 at severity 0+, "
+    "/ 31.6 at 0.5, / 100 at 1 (log-interpolated); midpoints on curved faces are projected "
+    "onto the analytic surface",
     binary=False,
 )
 def refine(mesh, severity, rng):
-    target = target_edge_mm(severity)
+    flat = mesh.tris.reshape(-1, 3)
+    diagonal = float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
+    target = target_edge_mm(severity, diagonal)
     tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
     fids = mesh.face_id.tolist()
     all_mids: dict = {}
@@ -138,7 +141,8 @@ def refine(mesh, severity, rng):
             out += _expand(p, q, all_mids)
         adj.points = [list(p) for p in out]
     return {
-        "target_max_edge_mm": target,
+        "target_mm": target,
+        "bbox_diagonal_mm": diagonal,
         "triangles_before": before,
         "triangles_after": len(tris),
     }

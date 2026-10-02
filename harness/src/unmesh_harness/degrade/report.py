@@ -156,8 +156,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "`refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). "
         "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
         "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
-        "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (5 mm) and sweeps the "
-        "noise severity.",
+        "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and "
+        "sweeps the noise severity.",
         "",
         "| parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |",
         "|---|---|---|---|---|---|---|---|",

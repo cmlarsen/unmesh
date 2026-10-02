@@ -26,13 +26,13 @@ Rules every operator follows:
 | `truncated_digits` | precision | identity | coordinates written with 3 significant digits (9 digits at severity 0+, 6 at 0.5) |
 | `inch_round_trip` | precision | identity | mm converted to inches, written with 3 decimals (25 um grid), converted back (7 decimals at severity 0+, 5 at 0.5) |
 | `far_translation` | precision | identity | part translated up to 1e6 mm (1 km) along a random direction, rounded to float32 there (ulp 62 um), translated back exactly |
-| `refine` | tessellation | identity | edges bisected until none exceeds 1 mm (10 mm at severity 0+, 3.2 mm at 0.5); midpoints on curved faces are projected onto the analytic surface |
+| `refine` | tessellation | identity | edges bisected until none exceeds a target of bbox diagonal / 10 at severity 0+, / 31.6 at 0.5, / 100 at 1 (log-interpolated); midpoints on curved faces are projected onto the analytic surface |
 
 Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along their direction. Every noise history entry records `amplitude_mm`, `distribution` and the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
 
 ## Displacement sheet
 
-Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (5 mm) and sweeps the noise severity.
+Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity.
 
 | parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
 |---|---|---|---|---|---|---|---|
@@ -42,9 +42,9 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (20) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (20) | `noise_normal` | 0.5 | 13.317 | 24.874 | 1.0 | yes | yes |
 | smoke (20) | `noise_normal` | 1.0 | 26.634 | 49.748 | 1.0 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 111.3 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 0.5 | 13.429 | 25.000 | 111.3 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 1.0 | 26.858 | 49.999 | 111.3 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 110.7 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 0.5 | 13.400 | 24.997 | 110.7 | yes | yes |
+| smoke (20) | `refine -> noise_off_plane` | 1.0 | 26.801 | 49.994 | 110.7 | yes | yes |
 | smoke (20) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (20) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (20) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
@@ -62,17 +62,17 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (20) | `far_translation` | 0.5 | 13.207 | 21.747 | 1.0 | yes | yes |
 | smoke (20) | `far_translation` | 1.0 | 26.027 | 43.385 | 1.0 | yes | yes |
 | smoke (20) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (20) | `refine` | 0.5 | - | - | 269.6 | yes | yes |
-| smoke (20) | `refine` | 1.0 | - | - | 2506.5 | yes | yes |
+| smoke (20) | `refine` | 0.5 | - | - | 246.4 | yes | yes |
+| smoke (20) | `refine` | 1.0 | - | - | 2776.1 | yes | yes |
 | filleted box | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `noise_isotropic` | 0.5 | 19.298 | 24.981 | 1.0 | yes | yes |
 | filleted box | `noise_isotropic` | 1.0 | 38.596 | 49.962 | 1.0 | yes | yes |
 | filleted box | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `noise_normal` | 0.5 | 14.338 | 24.874 | 1.0 | yes | yes |
 | filleted box | `noise_normal` | 1.0 | 28.676 | 49.748 | 1.0 | yes | yes |
-| filleted box | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 2.7 | yes | yes |
-| filleted box | `refine -> noise_off_plane` | 0.5 | 2.508 | 24.982 | 2.7 | yes | yes |
-| filleted box | `refine -> noise_off_plane` | 1.0 | 5.015 | 49.963 | 2.7 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 18.5 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 0.5 | 4.645 | 24.995 | 18.5 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 1.0 | 9.290 | 49.991 | 18.5 | yes | yes |
 | filleted box | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
@@ -90,5 +90,5 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `far_translation` | 0.5 | 14.641 | 21.493 | 1.0 | yes | yes |
 | filleted box | `far_translation` | 1.0 | 27.426 | 42.182 | 1.0 | yes | yes |
 | filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `refine` | 0.5 | - | - | 6.5 | yes | yes |
-| filleted box | `refine` | 1.0 | - | - | 20.7 | yes | yes |
+| filleted box | `refine` | 0.5 | - | - | 20.7 | yes | yes |
+| filleted box | `refine` | 1.0 | - | - | 224.8 | yes | yes |

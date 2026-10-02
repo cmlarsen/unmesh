@@ -37,7 +37,7 @@ def prepared(name, mesh):
 
 
 def levels_for(name, levels):
-    return tuple(min(x, 0.5) for x in levels) if name == "refine" else levels
+    return levels
 
 
 def assert_on_surface(mesh, tol=1e-9):
@@ -132,7 +132,7 @@ def test_inputs_are_not_mutated(name, smoke):
     mesh = prepared(name, mesh)
     snapshot = mesh.tris.copy()
     before = copy.deepcopy(mesh.metadata)
-    degrade.apply(name, mesh, 0.5 if name == "refine" else 1.0, 1)
+    degrade.apply(name, mesh, 1.0, 1)
     assert np.array_equal(mesh.tris, snapshot)
     assert mesh.metadata == before
 
@@ -422,7 +422,7 @@ def test_refine_midpoints_land_on_the_surface_and_edges(curved):
             np.linalg.norm(out.tris[:, i] - out.tris[:, (i + 1) % 3], axis=1).max()
             for i in range(3)
         )
-        assert longest <= params["target_max_edge_mm"] + 1e-12
+        assert longest <= params["target_mm"] + 1e-12
         by_edge = {a.edge_id: a for a in mesh.adjacency}
         for adj in out.adjacency:
             assert len(adj.points) >= len(by_edge[adj.edge_id].points)
