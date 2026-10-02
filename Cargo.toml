@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/unmesh-core"]
+members = ["crates/unmesh-core", "crates/unmesh-py"]
 
 [workspace.package]
 version = "0.1.0"

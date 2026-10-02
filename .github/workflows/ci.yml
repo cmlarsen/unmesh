@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - run: scripts/check.sh
+      - name: Wheel imports on Python 3.11 without OCP
+        run: |
+          uv build --wheel -o "$RUNNER_TEMP/wheels"
+          uv venv --python 3.11 "$RUNNER_TEMP/bare"
+          uv pip install --python "$RUNNER_TEMP/bare/bin/python" "$RUNNER_TEMP"/wheels/*.whl
+          "$RUNNER_TEMP/bare/bin/python" -c "import sys, unmesh; assert 'OCP' not in sys.modules; print(unmesh.__version__)"
+          if "$RUNNER_TEMP/bare/bin/python" -c "import OCP" 2>/dev/null; then exit 1; fi

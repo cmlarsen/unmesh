@@ -1,0 +1,43 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "unmesh"
+version = "0.1.0"
+description = "Convert triangle meshes exported from CAD into STEP solids with analytic faces."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+step = ["cadquery-ocp>=7.8,<7.9"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "unmesh-harness"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "unmesh._core"
+manifest-path = "crates/unmesh-py/Cargo.toml"
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "crates/**/*.rs" }, { file = "crates/**/Cargo.toml" }]
+
+[tool.uv.workspace]
+members = ["harness"]
+
+[tool.uv.sources]
+unmesh-harness = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "harness/tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["python", "harness/src", "tests", "harness/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
