@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
+import os
 import shutil
 import tempfile
 import time
@@ -131,6 +132,12 @@ def run_prep(task: dict[str, Any]) -> dict[str, Any]:
 
 
 READY = "__ready__"
+SINGLE_THREAD_ENV = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "RAYON_NUM_THREADS",
+)
 
 
 def _serve(conn) -> None:
@@ -175,6 +182,8 @@ def run_pool(
 ) -> Iterator[tuple[Any, dict[str, Any]]]:
     if not jobs:
         return
+    for var in SINGLE_THREAD_ENV:
+        os.environ.setdefault(var, "1")
     ctx = mp.get_context("spawn")
     pending = deque(jobs)
     slots = [_Slot(ctx) for _ in range(min(workers, len(jobs)))]

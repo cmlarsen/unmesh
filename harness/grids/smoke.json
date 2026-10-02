@@ -13,17 +13,17 @@
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.02,
-      "steps": [["refine", 0.3], ["noise_off_plane", 0.02]]
+      "steps": [["refine", 0.15], ["noise_off_plane", 0.02]]
     },
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.1,
-      "steps": [["refine", 0.3], ["noise_off_plane", 0.1]]
+      "steps": [["refine", 0.15], ["noise_off_plane", 0.1]]
     },
     {
       "operator": "refine+noise_off_plane",
       "severity": 0.2,
-      "steps": [["refine", 0.3], ["noise_off_plane", 0.2]]
+      "steps": [["refine", 0.15], ["noise_off_plane", 0.2]]
     },
     {"operator": "noise_isotropic", "severity": 0.02, "steps": [["noise_isotropic", 0.02]]},
     {"operator": "noise_isotropic", "severity": 0.1, "steps": [["noise_isotropic", 0.1]]}
