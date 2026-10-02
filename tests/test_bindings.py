@@ -49,11 +49,6 @@ def test_write_rejects_bad_shape(tmp_path):
         unmesh.write_stl(tmp_path / "c.stl", np.zeros((4, 3)))
 
 
-def test_read_missing_file_is_oserror(tmp_path):
-    with pytest.raises(OSError):
-        unmesh.read_stl(tmp_path / "nope.stl")
-
-
 def test_read_truncated_is_valueerror(tmp_path):
     path = tmp_path / "t.stl"
     unmesh.write_stl(path, np.zeros((2, 3, 3)))
@@ -99,7 +94,40 @@ def test_weld_rejects_negative_tolerance():
         unmesh.weld(np.zeros((1, 3, 3)), -1.0)
 
 
-def test_weld_million_triangles(tmp_path):
+def test_weld_rejects_non_finite_and_handles_huge():
+    for bad in (np.inf, -np.inf, np.nan):
+        tris = np.zeros((1, 3, 3))
+        tris[0, 0, 0] = bad
+        with pytest.raises(ValueError, match="non-finite"):
+            unmesh.weld(tris, 1e-6)
+    huge = np.array([[[1e20, 0, 0], [-1e20, 0, 0], [0, 1e20, 0]]])
+    verts, faces, report = unmesh.weld(huge, 1e-6)
+    assert report["unique_vertices"] == 3
+
+
+def test_write_rejects_non_finite(tmp_path):
+    tris = np.zeros((1, 3, 3))
+    tris[0, 1, 1] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        unmesh.write_stl(tmp_path / "n.stl", tris)
+
+
+def test_read_rejects_non_finite(tmp_path):
+    path = tmp_path / "inf.stl"
+    unmesh.write_stl(path, np.zeros((1, 3, 3)))
+    data = bytearray(path.read_bytes())
+    data[96:100] = np.float32(np.inf).tobytes()
+    path.write_bytes(bytes(data))
+    with pytest.raises(ValueError, match="non-finite"):
+        unmesh.read_stl(path)
+
+
+def test_read_missing_is_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        unmesh.read_stl(tmp_path / "nope.stl")
+
+
+def million_soup_weld(tmp_path):
     tris = grid_soup(708)
     assert len(tris) >= 1_000_000
     path = tmp_path / "big.stl"
@@ -108,7 +136,17 @@ def test_weld_million_triangles(tmp_path):
     start = time.perf_counter()
     verts, faces, report = unmesh.weld(soup, 1e-6)
     elapsed = time.perf_counter() - start
-    print(f"weld 1M triangles: {elapsed:.3f}s")
     assert report["unique_vertices"] == 709 * 709
     assert len(faces) == len(tris)
+    return elapsed
+
+
+def test_weld_million_triangles_sanity(tmp_path):
+    assert million_soup_weld(tmp_path) < 30.0
+
+
+@pytest.mark.benchmark
+def test_weld_million_triangles_benchmark(tmp_path):
+    elapsed = million_soup_weld(tmp_path)
+    print(f"weld 1M triangles: {elapsed:.3f}s")
     assert elapsed < 1.0

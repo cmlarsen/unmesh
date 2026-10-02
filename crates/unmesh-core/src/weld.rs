@@ -1,5 +1,6 @@
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::fmt;
+
+use rustc_hash::FxHashMap;
 
 use crate::mesh::{IndexedMesh, Point, TriangleSoup};
 
@@ -10,7 +11,38 @@ pub struct WeldReport {
     pub degenerate_dropped: usize,
 }
 
-pub fn weld(soup: &TriangleSoup, tolerance: f64) -> (IndexedMesh, WeldReport) {
+#[derive(Debug, Clone, PartialEq)]
+pub enum WeldError {
+    NonFiniteCoordinate,
+    InvalidTolerance,
+}
+
+impl fmt::Display for WeldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WeldError::NonFiniteCoordinate => {
+                write!(f, "triangle soup has a non-finite coordinate")
+            }
+            WeldError::InvalidTolerance => write!(f, "tolerance must be finite and >= 0"),
+        }
+    }
+}
+
+impl std::error::Error for WeldError {}
+
+pub fn weld(soup: &TriangleSoup, tolerance: f64) -> Result<(IndexedMesh, WeldReport), WeldError> {
+    if !tolerance.is_finite() || tolerance < 0.0 {
+        return Err(WeldError::InvalidTolerance);
+    }
+    if soup
+        .triangles
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|c| !c.is_finite())
+    {
+        return Err(WeldError::NonFiniteCoordinate);
+    }
     let mut vertices: Vec<Point> = Vec::new();
     let mut faces = Vec::with_capacity(soup.len());
     let mut degenerate_dropped = 0;
@@ -30,50 +62,21 @@ pub fn weld(soup: &TriangleSoup, tolerance: f64) -> (IndexedMesh, WeldReport) {
         unique_vertices: vertices.len(),
         degenerate_dropped,
     };
-    (IndexedMesh { vertices, faces }, report)
+    Ok((IndexedMesh { vertices, faces }, report))
 }
-
-#[derive(Default)]
-struct FxHasher(u64);
-
-impl Hasher for FxHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(b as u64);
-        }
-    }
-
-    fn write_u64(&mut self, v: u64) {
-        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
-
-    fn write_i64(&mut self, v: i64) {
-        self.write_u64(v as u64);
-    }
-
-    fn write_usize(&mut self, v: usize) {
-        self.write_u64(v as u64);
-    }
-}
-
-type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 struct SpatialIndex {
     tolerance: f64,
-    cells: FastMap<[i64; 3], Vec<u32>>,
-    exact: FastMap<[u64; 3], u32>,
+    cells: FxHashMap<[i64; 3], Vec<u32>>,
+    exact: FxHashMap<[u64; 3], u32>,
 }
 
 impl SpatialIndex {
     fn new(tolerance: f64) -> Self {
         Self {
             tolerance,
-            cells: FastMap::default(),
-            exact: FastMap::default(),
+            cells: FxHashMap::default(),
+            exact: FxHashMap::default(),
         }
     }
 
@@ -99,7 +102,11 @@ impl SpatialIndex {
         for dx in reach[0] {
             for dy in reach[1] {
                 for dz in reach[2] {
-                    let key = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+                    let key = [
+                        cell[0].saturating_add(dx),
+                        cell[1].saturating_add(dy),
+                        cell[2].saturating_add(dz),
+                    ];
                     if let Some(ids) = self.cells.get(&key) {
                         for &id in ids {
                             if dist2(vertices[id as usize], p) <= tol2 {
@@ -136,7 +143,7 @@ mod tests {
 
     #[test]
     fn exact_weld_shares_identical_corners() {
-        let (mesh, report) = weld(&quad(0.0), 0.0);
+        let (mesh, report) = weld(&quad(0.0), 0.0).unwrap();
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(report.input_corners, 6);
         assert_eq!(mesh.faces.len(), 2);
@@ -144,13 +151,13 @@ mod tests {
 
     #[test]
     fn exact_weld_keeps_a_gap_open() {
-        let (mesh, _) = weld(&quad(1e-9), 0.0);
+        let (mesh, _) = weld(&quad(1e-9), 0.0).unwrap();
         assert_eq!(mesh.vertices.len(), 5);
     }
 
     #[test]
     fn tolerant_weld_closes_a_gap_across_cell_boundaries() {
-        let (mesh, _) = weld(&quad(1e-9), 1e-6);
+        let (mesh, _) = weld(&quad(1e-9), 1e-6).unwrap();
         assert_eq!(mesh.vertices.len(), 4);
     }
 
@@ -159,8 +166,22 @@ mod tests {
         let soup = TriangleSoup {
             triangles: vec![[[0.0, 0.0, 0.0], [1e-9, 0.0, 0.0], [0.0, 1.0, 0.0]]],
         };
-        let (mesh, report) = weld(&soup, 1e-6);
+        let (mesh, report) = weld(&soup, 1e-6).unwrap();
         assert!(mesh.faces.is_empty());
         assert_eq!(report.degenerate_dropped, 1);
+    }
+
+    #[test]
+    fn non_finite_and_huge_coordinates() {
+        for x in [f64::INFINITY, f64::NAN, f64::NEG_INFINITY] {
+            let soup = TriangleSoup {
+                triangles: vec![[[x, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]],
+            };
+            assert_eq!(weld(&soup, 1e-6), Err(WeldError::NonFiniteCoordinate));
+        }
+        let soup = TriangleSoup {
+            triangles: vec![[[1e20, 0.0, 0.0], [-1e20, 0.0, 0.0], [0.0, 1e20, 0.0]]],
+        };
+        assert!(weld(&soup, 1e-6).is_ok());
     }
 }

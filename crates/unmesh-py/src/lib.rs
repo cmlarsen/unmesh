@@ -1,5 +1,5 @@
-use numpy::{PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods, ToPyArray};
-use pyo3::exceptions::{PyOSError, PyValueError};
+use numpy::{IntoPyArray, PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use unmesh_core::{StlError, TriangleSoup};
@@ -40,6 +40,11 @@ fn soup_from_array(py: Python<'_>, tris: &Bound<'_, PyAny>) -> PyResult<Triangle
     }
     let readonly = arr.readonly();
     let data = readonly.as_slice()?;
+    if data.iter().any(|c| !c.is_finite()) {
+        return Err(PyValueError::new_err(
+            "triangle array has a non-finite coordinate",
+        ));
+    }
     Ok(TriangleSoup {
         triangles: data
             .as_chunks::<9>()
@@ -53,13 +58,12 @@ fn soup_from_array(py: Python<'_>, tris: &Bound<'_, PyAny>) -> PyResult<Triangle
 #[pyfunction]
 fn read_stl<'py>(py: Python<'py>, path: std::path::PathBuf) -> PyResult<Bound<'py, PyArray3<f64>>> {
     let flat = py.detach(|| -> PyResult<Vec<f64>> {
-        let data = std::fs::read(&path)
-            .map_err(|e| PyOSError::new_err(format!("{}: {e}", path.display())))?;
+        let data = std::fs::read(&path).map_err(PyErr::from)?;
         let soup = unmesh_core::read_stl(&data).map_err(stl_err)?;
         Ok(soup_to_flat(&soup))
     })?;
     let n = flat.len() / 9;
-    flat.to_pyarray(py).reshape([n, 3, 3])
+    flat.into_pyarray(py).reshape([n, 3, 3])
 }
 
 #[pyfunction]
@@ -67,8 +71,7 @@ fn write_stl(py: Python<'_>, path: std::path::PathBuf, tris: &Bound<'_, PyAny>) 
     let soup = soup_from_array(py, tris)?;
     py.detach(|| {
         let bytes = unmesh_core::write_stl_binary(&soup);
-        std::fs::write(&path, bytes)
-            .map_err(|e| PyOSError::new_err(format!("{}: {e}", path.display())))
+        std::fs::write(&path, bytes).map_err(PyErr::from)
     })
 }
 
@@ -84,16 +87,14 @@ fn weld<'py>(
     tris: &Bound<'py, PyAny>,
     tolerance: f64,
 ) -> PyResult<WeldOutput<'py>> {
-    if !tolerance.is_finite() || tolerance < 0.0 {
-        return Err(PyValueError::new_err("tolerance must be finite and >= 0"));
-    }
     let soup = soup_from_array(py, tris)?;
     let (verts, faces, report) = py.detach(|| {
-        let (mesh, report) = unmesh_core::weld(&soup, tolerance);
+        let (mesh, report) = unmesh_core::weld(&soup, tolerance)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let verts: Vec<f64> = mesh.vertices.iter().flatten().copied().collect();
         let faces: Vec<u32> = mesh.faces.iter().flatten().copied().collect();
-        (verts, faces, report)
-    });
+        Ok::<_, PyErr>((verts, faces, report))
+    })?;
     let nv = verts.len() / 3;
     let nf = faces.len() / 3;
     let dict = PyDict::new(py);
@@ -101,8 +102,8 @@ fn weld<'py>(
     dict.set_item("unique_vertices", report.unique_vertices)?;
     dict.set_item("degenerate_dropped", report.degenerate_dropped)?;
     Ok((
-        verts.to_pyarray(py).reshape([nv, 3])?,
-        faces.to_pyarray(py).reshape([nf, 3])?,
+        verts.into_pyarray(py).reshape([nv, 3])?,
+        faces.into_pyarray(py).reshape([nf, 3])?,
         dict,
     ))
 }

@@ -6,6 +6,7 @@ use crate::mesh::{Point, TriangleSoup};
 pub enum StlError {
     Truncated { expected: usize, actual: usize },
     Ascii { line: usize, message: String },
+    NonFinite,
 }
 
 impl fmt::Display for StlError {
@@ -18,6 +19,7 @@ impl fmt::Display for StlError {
                 )
             }
             StlError::Ascii { line, message } => write!(f, "ASCII STL line {line}: {message}"),
+            StlError::NonFinite => write!(f, "STL contains a non-finite coordinate"),
         }
     }
 }
@@ -28,11 +30,21 @@ const HEADER_LEN: usize = 80;
 const RECORD_LEN: usize = 50;
 
 pub fn read_stl(data: &[u8]) -> Result<TriangleSoup, StlError> {
-    if is_binary(data) {
-        read_binary(data)
+    let soup = if is_binary(data) {
+        read_binary(data)?
     } else {
-        read_ascii(data)
+        read_ascii(data)?
+    };
+    if soup
+        .triangles
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|c| !c.is_finite())
+    {
+        return Err(StlError::NonFinite);
     }
+    Ok(soup)
 }
 
 fn is_binary(data: &[u8]) -> bool {
