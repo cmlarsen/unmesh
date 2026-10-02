@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,6 +68,8 @@ UNDER_REPORT_REL_TOL = 0.005
 
 def under_reports(reported_max_deviation: float, input: Comparison) -> bool:
     measured = input.max
+    if not (math.isfinite(reported_max_deviation) and math.isfinite(measured)):
+        return True
     return (
         reported_max_deviation < measured - UNDER_REPORT_ABS_TOL - UNDER_REPORT_REL_TOL * measured
     )
