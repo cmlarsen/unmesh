@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::mesh::{IndexedMesh, Point, TriangleSoup};
 
@@ -32,18 +33,47 @@ pub fn weld(soup: &TriangleSoup, tolerance: f64) -> (IndexedMesh, WeldReport) {
     (IndexedMesh { vertices, faces }, report)
 }
 
+#[derive(Default)]
+struct FxHasher(u64);
+
+impl Hasher for FxHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn write_i64(&mut self, v: i64) {
+        self.write_u64(v as u64);
+    }
+
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
+type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+
 struct SpatialIndex {
     tolerance: f64,
-    cells: HashMap<[i64; 3], Vec<u32>>,
-    exact: HashMap<[u64; 3], u32>,
+    cells: FastMap<[i64; 3], Vec<u32>>,
+    exact: FastMap<[u64; 3], u32>,
 }
 
 impl SpatialIndex {
     fn new(tolerance: f64) -> Self {
         Self {
             tolerance,
-            cells: HashMap::new(),
-            exact: HashMap::new(),
+            cells: FastMap::default(),
+            exact: FastMap::default(),
         }
     }
 
@@ -55,11 +85,20 @@ impl SpatialIndex {
                 (vertices.len() - 1) as u32
             });
         }
-        let cell = p.map(|c| (c / self.tolerance).floor() as i64);
+        let cell_size = 2.0 * self.tolerance;
         let tol2 = self.tolerance * self.tolerance;
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
+        let mut cell = [0i64; 3];
+        let mut reach = [[0i64; 2]; 3];
+        for axis in 0..3 {
+            let scaled = p[axis] / cell_size;
+            let base = scaled.floor();
+            cell[axis] = base as i64;
+            let step = if scaled - base < 0.5 { -1 } else { 1 };
+            reach[axis] = [0, step];
+        }
+        for dx in reach[0] {
+            for dy in reach[1] {
+                for dz in reach[2] {
                     let key = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
                     if let Some(ids) = self.cells.get(&key) {
                         for &id in ids {
