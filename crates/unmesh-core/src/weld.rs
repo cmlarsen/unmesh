@@ -9,6 +9,7 @@ pub struct WeldReport {
     pub input_corners: usize,
     pub unique_vertices: usize,
     pub degenerate_dropped: usize,
+    pub max_merge: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,7 @@ pub fn weld(
         input_corners: soup.len() * 3,
         unique_vertices: vertices.len(),
         degenerate_dropped,
+        max_merge: index.max_merge,
     };
     Ok((IndexedMesh { vertices, faces }, source, report))
 }
@@ -74,6 +76,7 @@ struct SpatialIndex {
     tolerance: f64,
     cells: FxHashMap<[i64; 3], Vec<u32>>,
     exact: FxHashMap<[u64; 3], u32>,
+    max_merge: f64,
 }
 
 impl SpatialIndex {
@@ -82,6 +85,7 @@ impl SpatialIndex {
             tolerance,
             cells: FxHashMap::default(),
             exact: FxHashMap::default(),
+            max_merge: 0.0,
         }
     }
 
@@ -114,7 +118,12 @@ impl SpatialIndex {
                     ];
                     if let Some(ids) = self.cells.get(&key) {
                         for &id in ids {
-                            if dist2(vertices[id as usize], p) <= tol2 {
+                            let d2 = dist2(vertices[id as usize], p);
+                            if d2 <= tol2 {
+                                let d = d2.sqrt();
+                                if d > self.max_merge {
+                                    self.max_merge = d;
+                                }
                                 return id;
                             }
                         }
@@ -165,6 +174,14 @@ mod tests {
     fn tolerant_weld_closes_a_gap_across_cell_boundaries() {
         let (mesh, _, _) = weld(&quad(1e-9), 1e-6).unwrap();
         assert_eq!(mesh.vertices.len(), 4);
+    }
+
+    #[test]
+    fn merge_distance_is_tracked() {
+        let (_, _, exact) = weld(&quad(0.0), 1e-6).unwrap();
+        assert_eq!(exact.max_merge, 0.0);
+        let (_, _, report) = weld(&quad(1e-9), 1e-6).unwrap();
+        assert!((report.max_merge - 1e-9).abs() < 1e-15);
     }
 
     #[test]

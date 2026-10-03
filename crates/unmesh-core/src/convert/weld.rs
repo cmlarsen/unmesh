@@ -20,6 +20,7 @@ pub struct Welded {
     pub center: V3,
     pub diag: f64,
     pub unique_vertices: u32,
+    pub merge_dev: f64,
 }
 
 pub fn run(
@@ -163,6 +164,7 @@ pub fn run(
             center,
             diag,
             unique_vertices: wrep.unique_vertices as u32,
+            merge_dev: wrep.max_merge,
         },
         warnings,
     ))

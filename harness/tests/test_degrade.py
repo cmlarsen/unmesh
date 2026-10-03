@@ -100,7 +100,10 @@ def geometry_equal(a: LabeledMesh, b: LabeledMesh) -> bool:
 
 
 def labels_aligned(before: LabeledMesh, after: LabeledMesh) -> None:
-    if after.metadata["history"][-1]["op"] in ("refine",) or len(after.tris) != len(before.tris):
+    if OPERATORS[after.metadata["history"][-1]["op"]].family == "defect":
+        assert len(after.face_id) == len(after.tris)
+        assert set(after.face_id.tolist()) <= set(before.face_id.tolist()) | {-1}
+    elif after.metadata["history"][-1]["op"] in ("refine",) or len(after.tris) != len(before.tris):
         assert set(after.face_id.tolist()) <= set(before.face_id.tolist())
         assert len(after.face_id) == len(after.tris)
     else:

@@ -1,4 +1,15 @@
-from . import chords, coarsen, defects, fillets, noise, pose, precision, refine, retriangulate
+from . import (
+    chords,
+    coarsen,
+    defects,
+    faults,
+    fillets,
+    noise,
+    pose,
+    precision,
+    refine,
+    retriangulate,
+)
 from .core import (
     OPERATORS,
     Operator,
@@ -18,6 +29,7 @@ __all__ = [
     "chords",
     "coarsen",
     "defects",
+    "faults",
     "fillets",
     "noise",
     "pose",
