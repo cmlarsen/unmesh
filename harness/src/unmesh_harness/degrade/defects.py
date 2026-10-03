@@ -48,6 +48,33 @@ def slivers(mesh, severity, rng):
                 if tuple(x.tolist()) in k:
                     continue
             mids[k] = tuple(x.tolist())
+    edge_tris: dict = {}
+    for t, _f in zip(tris, fids, strict=True):
+        for p, q in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            edge_tris.setdefault(_key(p, q), []).append(t)
+    accepted = {}
+    for k in sorted(mids):
+        trial = dict(accepted)
+        trial[k] = mids[k]
+        ok = True
+        for t in edge_tris[k]:
+            tkeys = {_key(t[0], t[1]), _key(t[1], t[2]), _key(t[2], t[0])}
+            local = {e: m for e, m in trial.items() if e in tkeys}
+            pieces = _split_triangle(t, local, 0)
+            n_old = np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0]))
+            if float(np.linalg.norm(n_old)) <= 1e-14:
+                ok = False
+                break
+            for p in pieces:
+                n_new = np.cross(np.subtract(p[1], p[0]), np.subtract(p[2], p[0]))
+                if float(np.linalg.norm(n_new)) <= 1e-14 or float(n_old @ n_new) <= 0.0:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok:
+            accepted[k] = mids[k]
+    mids = accepted
     new_tris, new_ids = [], []
     for t, f in zip(tris, fids, strict=True):
         pieces = _split_triangle(t, mids, f)
