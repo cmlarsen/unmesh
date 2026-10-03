@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from ..labels import outward_normals
 from .core import register, vertex_table
 
 MAX_PASSES = 40
@@ -25,8 +26,11 @@ def _find(root: list[int], i: int) -> int:
     "tessellation",
     "identity",
     "shortest edges collapsed until none is shorter than h = diagonal * 0.01 * 10**severity "
-    "(diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); the surviving endpoint keeps its "
-    "coordinates, so curved nodes stay on the analytic surface and cylinders become N-gon prisms",
+    "(diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); b collapses into a only if "
+    "faces(b) is a subset of faces(a), and a node of an edge polyline only into an adjacent "
+    "node of the same polyline; the surviving endpoint keeps its coordinates and no collapse "
+    "may fold a triangle or create a zero-area one, so curved nodes stay on the analytic "
+    "surface and cylinders become N-gon prisms",
 )
 def coarsen(mesh, severity, rng):
     uniq, inverse = vertex_table(mesh)
@@ -47,9 +51,105 @@ def coarsen(mesh, severity, rng):
     diagonal = float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
     h = threshold_mm(severity, diagonal)
     collapses = 0
+    lookup = {tuple(p): i for i, p in enumerate(uniq.tolist())}
+    seqs = [[lookup[tuple(p)] for p in adj.points] for adj in mesh.adjacency]
 
     def resolved(t):
         return [_find(root, v) for v in t]
+
+    def poly_allows(a: int, b: int) -> bool:
+        for s in seqs:
+            if b not in s:
+                continue
+            adj = set()
+            for j, v in enumerate(s):
+                if v != b:
+                    continue
+                if j > 0 and s[j - 1] != b:
+                    adj.add(s[j - 1])
+                if j < len(s) - 1 and s[j + 1] != b:
+                    adj.add(s[j + 1])
+            if a not in adj:
+                return False
+        return True
+
+    def collapse(a: int, b: int, vtris: dict[int, set[int]], nbrs: dict[int, set[int]]) -> bool:
+        if rep[a] in cad and rep[b] in cad:
+            return False
+        if rep[b] in cad:
+            return False
+        fb = {face[ti] for ti in vtris.get(b, ())}
+        if not fb <= {face[ti] for ti in vtris.get(a, ())}:
+            return False
+        if not poly_allows(a, b):
+            return False
+        shared = [ti for ti in vtris.get(a, ()) if ti in vtris.get(b, set())]
+        opposite = set()
+        doomed = True
+        for ti in shared:
+            r = resolved(tri[ti])
+            third = [v for v in r if v != a and v != b]
+            if len(third) != 1:
+                doomed = False
+                break
+            opposite.add(third[0])
+        if not doomed:
+            return False
+        if (nbrs.get(a, set()) & nbrs.get(b, set())) != opposite:
+            return False
+        flap = [ti for ti in vtris.get(b, ()) if ti not in vtris.get(a, set())]
+        if any(counts[face[ti]] <= 1 for ti in shared):
+            return False
+        for ti in flap:
+            r = tri[ti]
+            old = [np.array(rep[v]) for v in r]
+            new = [np.array(rep[a] if v == b else rep[v]) for v in r]
+            n_old = np.cross(old[1] - old[0], old[2] - old[0])
+            n_new = np.cross(new[1] - new[0], new[2] - new[0])
+            if float(np.linalg.norm(n_new)) <= 1e-14:
+                return False
+            try:
+                on = outward_normals(mesh.faces[face[ti]], (new[0] + new[1] + new[2])[None] / 3.0)[
+                    0
+                ]
+            except Exception:
+                on = None
+            if on is not None and np.all(np.isfinite(on)):
+                if float(n_new @ on) <= 0.0:
+                    return False
+            elif float(np.linalg.norm(n_old)) > 1e-14 and float(n_old @ n_new) <= 0.0:
+                return False
+        root[b] = a
+        for ti in list(vtris.get(b, ())):
+            r = tri[ti]
+            sub = [a if v == b else v for v in r]
+            if len(set(sub)) < 3:
+                if live[ti]:
+                    live[ti] = False
+                    counts[face[ti]] -= 1
+                for v in set(sub):
+                    if v in vtris:
+                        vtris[v].discard(ti)
+            else:
+                tri[ti] = sub
+                vtris.setdefault(a, set()).add(ti)
+        vtris.pop(b, None)
+        for v in list(nbrs.pop(b, set())):
+            if v == a:
+                continue
+            nbrs[v].discard(b)
+            nbrs[v].add(a)
+            nbrs.setdefault(a, set()).add(v)
+        nbrs.get(a, set()).discard(b)
+        for s in seqs:
+            if b in s:
+                merged = [a if v == b else v for v in s]
+                dedup = [merged[0]]
+                for v in merged[1:]:
+                    if v != dedup[-1]:
+                        dedup.append(v)
+                s[:] = dedup
+        return True
 
     for _ in range(MAX_PASSES):
         edges: dict[tuple[int, int], list[int]] = {}
@@ -83,63 +183,17 @@ def coarsen(mesh, severity, rng):
             ra, rb = _find(root, x), _find(root, y)
             if ra == rb or math.dist(rep[ra], rep[rb]) > h:
                 continue
-            if rep[ra] in cad and rep[rb] in cad:
-                continue
-            if rep[rb] in cad or (rep[ra] not in cad and rb < ra):
-                ra, rb = rb, ra
-            shared = [ti for ti in vtris.get(ra, ()) if ti in vtris.get(rb, set())]
-            opposite = set()
-            doomed = True
-            for ti in shared:
-                r = resolved(tri[ti])
-                third = [v for v in r if v != ra and v != rb]
-                if len(third) != 1:
-                    doomed = False
-                    break
-                opposite.add(third[0])
-            if not doomed:
-                continue
-            if (nbrs.get(ra, set()) & nbrs.get(rb, set())) != opposite:
-                continue
-            flap = [ti for ti in vtris.get(rb, ()) if ti not in vtris.get(ra, set())]
-            if any(counts[face[ti]] <= 1 for ti in shared):
-                continue
-            ok = True
-            for ti in flap:
-                r = tri[ti]
-                old = [np.array(rep[v]) for v in r]
-                new = [np.array(rep[ra] if v == rb else rep[v]) for v in r]
-                n_old = np.cross(old[1] - old[0], old[2] - old[0])
-                n_new = np.cross(new[1] - new[0], new[2] - new[0])
-                if float(n_old @ n_new) <= 0.0:
-                    ok = False
-                    break
-            if not ok:
-                continue
-            root[rb] = ra
-            for ti in list(vtris.get(rb, ())):
-                r = tri[ti]
-                sub = [ra if v == rb else v for v in r]
-                if len(set(sub)) < 3:
-                    if live[ti]:
-                        live[ti] = False
-                        counts[face[ti]] -= 1
-                    for v in set(sub):
-                        if v in vtris:
-                            vtris[v].discard(ti)
-                else:
-                    tri[ti] = sub
-                    vtris.setdefault(ra, set()).add(ti)
-            vtris.pop(rb, None)
-            for v in list(nbrs.pop(rb, set())):
-                if v == ra:
-                    continue
-                nbrs[v].discard(rb)
-                nbrs[v].add(ra)
-                nbrs.setdefault(ra, set()).add(v)
-            nbrs.get(ra, set()).discard(rb)
-            collapses += 1
-            moved += 1
+            a, b = ra, rb
+            if rep[b] in cad and rep[a] not in cad:
+                a, b = b, a
+            elif rep[a] not in cad and rep[b] not in cad and b < a:
+                a, b = b, a
+            done = collapse(a, b, vtris, nbrs)
+            if not done:
+                done = collapse(b, a, vtris, nbrs)
+            if done:
+                collapses += 1
+                moved += 1
         if not moved:
             break
 
@@ -148,7 +202,6 @@ def coarsen(mesh, severity, rng):
         [[list(rep[_find(root, v)]) for v in tri[i]] for i in kept], dtype=np.float64
     ).reshape(-1, 3, 3)
     mesh.face_id = np.array([face[i] for i in kept], dtype=mesh.face_id.dtype)
-    lookup = {tuple(p): i for i, p in enumerate(uniq.tolist())}
 
     def remap(pt):
         return list(rep[_find(root, lookup[tuple(pt)])])

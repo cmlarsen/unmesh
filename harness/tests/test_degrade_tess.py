@@ -7,9 +7,16 @@ import pytest
 from build123d import Box, Cylinder
 
 from unmesh_harness import degrade
+from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.degrade import OPERATORS
 from unmesh_harness.groundtruth import generate
-from unmesh_harness.labels import LabeledMesh, distance_to_surface, tessellate
+from unmesh_harness.labels import (
+    DEFLECTION_SETTINGS,
+    LabeledMesh,
+    distance_to_surface,
+    outward_normals,
+    tessellate,
+)
 
 from .test_labels import closed_manifold_problems
 
@@ -403,3 +410,107 @@ def test_fillet_rows_noop_without_eligible_fillets(box, cyl):
         out = degrade.apply("fillet_rows", mesh, 0.9, 3)
         assert geometry_equal(mesh, out)
         assert out.metadata["history"][-1]["params"]["fillet_faces"] == []
+
+
+SWEEP_SEVERITIES = (0.2, 0.5, 1.0)
+SWEEP_SEED = 4
+SWEEP_FAST_IDS = (
+    "through_bore-0000",
+    "revolved_torus-0000",
+    "corner_fillet-0000",
+    "one_segment_fillet-0000",
+)
+
+
+def _sweep_meshes(ids=None):
+    lin, ang = DEFLECTION_SETTINGS[0]
+    out = []
+    for e in select(load_manifest(), "smoke"):
+        if ids is not None and e["id"] not in ids:
+            continue
+        out.append((e["id"], tessellate(generate(e["family"], e["seed"]).solid, lin, ang)))
+    assert len(out) == (len(ids) if ids is not None else len(select(load_manifest(), "smoke")))
+    return out
+
+
+def _folded_count(mesh: LabeledMesh) -> int:
+    bad = 0
+    for face in mesh.faces:
+        if face.surface == "other":
+            continue
+        t = mesh.tris[mesh.face_id == face.id]
+        if not len(t):
+            continue
+        n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+        area = np.linalg.norm(n, axis=1)
+        try:
+            on = outward_normals(face, t.mean(axis=1))
+        except Exception:
+            continue
+        d = np.einsum("ij,ij->i", n, on)
+        ok = np.isfinite(d) & (area > 1e-12)
+        bad += int((d[ok] < 0).sum())
+    return bad
+
+
+def _degenerate_count(mesh: LabeledMesh) -> int:
+    return int(
+        (
+            np.linalg.norm(
+                np.cross(mesh.tris[:, 1] - mesh.tris[:, 0], mesh.tris[:, 2] - mesh.tris[:, 0]),
+                axis=1,
+            )
+            <= 1e-14
+        ).sum()
+    )
+
+
+def assert_sweep_clean(
+    pid: str, op: str, sev: float, base_folds: int, base_degen: int, out: LabeledMesh
+) -> None:
+    for face in out.faces:
+        if face.surface == "other":
+            continue
+        pts = out.tris[out.face_id == face.id].reshape(-1, 3)
+        if len(pts):
+            assert distance_to_surface(face, pts).max() <= 1e-9, (pid, op, sev, face.id)
+    for adj in out.adjacency:
+        poly = np.array(adj.points)
+        for fid in (adj.face_a, adj.face_b):
+            face = out.faces[fid]
+            if face.surface == "other":
+                continue
+            assert distance_to_surface(face, poly).max() <= 1e-9, (pid, op, sev, fid)
+    assert _folded_count(out) <= base_folds, (pid, op, sev)
+    assert _degenerate_count(out) <= base_degen, (pid, op, sev)
+    if op == "t_junctions":
+        return
+    assert closed_manifold_problems(out.tris)[0] == [], (pid, op, sev)
+    ekey: dict = {}
+    for t, fid in zip(out.tris.tolist(), out.face_id.tolist(), strict=True):
+        t = [tuple(x) for x in t]
+        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            ekey.setdefault(frozenset((a, b)), set()).add(fid)
+    for adj in out.adjacency:
+        pts = [tuple(p) for p in adj.points]
+        for a, b in zip(pts, pts[1:], strict=False):
+            fs = ekey.get(frozenset((a, b)))
+            assert fs is not None and {adj.face_a, adj.face_b} <= fs, (pid, op, sev)
+
+
+def _run_sweep(meshes) -> None:
+    for pid, mesh in meshes:
+        base_folds, base_degen = _folded_count(mesh), _degenerate_count(mesh)
+        for op in TESS_OPS:
+            for sev in SWEEP_SEVERITIES:
+                out = degrade.apply(op, mesh, sev, SWEEP_SEED)
+                assert_sweep_clean(pid, op, sev, base_folds, base_degen, out)
+
+
+def test_tess_sweep_fast_subset():
+    _run_sweep(_sweep_meshes(SWEEP_FAST_IDS))
+
+
+@pytest.mark.slow
+def test_tess_sweep_full_smoke():
+    _run_sweep(_sweep_meshes())

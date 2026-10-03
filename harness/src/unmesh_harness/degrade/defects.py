@@ -118,6 +118,18 @@ def t_junctions(mesh, severity, rng):
                     continue
             p = tuple(x.tolist())
             r0, r1, r2 = t[idx], t[(idx + 1) % 3], t[(idx + 2) % 3]
+            n_old = np.cross(np.subtract(r1, r0), np.subtract(r2, r0))
+            if float(np.linalg.norm(n_old)) <= 1e-14:
+                continue
+            n1 = np.cross(np.subtract(p, r0), np.subtract(r2, r0))
+            n2 = np.cross(np.subtract(r1, p), np.subtract(r2, p))
+            if (
+                float(np.linalg.norm(n1)) <= 1e-14
+                or float(np.linalg.norm(n2)) <= 1e-14
+                or float(n_old @ n1) <= 0.0
+                or float(n_old @ n2) <= 0.0
+            ):
+                continue
             tris[ti] = (r0, p, r2)
             tris.append((p, r1, r2))
             fids.append(fids[ti])
