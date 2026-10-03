@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::fit::Final;
 use super::linalg::{V3, angle_deg, cross, sub, unit};
@@ -86,6 +86,16 @@ pub fn build(
     };
     let is_junction = |v: u32| vstart[v as usize + 1] - vstart[v as usize] >= 3;
 
+    let mut vfaces: Vec<Vec<u32>> = vec![Vec::new(); nv];
+    for (f, t) in faces.iter().enumerate() {
+        if flabel[f] == NONE {
+            continue;
+        }
+        for &v in t {
+            vfaces[v as usize].push(f as u32);
+        }
+    }
+
     let tri_normal = |f: u32| -> V3 {
         let t = faces[f as usize];
         let (a, b, c) = (pos[t[0] as usize], pos[t[1] as usize], pos[t[2] as usize]);
@@ -150,16 +160,51 @@ pub fn build(
                 (Some(o), Some(i)) if o.len() == 1 && i.len() == 1 => {
                     tangent[o[0]] != tangent[i[0]]
                 }
-                _ => false,
+                (Some(o), Some(i)) if o.len() == i.len() && o.len() >= 2 => false,
+                _ => true,
             }
+        };
+        let fan_of = |head: u32, t0: u32| -> FxHashSet<u32> {
+            let region = flabel[t0 as usize];
+            let mut seen: FxHashSet<u32> = FxHashSet::default();
+            let mut stack = vec![t0];
+            seen.insert(t0);
+            while let Some(t) = stack.pop() {
+                for &x in &faces[t as usize] {
+                    if x == head {
+                        continue;
+                    }
+                    for &f2 in &vfaces[head as usize] {
+                        if flabel[f2 as usize] != region
+                            || !faces[f2 as usize].contains(&x)
+                        {
+                            continue;
+                        }
+                        if seen.insert(f2) {
+                            stack.push(f2);
+                        }
+                    }
+                }
+            }
+            seen
         };
         let next = |head: u32, incoming: usize, visited: &[bool]| -> Option<usize> {
             let cands = out.get(&head)?;
-            cands
-                .iter()
-                .find(|&&j| !visited[j] && tangent[j] == tangent[incoming])
+            let mut unvis = cands.iter().filter(|&&j| !visited[j]);
+            let first = *unvis.next()?;
+            let mut rest: Vec<usize> = unvis.copied().collect();
+            if rest.is_empty() {
+                return Some(first);
+            }
+            rest.insert(0, first);
+            let fan = fan_of(head, group[incoming].fa);
+            let want = tangent[incoming];
+            rest.iter()
+                .find(|&&j| fan.contains(&group[j].fa) && tangent[j] == want)
+                .or_else(|| rest.iter().find(|&&j| fan.contains(&group[j].fa)))
+                .or_else(|| rest.iter().find(|&&j| tangent[j] == want))
                 .copied()
-                .or_else(|| cands.iter().find(|&&j| !visited[j]).copied())
+                .or(Some(first))
         };
         let mut visited = vec![false; group.len()];
         let mut boundaries: Vec<RawBoundary> = Vec::new();

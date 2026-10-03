@@ -255,6 +255,75 @@ mod tests {
     }
 
     #[test]
+    fn pinch_fixture_stable_under_vertex_relabeling() {
+        let base_pos: Vec<Point> = vec![
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ];
+        let base_faces: Vec<[u32; 3]> = vec![
+            [0, 2, 4],
+            [1, 4, 2],
+            [1, 3, 4],
+            [0, 4, 3],
+            [0, 5, 2],
+            [1, 2, 5],
+            [1, 5, 3],
+            [0, 3, 5],
+        ];
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut rng = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as usize
+        };
+        for _ in 0..50 {
+            let mut perm: [usize; 6] = [0, 1, 2, 3, 4, 5];
+            for i in (1..6).rev() {
+                let j = rng() % (i + 1);
+                perm.swap(i, j);
+            }
+            let mut inv = [0u32; 6];
+            for (n, &o) in perm.iter().enumerate() {
+                inv[o] = n as u32;
+            }
+            let pos: Vec<Point> = perm.iter().map(|&o| base_pos[o]).collect();
+            let mut faces: Vec<[u32; 3]> = base_faces
+                .iter()
+                .map(|t| t.map(|v| inv[v as usize]))
+                .collect();
+            let fsrc: Vec<u32> = (0..8).collect();
+            let topo = super::super::topology::build(&mut faces);
+            let finals = vec![
+                plane_final(vec![0, 2], [0.0, 0.0, 1.0]),
+                facets_final(vec![1, 3, 4, 5, 6, 7]),
+            ];
+            let flabel = vec![0, 1, 0, 1, 1, 1, 1, 1];
+            let metas = outer_metas();
+            let asm = asm(&faces, &fsrc, &topo.nbr, &metas, &pos);
+            let ir = assemble(&asm, &finals, &flabel, &pos).unwrap();
+            ir.validate().unwrap();
+            assert!(ir.vertices.is_empty());
+            assert_eq!(ir.adjacencies.len(), 1);
+            let boundaries = &ir.adjacencies[0].boundaries;
+            assert_eq!(boundaries.len(), 2);
+            for b in boundaries {
+                assert!(b.closed);
+                assert_eq!(b.points.len(), 3);
+                let mut bits: Vec<[u64; 3]> =
+                    b.points.iter().map(|p| p.map(f64::to_bits)).collect();
+                bits.sort_unstable();
+                bits.dedup();
+                assert_eq!(bits.len(), 3);
+            }
+        }
+    }
+
+    #[test]
     fn genuine_kind_change_still_emits_a_vertex() {
         let pos: Vec<Point> = vec![
             [0.0, 0.0, 0.0],
