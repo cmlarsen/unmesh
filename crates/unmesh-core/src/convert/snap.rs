@@ -15,8 +15,9 @@ pub fn snap_normals(
     sigma: f64,
     snap_deg: f64,
     diag: f64,
+    max_abs: f64,
 ) {
-    let rms_limit = (2.5 * sigma).max(super::floor(diag));
+    let rms_limit = (2.5 * sigma).max(super::floor(diag, max_abs));
     let n = regions.len();
     let mut done = vec![false; n];
     let mut classes: Vec<V3> = Vec::new();
@@ -204,7 +205,7 @@ mod tests {
     fn snap_tilt(tilt_deg: f64) -> V3 {
         let (v, r) = tilted_strip(tilt_deg);
         let mut regions = vec![r];
-        snap_normals(&v, &mut regions, 1e-3, 1e-4, 0.5, 50.0);
+        snap_normals(&v, &mut regions, 1e-3, 1e-4, 0.5, 50.0, 50.0);
         regions[0].surface.as_plane().unwrap().0
     }
 
@@ -276,7 +277,7 @@ mod tests {
             let sigma = estimate_noise(&v, &regions, 0.05);
             let mut regions = regions;
             let tol = 5.0 * sigma;
-            snap_normals(&v, &mut regions, tol, sigma, 0.5, 50.0);
+            snap_normals(&v, &mut regions, tol, sigma, 0.5, 50.0, 50.0);
             if regions[0].surface.as_plane().unwrap().0 == [0.0, 0.0, 1.0] {
                 snapped += 1;
             }
@@ -317,7 +318,7 @@ mod tests {
         for width in [20.0, 0.2, 0.05] {
             let (v, r) = tilted_patch(0.6, width);
             let mut regions = vec![r];
-            snap_normals(&v, &mut regions, 1e-3, 0.0, 0.5, 50.0);
+            snap_normals(&v, &mut regions, 1e-3, 0.0, 0.5, 50.0, 50.0);
             let n = regions[0].surface.as_plane().unwrap().0;
             let cos = dot(n, [0.0, 0.0, 1.0]);
             assert!(
