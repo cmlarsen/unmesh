@@ -291,7 +291,7 @@ region is in exactly one shell, and an adjacency never crosses shells.
 A multi-body input is several outer shells, which the writer emits as a compound of solids. Bodies that
 only touch at a vertex are separate shells; no adjacency joins them. Bodies that touch along an edge
 share that edge between four triangles, so the edge is non-manifold and the bodies form one
-edge-connected component, kept as a single open facets shell as the table above requires.
+edge-connected component, kept as a single open facets shell as the table below requires.
 
 ## Non-manifold and open input
 
@@ -300,7 +300,10 @@ every one of its mesh edges is shared by exactly two triangles, with consistent 
 
 | input | result |
 |---|---|
-| Degenerate (zero-area) or duplicate triangles | Dropped before fitting. Report warning `degenerate_triangles`. |
+| Degenerate (zero-area) triangles | Dropped before fitting. Report warning `degenerate_triangles`. |
+| Duplicate triangles (same three vertices after welding), same winding | Dropped before fitting. Report warning `degenerate_triangles`. |
+| Coincident triangles with opposite winding | The reverse twin is dropped when removing it leaves its edge-connected component manifold (every edge used by exactly two triangles), reported as `repaired_winding`. Otherwise both copies are kept. |
+| Face-touching bodies (a coincident face pair with opposite winding shared by two bodies) | Both copies kept: the shared edges are used by more than two triangles, so the edge-connected component is a single open facets shell holding every triangle. Warning `non_manifold_edges`. |
 | Closed manifold, consistent winding, positive volume | Normal shell. |
 | Closed manifold, negative volume, not enclosed by another shell | Winding flipped. Warning `flipped_winding`. |
 | Closed manifold, negative volume, inside another outer shell | A `cavity` shell. Not flipped. |

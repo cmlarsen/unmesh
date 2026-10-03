@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop)]
 
 mod adjacency;
+mod dsu;
 mod emit;
 mod fit;
 mod linalg;
@@ -346,6 +347,53 @@ mod tests {
         assert_eq!(out.ir.regions.len(), 12);
         assert_eq!(out.ir.vertices.len(), 16);
         assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+    }
+
+    #[test]
+    fn stray_reverse_duplicate_heals_to_six_planes() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let t = tris[0];
+        tris.push([t[0], t[2], t[1]]);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.regions.len(), 6, "{:?}", out.report.warnings);
+        assert_eq!(ir.shells.len(), 1);
+        assert!(ir.shells[0].closed);
+        assert!(ir.regions.iter().all(|r| !r.surface.is_facets()));
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "repaired_winding")
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "degenerate_triangles")
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn two_stray_reverse_duplicates_heal_to_six_planes() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let (a, b) = (tris[0], tris[5]);
+        tris.push([a[0], a[2], a[1]]);
+        tris.push([b[0], b[2], b[1]]);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.regions.len(), 6, "{:?}", out.report.warnings);
+        assert_eq!(ir.shells.len(), 1);
+        assert!(ir.shells[0].closed);
+        assert!(ir.regions.iter().all(|r| !r.surface.is_facets()));
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "repaired_winding")
+        );
+        ir.validate().unwrap();
     }
 
     #[test]

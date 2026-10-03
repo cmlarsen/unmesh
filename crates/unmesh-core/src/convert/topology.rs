@@ -1,3 +1,4 @@
+use super::dsu::Dsu;
 use super::linalg::{V3, add, cross, dot, scale, sub};
 use crate::api::ConvertWarning;
 use crate::ir::ShellRole;
@@ -201,30 +202,6 @@ pub fn prepare(
         },
         warnings,
     )
-}
-
-struct Dsu(Vec<u32>);
-
-impl Dsu {
-    fn new(n: usize) -> Self {
-        Dsu((0..n as u32).collect())
-    }
-
-    fn find(&mut self, mut x: u32) -> u32 {
-        while self.0[x as usize] != x {
-            let p = self.0[x as usize];
-            self.0[x as usize] = self.0[p as usize];
-            x = self.0[x as usize];
-        }
-        x
-    }
-
-    fn union(&mut self, a: u32, b: u32) {
-        let (a, b) = (self.find(a), self.find(b));
-        if a != b {
-            self.0[a.max(b) as usize] = a.min(b);
-        }
-    }
 }
 
 struct Raw {
