@@ -251,7 +251,6 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
         raise ValueError(f"face_id has {len(face_id)} entries for {len(tris)} triangles")
     if len(face_id) and (face_id.min() < 0 or face_id.max() >= truth_faces):
         raise ValueError(f"face_id outside [0, {truth_faces})")
-    truth_pairs = _pairs([(a.face_a, a.face_b) for a in clean.adjacency])
     from .recovery import match_faces
 
     matches, _ = match_faces(clean, face_id, ir)
@@ -295,15 +294,46 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
     )
     truth_shells = [(s.role, len(s.faces)) for s in clean.shells]
     output_shells = [(s.role, len(s.regions)) for s in ir.shells]
-    shells_match = len(clean.shells) == len(ir.shells) and sorted(truth_shells) == sorted(
-        output_shells
-    )
-
     face_shell = [-1] * truth_faces
     for i, s in enumerate(clean.shells):
         for f in s.faces:
             if 0 <= f < truth_faces:
                 face_shell[f] = i
+    shell_match: list = []
+    for s in ir.shells:
+        votes = {
+            face_shell[region_to_face[r]]
+            for r in s.regions
+            if r in region_to_face
+            and 0 <= region_to_face[r] < truth_faces
+            and face_shell[region_to_face[r]] >= 0
+        }
+        shell_match.append(next(iter(votes)) if len(votes) == 1 else None)
+    shells_match = (
+        len(ir.shells) == len(clean.shells)
+        and not unmatched_regions
+        and all(m is not None for m in shell_match)
+        and sorted(shell_match) == list(range(len(clean.shells)))
+    )
+    if shells_match:
+        for i, j in enumerate(shell_match):
+            mine, gt = ir.shells[i], clean.shells[j]
+            if mine.role != gt.role:
+                shells_match = False
+                break
+            parent = (
+                None
+                if mine.parent is None
+                else (
+                    shell_match[mine.parent]
+                    if 0 <= mine.parent < len(shell_match)
+                    else None
+                )
+            )
+            if (mine.parent is not None and parent is None) or parent != gt.parent:
+                shells_match = False
+                break
+
     region_shell = [-1] * output_faces
     for i, s in enumerate(ir.shells):
         for r in s.regions:
