@@ -110,7 +110,7 @@ def run_chain(mesh: LabeledMesh, spec: Chain, severity: float) -> LabeledMesh:
 
 def stats(meshes: list[LabeledMesh], spec: Chain, severity: float) -> dict[str, float | bool]:
     sq, peak, closed, valid, grown = [], 0.0, True, True, []
-    counts_change = OPERATORS[spec[-1][0]].family == "tessellation"
+    counts_change = OPERATORS[spec[-1][0]].family in ("tessellation", "processing")
     for mesh in meshes:
         out = run_chain(mesh, spec, severity)
         back = to_original_points(out, out.tris.reshape(-1, 3)).reshape(-1, 3, 3)
@@ -207,6 +207,17 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "`face_id` -1 (unknown face), which the oracle excludes from every region. Operators "
         "that change the triangle count report no displacement.",
         "",
+        "- `processing`-family operators (decimation, remeshing, smoothing) rebuild or move "
+        "the triangulation the way mesh-processing pipelines do. Every output triangle takes "
+        "the `face_id` of its nearest source face by triangle-centroid distance, with a "
+        'per-triangle `metadata["label_confidence"]` in [0, 1] (`d2 / (d1 + d2)` for the '
+        "nearest vs second-nearest source face; 1.0 on single-face meshes). Metrics that score "
+        "per-triangle labels should mask triangles below 0.9 confidence. The face table, "
+        "adjacency, vertices and shells stay the clean truth, except the smoothing operators "
+        "move shared vertices so their edge polylines move with the mesh. Watertightness is "
+        "per operator: smoothing, quadric decimation and isotropic remeshing preserve it, "
+        "voxel remeshing does not.",
+        "",
         "## Defect disposition",
         "",
         "Whether the converter is expected to REPAIR a defect (same analytic IR as the clean "
@@ -254,8 +265,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "",
         f"Seed {SEED}. Displacement is measured in the original frame, per triangle corner, "
         "against the undegraded mesh (against the refined mesh for chains that start with "
-        "`refine`; `-` for the tessellation family, whose triangle counts or corner "
-        "correspondences change - see Tessellation statistics below). "
+        "`refine`; `-` for the tessellation and processing families, whose triangle counts "
+        "or corner correspondences change - see Tessellation statistics below). "
         "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
         "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
         "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and "
@@ -282,7 +293,7 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                 for severity in (0.0, 1.0) if op.binary else SEVERITIES:
                     s = stats(use, spec, severity)
                     ratio = s["tris_ratio"]
-                    tess = op.family == "tessellation"
+                    tess = op.family in ("tessellation", "processing")
                     rms = "-" if tess or s["rms_um"] is None else f"{s['rms_um']:.3f}"
                     peak = "-" if tess or s["max_um"] is None else f"{s['max_um']:.3f}"
                     lines.append(
@@ -319,6 +330,34 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                     f"| {label} | `{name}` | {severity} | {t['tris']} | "
                     f"{t['chord_mean']:.4f} | {t['chord_std']:.4f} | {t['aspect_mean']:.3f} | "
                     f"{t['aspect_p99']:.3f} | {t['valence_mean']:.3f} | {t['valence_max']:.0f} |"
+                )
+    lines += [
+        "",
+        "## Processing statistics",
+        "",
+        f"Seed {SEED}. Per-operator stats over the same meshes as above. `conf<0.9` is the "
+        'fraction of output triangles whose `label_confidence` is below 0.9; metrics that '
+        "score per-triangle labels should mask those triangles. `closed` and `IR valid` "
+        "are as in the displacement sheet.",
+        "",
+        "| mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for label, mesh in tess_meshes():
+        lines.append(
+            f"| {label} | `-` | - | {len(mesh.tris)} | yes | yes | 1.000 | 0.000 |"
+        )
+        for name, op in OPERATORS.items():
+            if op.family != "processing":
+                continue
+            for severity in (0.5, 1.0):
+                out = apply(name, mesh, severity, SEED)
+                conf = np.array(out.metadata.get("label_confidence", [1.0]))
+                lines.append(
+                    f"| {label} | `{name}` | {severity} | {len(out.tris)} | "
+                    f"{'yes' if _closed(out) else 'no'} | "
+                    f"{'yes' if _ir_valid(out) else 'no'} | {float(conf.mean()):.3f} | "
+                    f"{float((conf < 0.9).mean()):.3f} |"
                 )
     return "\n".join(lines) + "\n"
 

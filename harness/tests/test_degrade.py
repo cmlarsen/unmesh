@@ -100,7 +100,15 @@ def geometry_equal(a: LabeledMesh, b: LabeledMesh) -> bool:
 
 
 def labels_aligned(before: LabeledMesh, after: LabeledMesh) -> None:
-    if OPERATORS[after.metadata["history"][-1]["op"]].family == "defect":
+    if OPERATORS[after.metadata["history"][-1]["op"]].family == "processing":
+        from unmesh_harness.degrade.processing import CONFIDENCE_KEY
+
+        assert len(after.face_id) == len(after.tris)
+        assert set(after.face_id.tolist()) <= set(before.face_id.tolist())
+        conf = after.metadata.get(CONFIDENCE_KEY)
+        assert conf is not None and len(conf) == len(after.tris)
+        assert all(0.0 <= c <= 1.0 for c in conf)
+    elif OPERATORS[after.metadata["history"][-1]["op"]].family == "defect":
         assert len(after.face_id) == len(after.tris)
         assert set(after.face_id.tolist()) <= set(before.face_id.tolist()) | {-1}
     elif after.metadata["history"][-1]["op"] in ("refine",) or len(after.tris) != len(before.tris):
@@ -157,11 +165,14 @@ def test_inputs_are_not_mutated(name, smoke):
 @pytest.mark.parametrize("severity", [0.25, 0.5, 1.0])
 @pytest.mark.parametrize("name", ALL)
 def test_labels_aligned_and_polylines_coincide(name, severity, smoke, curved):
+    from unmesh_harness.degrade.processing import POLYLINES_COINCIDE
+
     for _, mesh in smoke + curved:
         mesh = prepared(name, mesh)
         out = degrade.apply(name, mesh, levels_for(name, (severity,))[0], 3)
         labels_aligned(mesh, out)
-        polylines_on_mesh(out)
+        if OPERATORS[name].family != "processing" or name in POLYLINES_COINCIDE:
+            polylines_on_mesh(out)
         assert out.metadata["history"][-1]["params"]
 
 
