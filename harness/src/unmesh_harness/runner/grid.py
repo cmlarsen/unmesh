@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..corpus import find_manifest, load_manifest, select
+from ..degrade.presets import PRESETS
 from .converters import plugin_hash
 
 Key = tuple[str, str, float, int, str, str, str, str]
@@ -109,6 +110,19 @@ class Grid:
                         )
                         out.append((cell, spec))
         return out
+
+
+def steps_for(spec: dict[str, Any]) -> list[list[Any]]:
+    if "preset" not in spec:
+        return spec["steps"]
+    if "steps" in spec:
+        raise ValueError("a grid cell takes either 'preset' or 'steps', not both")
+    name = spec["preset"]
+    try:
+        preset = PRESETS[name]
+    except KeyError:
+        raise ValueError(f"unknown degradation preset {name!r}") from None
+    return [[op, severity] for op, severity in preset.steps]
 
 
 def repo_root() -> Path:
