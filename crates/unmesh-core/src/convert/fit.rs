@@ -6,6 +6,26 @@ use super::segment::{self, TriInfo};
 use super::surface::Surface;
 use super::topology::{CompKind, NONE, Topology};
 
+const RESPLIT_MIN_DIHEDRAL_DEG: f64 = 15.0;
+
+fn has_crease(nbr: &[[u32; 3]], info: &[TriInfo], label: &[u32], region: u32) -> bool {
+    let limit = RESPLIT_MIN_DIHEDRAL_DEG.to_radians().cos();
+    for (f, nb) in nbr.iter().enumerate() {
+        if label[f] != region || info[f].area <= 0.0 {
+            continue;
+        }
+        for &g in nb {
+            if g == NONE || label[g as usize] != region || info[g as usize].area <= 0.0 {
+                continue;
+            }
+            if dot(info[f].normal, info[g as usize].normal) < limit {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub struct Region {
     pub faces: Vec<u32>,
     pub surface: Surface,
@@ -410,6 +430,13 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         next_id += 1;
     }
     for &r in &loose {
+        if !has_crease(nbr, info, &label2, r) {
+            for &f in &regions[r as usize].faces {
+                combined[f as usize] = next_id;
+            }
+            next_id += 1;
+            continue;
+        }
         let eligible: Vec<bool> = label2.iter().map(|&l| l == r).collect();
         let (sub, n_sub) = segment::run(vc, faces, nbr, info, &eligible, tol, true);
         for (f, &l) in sub.iter().enumerate() {

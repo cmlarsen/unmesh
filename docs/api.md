@@ -33,7 +33,7 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter estimates the vertex noise of its planar regions and uses five times that, between a floor of 2e-5 of the bounding-box diagonal and 5e-4 of the diagonal. Becomes `ir.tolerances.linear`. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise of its best-supported planar regions, and refits at five times that noise, clamped between a floor of 2e-5 of the diagonal and the first guess. Becomes `ir.tolerances.linear`. |
 | `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |

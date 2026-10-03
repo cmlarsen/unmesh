@@ -5,7 +5,7 @@ use super::surface::Surface;
 pub const NOISE_FACTOR: f64 = 5.0;
 
 const ANCHOR_MIN_VERTS: usize = 50;
-const ANCHOR_MIN_DOF_FRAC: f64 = 0.25;
+const ANCHOR_MIN_AREA_FRAC: f64 = 0.25;
 
 pub fn snap_normals(
     v: &[V3],
@@ -102,10 +102,16 @@ pub fn snap_normals(
 }
 
 pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
-    let mut stats: Vec<(f64, f64, f64)> = Vec::new();
+    pool_noise(v, regions, ANCHOR_MIN_VERTS, true)
+        .or_else(|| pool_noise(v, regions, 4, false))
+        .unwrap_or(tol / NOISE_FACTOR)
+}
+
+fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize, anchor_min: bool) -> Option<f64> {
+    let mut stats: Vec<(f64, f64, f64, f64)> = Vec::new();
     for r in regions {
         let nv = r.verts.len();
-        if r.area <= 0.0 || nv < ANCHOR_MIN_VERTS {
+        if r.area <= 0.0 || nv < min_verts {
             continue;
         }
         let Some((n, d)) = r.surface.as_plane() else {
@@ -117,27 +123,33 @@ pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
             .map(|&(vi, _)| (dot(n, v[vi as usize]) - d).powi(2))
             .sum();
         let dof = (nv - 3) as f64;
-        stats.push(((ss / dof).sqrt(), ss, dof));
+        stats.push(((ss / dof).sqrt(), ss, dof, r.area));
     }
     if stats.is_empty() {
-        return tol / NOISE_FACTOR;
+        return None;
     }
     stats.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let anchor = stats[0].0;
-    let total_dof: f64 = stats.iter().map(|x| x.2).sum();
+    let anchor = if anchor_min {
+        stats[0].0
+    } else {
+        stats[stats.len() / 2].0
+    };
+    let total_area: f64 = stats.iter().map(|x| x.3).sum();
     let mut keep_ss = 0.0;
     let mut keep_dof = 0.0;
+    let mut keep_area = 0.0;
     for x in &stats {
         if x.0 > 10.0 * anchor + 1e-9 {
             break;
         }
         keep_ss += x.1;
         keep_dof += x.2;
+        keep_area += x.3;
     }
-    if keep_dof < ANCHOR_MIN_DOF_FRAC * total_dof {
-        return tol / NOISE_FACTOR;
+    if keep_area < ANCHOR_MIN_AREA_FRAC * total_area {
+        return None;
     }
-    (keep_ss / keep_dof).sqrt()
+    Some((keep_ss / keep_dof).sqrt())
 }
 
 #[cfg(test)]
