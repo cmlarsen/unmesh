@@ -18,21 +18,31 @@ import numpy as np
 
 _PARTS: dict[str, tuple[Any, np.ndarray]] = {}
 
+PAIR_PREPROCESS_SEED = 0
+
 
 def _cache_paths(cache: Path, part: str) -> tuple[Path, Path]:
     return cache / f"{part}.labeled.npz", cache / f"{part}.truth.npy"
 
 
 def prep_part(task: dict[str, Any]) -> dict[str, Any]:
+    from ..degrade import apply_pair_preprocess
     from ..groundtruth import generate
     from ..labels import tessellate
 
     entry = task["entry"]
     labeled_path, truth_path = _cache_paths(Path(task["cache"]), entry["id"])
     gt = generate(entry["family"], entry["seed"])
-    labeled = tessellate(gt.solid, *task["input_deflection"])
+    pair_deflection = gt.parameters.get("pair_deflection")
+    if pair_deflection is not None:
+        labeled = tessellate(gt.solid, float(pair_deflection[0]), float(pair_deflection[1]))
+    else:
+        labeled = tessellate(gt.solid, *task["input_deflection"])
     if gt.face_tags is not None:
         labeled.metadata["face_tags"] = dict(gt.face_tags)
+    pair_preprocess = gt.parameters.get("pair_preprocess") or []
+    if pair_preprocess:
+        labeled = apply_pair_preprocess(labeled, pair_preprocess, PAIR_PREPROCESS_SEED)
     if task["need_truth"]:
         truth = tessellate(gt.solid, *task["truth_deflection"])
         np.save(truth_path, truth.tris)

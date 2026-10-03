@@ -153,7 +153,11 @@ def prep_hash(grid: Grid, manifest_path: Path | None = None) -> str:
     digest.update(
         json.dumps([grid.input_deflection, grid.truth_deflection, grid.need_truth]).encode()
     )
-    files = sorted((base / "groundtruth").glob("*.py")) + [base / "labels.py", base / "corpus.py"]
+    files = (
+        sorted((base / "groundtruth").glob("*.py"))
+        + [base / "labels.py", base / "corpus.py", base / "runner" / "execute.py"]
+        + [base / "degrade" / name for name in ("__init__.py", "fillets.py", "retriangulate.py")]
+    )
     for f in files:
         digest.update(f.read_bytes())
     return digest.hexdigest()[:16]
