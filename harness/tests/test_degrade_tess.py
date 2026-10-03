@@ -13,7 +13,14 @@ from unmesh_harness.labels import LabeledMesh, distance_to_surface, tessellate
 
 from .test_labels import closed_manifold_problems
 
-TESS_OPS = ("coarsen", "retriangulate", "nonuniform_chords", "slivers", "t_junctions")
+TESS_OPS = (
+    "coarsen",
+    "retriangulate",
+    "nonuniform_chords",
+    "slivers",
+    "t_junctions",
+    "fillet_rows",
+)
 SLOW_SEED = 11
 
 
@@ -348,3 +355,51 @@ def test_t_junctions_break_watertight_by_design_but_keep_labels(cyl, drilled):
             assert params["splits"] == params["target_splits"] >= 1
             assert len(out.tris) == len(mesh.tris) + params["splits"]
             assert OPERATORS["t_junctions"].preserves_watertight is False
+
+
+def test_fillet_rows_segments_from_severity(fillet):
+    assert (
+        degrade.apply("fillet_rows", fillet, 0.2, 0).metadata["history"][-1]["params"]["segments"]
+        == 3
+    )
+    assert (
+        degrade.apply("fillet_rows", fillet, 0.5, 0).metadata["history"][-1]["params"]["segments"]
+        == 2
+    )
+    assert (
+        degrade.apply("fillet_rows", fillet, 0.9, 0).metadata["history"][-1]["params"]["segments"]
+        == 1
+    )
+
+
+def test_fillet_rows_single_segment_uses_tangent_endpoints(fillet):
+    out = degrade.apply("fillet_rows", fillet, 0.9, 3)
+    params = out.metadata["history"][-1]["params"]
+    assert params["fillet_faces"] == [2]
+    assert sorted(params["neighbours_retriangulated"]) == [1, 4]
+    face_tris = out.tris[out.face_id == 2]
+    assert len(face_tris) == 2
+    corners = {tuple(p) for p in face_tris.reshape(-1, 3).tolist()}
+    tangents = set()
+    for adj in fillet.adjacency:
+        if adj.face_a == 2 or adj.face_b == 2:
+            if adj.tangent and adj.curve == "line":
+                tangents.update(map(tuple, adj.points))
+    assert corners == tangents
+    assert closed_manifold_problems(out.tris)[0] == []
+    assert_tess_labels_aligned(fillet, out)
+    assert_on_surface(out)
+
+
+def test_fillet_rows_deterministic_on_fillet(fillet):
+    a = degrade.apply("fillet_rows", fillet, 0.5, SLOW_SEED)
+    b = degrade.apply("fillet_rows", fillet, 0.5, SLOW_SEED)
+    assert geometry_equal(a, b)
+    assert a.metadata == b.metadata
+
+
+def test_fillet_rows_noop_without_eligible_fillets(box, cyl):
+    for mesh in (box, cyl):
+        out = degrade.apply("fillet_rows", mesh, 0.9, 3)
+        assert geometry_equal(mesh, out)
+        assert out.metadata["history"][-1]["params"]["fillet_faces"] == []

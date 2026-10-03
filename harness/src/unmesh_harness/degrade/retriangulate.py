@@ -186,6 +186,66 @@ def _clip(poly, scheme: str, rng) -> list[tuple] | None:
     return tris
 
 
+def loops_from_tris(tris, tis) -> list[list[tuple]] | None:
+    counts: dict[tuple[tuple, tuple], int] = {}
+    used: set[tuple] = set()
+    for ti in tis:
+        a, b, c = tris[ti]
+        used.update((a, b, c))
+        for p, q in ((a, b), (b, c), (c, a)):
+            key = (min(p, q), max(p, q))
+            counts[key] = counts.get(key, 0) + 1
+    bedges = {e for e, n in counts.items() if n == 1}
+    nodes = {p for e in bedges for p in e}
+    if not bedges or used != nodes:
+        return None
+    loops = _loops(sorted(nodes), bedges)
+    if not loops or sum(len(x) for x in loops) != len(nodes):
+        return None
+    return loops
+
+
+def triangulate_loops_3d(normal, loops, scheme, rng) -> list[tuple] | None:
+    normal = np.array(normal, dtype=np.float64)
+    u, v = _basis(normal)
+    nodes = {p for loop in loops for p in loop}
+    proj = {p: (float(np.array(p) @ u), float(np.array(p) @ v)) for p in nodes}
+    loops2 = []
+    for loop in loops:
+        start = min(range(len(loop)), key=lambda i: loop[i])
+        loops2.append([proj[loop[(start + i) % len(loop)]] for i in range(len(loop))])
+    outer_k = max(range(len(loops2)), key=lambda k: (abs(_area2(loops2[k])), -len(loops2[k])))
+    outer = loops2[outer_k]
+    if _area2(outer) < 0:
+        outer = outer[::-1]
+    holes = [x if _area2(x) < 0 else x[::-1] for k, x in enumerate(loops2) if k != outer_k]
+    merged = _bridge(outer, holes) if holes else list(outer)
+    if merged is None:
+        return None
+    back = {v: k for k, v in proj.items()}
+    clipped = _clip(merged, scheme, rng)
+    if clipped is None:
+        return None
+    out = []
+    for a, b, c in clipped:
+        t = (back[a], back[b], back[c])
+        n = np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0]))
+        out.append((t[0], t[2], t[1]) if float(n @ normal) < 0 else t)
+    return out
+
+
+def retriangulate_face(fid, tris, tis, faces, scheme, rng) -> bool:
+    loops = loops_from_tris(tris, tis)
+    if loops is None:
+        return False
+    clipped = triangulate_loops_3d(np.array(faces[fid].params["normal"]), loops, scheme, rng)
+    if clipped is None or len(clipped) != len(tis):
+        return False
+    for ti, t in zip(tis, clipped, strict=True):
+        tris[ti] = t
+    return True
+
+
 @register(
     "retriangulate",
     "tessellation",
@@ -203,56 +263,12 @@ def retriangulate(mesh, severity, rng):
         by_face.setdefault(f, []).append(ti)
     done = skipped = 0
     for fid in sorted(by_face):
-        face = mesh.faces[fid]
-        if face.surface != "plane":
+        if mesh.faces[fid].surface != "plane":
             continue
-        normal = np.array(face.params["normal"])
-        u, v = _basis(normal)
-        tis = by_face[fid]
-        counts: dict[tuple[tuple, tuple], int] = {}
-        used: set[tuple] = set()
-        for ti in tis:
-            a, b, c = tris[ti]
-            used.update((a, b, c))
-            for p, q in ((a, b), (b, c), (c, a)):
-                key = (min(p, q), max(p, q))
-                counts[key] = counts.get(key, 0) + 1
-        bedges = {e for e, n in counts.items() if n == 1}
-        nodes = {p for e in bedges for p in e}
-        if not bedges or used != nodes:
+        if retriangulate_face(fid, tris, by_face[fid], mesh.faces, scheme, rng):
+            done += 1
+        else:
             skipped += 1
-            continue
-        loops = _loops(sorted(nodes), bedges)
-        if not loops or sum(len(x) for x in loops) != len(nodes):
-            skipped += 1
-            continue
-        proj = {p: (float(np.array(p) @ u), float(np.array(p) @ v)) for p in nodes}
-        loops2 = []
-        for loop in loops:
-            start = min(range(len(loop)), key=lambda i: loop[i])
-            loops2.append([proj[loop[(start + i) % len(loop)]] for i in range(len(loop))])
-        outer_k = max(range(len(loops2)), key=lambda k: (abs(_area2(loops2[k])), -len(loops2[k])))
-        outer = loops2[outer_k]
-        if _area2(outer) < 0:
-            outer = outer[::-1]
-        holes = []
-        for k, x in enumerate(loops2):
-            if k != outer_k:
-                holes.append(x if _area2(x) < 0 else x[::-1])
-        merged = _bridge(outer, holes) if holes else list(outer)
-        if merged is None:
-            skipped += 1
-            continue
-        back = {v: k for k, v in proj.items()}
-        clipped = _clip(merged, scheme, rng)
-        if clipped is None or len(clipped) != len(tis):
-            skipped += 1
-            continue
-        for ti, (a, b, c) in zip(tis, clipped, strict=True):
-            t = (back[a], back[b], back[c])
-            n = np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0]))
-            tris[ti] = (t[0], t[2], t[1]) if float(n @ normal) < 0 else t
-        done += 1
     mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
     mesh.face_id = np.array(fids, dtype=mesh.face_id.dtype)
     return {"scheme": scheme, "faces_retriangulated": done, "faces_skipped": skipped}
