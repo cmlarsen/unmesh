@@ -492,3 +492,54 @@ def test_mirrored_oracle_still_scores_f1_one():
     result = score_recovery(mesh, moved.face_id, ir, to_original(moved))
     assert result["f1"] == 1.0
     assert result["edge_error"]["max"] == pytest.approx(0.0)
+
+
+def _corner_fillet_mesh(seed=0):
+    from unmesh_harness.groundtruth import generate
+
+    gt = generate("corner_fillet", seed)
+    mesh = tessellate(gt.solid, LIN, ANG)
+    assert gt.face_tags is not None and len(gt.face_tags) == 8
+    mesh.metadata["face_tags"] = dict(gt.face_tags)
+    return mesh
+
+
+def test_corner_blend_faces_are_masked_from_f1():
+    mesh = _corner_fillet_mesh()
+    result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
+    assert len(result["masked_faces"]) == 8
+    assert {d["face"] for d in result["masked_faces"]} == {
+        int(k) for k in mesh.metadata["face_tags"]
+    }
+    assert all(d["type"] == "sphere" for d in result["masked_faces"])
+    assert result["faces"] == len(mesh.faces) - 8
+    assert result["regions"] == len(build_oracle_ir(mesh).regions) - 8
+    assert result["matched"] == result["faces"]
+    assert result["f1"] == 1.0
+    assert "sphere" not in result["per_type"]
+    json.dumps(result)
+
+
+def test_corrupted_masked_face_does_not_lower_f1():
+    mesh = _corner_fillet_mesh()
+    ir = build_oracle_ir(mesh)
+    scored = score_recovery(mesh, mesh.face_id, ir, np.eye(4))
+    masked_id = next(d["face"] for d in scored["masked_faces"])
+    bad = next(r for r in ir.regions if r.id == masked_id)
+    assert bad.surface.type == "sphere"
+    wrong = dataclasses.replace(bad.surface, radius=bad.surface.radius * 1.5)
+    regions = [
+        dataclasses.replace(r, surface=wrong) if r.id == masked_id else r for r in ir.regions
+    ]
+    result = score_recovery(mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4))
+    assert result["f1"] == 1.0
+    assert result["matched"] == result["faces"]
+    detail = next(d for d in result["masked_faces"] if d["face"] == masked_id)
+    assert detail["recovered"] is False
+
+
+def test_unmasked_mesh_reports_no_masked_faces():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
+    assert result["masked_faces"] == []
+    assert (result["faces"], result["matched"], result["f1"]) == (6, 6, 1.0)
