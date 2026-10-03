@@ -64,6 +64,20 @@ Whether the converter is expected to REPAIR a defect (same analytic IR as the cl
 
 Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along their direction. Every noise history entry records `amplitude_mm`, `distribution` and the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
 
+## Presets
+
+Named toolchain presets compose the operators above into degradation chains applied with `degrade.chain`, which runs step `i` as `apply(name, mesh, severity, seed + i)`. Each preset is a fixed list of `(operator, severity)` steps built only from registered operators; a grid cell names one with `"preset"` instead of spelling out `"steps"`.
+
+| preset | steps | imitates |
+|---|---|---|
+| `fusion-export` | `retriangulate` at 1.0, `float32` at 1.0 | Imitates a clean high-quality CAD export saved through STL. STL stores coordinates as single-precision floats, hence the float32 rounding. retriangulate keeps every face boundary bit-exact while replacing the interior triangulation, standing in for a different tessellator's planar triangulation of the same faces. |
+| `tinkercad-export` | `coarsen` at 0.5, `truncated_digits` at 1.0 | Imitates a coarse browser-based export. coarsen stands in for the visibly low curve resolution of such meshes (cylinders degrade toward N-gon prisms) while keeping the mesh a closed manifold. truncated_digits to 3 significant digits stands in for ASCII STL text with truncated decimals. |
+| `meshmixer-edit` | `retriangulate` at 0.5, `noise_normal` at 0.2 | Imitates a remeshed-then-smoothed sculpting edit. retriangulate rebuilds the triangulation from the same face boundaries, as a remesher does. Light normal noise (10 um bound) stands in for the small surface displacement smoothing leaves behind. |
+| `slicer-repair` | `float32` at 1.0, `unwelded_corners` at 0.5, `flipped_facets` at 0.2, `duplicate_facets` at 0.2 | Imitates input headed for slicer-style repair, exercising the converter REPAIR path. Single-precision coordinates plus defects the converter is documented to repair: split vertices within the weld, inconsistent winding fixed by flood fill, and duplicate facets dropped. |
+| `inch-roundtrip` | `inch_round_trip` at 1.0, `float32` at 1.0 | Imitates a file passed through inch-unit software: coordinates quantized to a 0.001-inch (25.4 um) grid and converted back, then written as single-precision STL. |
+
+Quantitative comparison of each preset's mesh statistics against real exports from the tool it imitates waits for #29.
+
 ## Displacement sheet
 
 Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation family, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. Meshes without a planar face skip `noise_off_plane` with history params `{"skipped": "no planar faces"}`.
@@ -122,8 +136,8 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (46) | `noise_normal` | 0.5 | 14.198 | 24.983 | 1.0 | yes | yes |
 | smoke (46) | `noise_normal` | 1.0 | 28.397 | 49.965 | 1.0 | yes | yes |
 | smoke (46) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 88.5 | yes | yes |
-| smoke (46) | `refine -> noise_off_plane` | 0.5 | 12.416 | 24.997 | 88.5 | yes | yes |
-| smoke (46) | `refine -> noise_off_plane` | 1.0 | 24.833 | 49.994 | 88.5 | yes | yes |
+| smoke (46) | `refine -> noise_off_plane` | 0.5 | 12.510 | 24.997 | 88.5 | yes | yes |
+| smoke (46) | `refine -> noise_off_plane` | 1.0 | 25.019 | 49.995 | 88.5 | yes | yes |
 | smoke (46) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (46) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (46) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
@@ -192,8 +206,8 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `noise_normal` | 0.5 | 14.338 | 24.874 | 1.0 | yes | yes |
 | filleted box | `noise_normal` | 1.0 | 28.676 | 49.748 | 1.0 | yes | yes |
 | filleted box | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 18.5 | yes | yes |
-| filleted box | `refine -> noise_off_plane` | 0.5 | 4.645 | 24.995 | 18.5 | yes | yes |
-| filleted box | `refine -> noise_off_plane` | 1.0 | 9.290 | 49.991 | 18.5 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 0.5 | 4.699 | 24.935 | 18.5 | yes | yes |
+| filleted box | `refine -> noise_off_plane` | 1.0 | 9.399 | 49.870 | 18.5 | yes | yes |
 | filleted box | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
