@@ -22,12 +22,14 @@ PROC_OPS = (
     "isotropic_remesh",
     "laplacian_smoothing",
     "taubin_smoothing",
+    "voxel_remesh",
 )
 WATERTIGHT = {
     "quadric_decimation": True,
     "isotropic_remesh": True,
     "laplacian_smoothing": True,
     "taubin_smoothing": True,
+    "voxel_remesh": False,
 }
 SMOOTHING = ("laplacian_smoothing", "taubin_smoothing")
 
@@ -151,7 +153,8 @@ def test_deterministic_across_processes(tmp_path):
 
 
 def test_no_gpl_dependency_required(box):
-    degrade.apply("quadric_decimation", box, 0.6, SEED)
+    for name in PROC_OPS:
+        degrade.apply(name, box, 0.6, SEED)
     assert "pymeshlab" not in sys.modules
 
 
@@ -299,6 +302,36 @@ def test_taubin_shrinks_less_than_laplacian(box):
     params = degrade.apply("taubin_smoothing", box, 1.0, SEED).metadata["history"][-1]["params"]
     assert params["pairs"] == 10
     assert params["mu"] == pytest.approx(-0.53)
+
+
+def test_voxel_size_scales_with_severity(box):
+    from unmesh_harness.degrade.processing import voxel_size_mm
+
+    flat = box.tris.reshape(-1, 3)
+    diagonal = float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
+    for severity in (0.5, 1.0):
+        out = degrade.apply("voxel_remesh", box, severity, SEED)
+        params = out.metadata["history"][-1]["params"]
+        assert params["voxel_mm"] == pytest.approx(voxel_size_mm(severity, diagonal))
+        assert params["bbox_diagonal_mm"] == pytest.approx(diagonal)
+        assert params["occupied_cells"] > 0
+
+
+def test_voxel_near_identity_at_tiny_severity(box):
+    out = degrade.apply("voxel_remesh", box, 0.05, SEED)
+    assert np.array_equal(out.tris, box.tris)
+    assert np.array_equal(out.face_id, box.face_id)
+    assert out.metadata["history"][-1]["params"]["degenerate_dropped"] == 0
+
+
+def test_voxel_coarsens_and_documents_drops(cyl):
+    out = degrade.apply("voxel_remesh", cyl, 1.0, SEED)
+    params = out.metadata["history"][-1]["params"]
+    assert params["triangles_after"] <= params["triangles_before"]
+    assert (
+        params["triangles_before"]
+        == params["triangles_after"] + params["degenerate_dropped"] + params["duplicates_dropped"]
+    )
 
 
 def test_smoothing_polylines_move_with_mesh(cyl):

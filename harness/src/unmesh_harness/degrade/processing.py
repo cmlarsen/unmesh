@@ -526,3 +526,64 @@ def taubin_smoothing(mesh, severity, rng):
         "triangles_after": len(mesh.tris),
         **label,
     }
+
+
+VOXEL_AT_ZERO = 0.005
+
+
+def voxel_size_mm(severity: float, diagonal: float) -> float:
+    return diagonal * VOXEL_AT_ZERO * 10.0**severity
+
+
+@register(
+    "voxel_remesh",
+    "processing",
+    "identity",
+    "vertex clustering on voxels of diagonal * 0.005 * 10**severity (diagonal/200 at "
+    "severity 0+, /20 at severity 1): corners in the same voxel merge at their mean, "
+    "degenerate and duplicate triangles drop; clustering can join thin walls, so "
+    "watertightness is not guaranteed",
+    preserves_watertight=False,
+)
+def voxel_remesh(mesh, severity, rng):
+    src_tris = mesh.tris.copy()
+    src_ids = mesh.face_id.copy()
+    before = len(src_tris)
+    diagonal = bbox_diagonal(src_tris)
+    size = voxel_size_mm(severity, diagonal)
+    corners = src_tris.reshape(-1, 3)
+    lo = corners.min(axis=0)
+    keys = [tuple(row) for row in np.floor((corners - lo) / size).astype(np.int64).tolist()]
+    order = sorted(set(keys))
+    index = {k: i for i, k in enumerate(order)}
+    per_corner = [index[k] for k in keys]
+    sums = np.zeros((len(order), 3))
+    counts = np.zeros(len(order))
+    np.add.at(sums, per_corner, corners)
+    np.add.at(counts, per_corner, 1)
+    pos = sums / counts[:, None]
+    rows = []
+    degenerate = duplicates = 0
+    seen: set[tuple[tuple, tuple, tuple]] = set()
+    for t in pos[np.array(per_corner).reshape(-1, 3)]:
+        key = (tuple(t[0]), tuple(t[1]), tuple(t[2]))
+        if key[0] == key[1] or key[1] == key[2] or key[2] == key[0]:
+            degenerate += 1
+            continue
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        rows.append(t)
+    mesh.tris = np.array(rows, dtype=np.float64).reshape(-1, 3, 3)
+    label = transfer_labels(mesh, src_tris, src_ids)
+    return {
+        "voxel_mm": size,
+        "bbox_diagonal_mm": diagonal,
+        "occupied_cells": len(order),
+        "degenerate_dropped": degenerate,
+        "duplicates_dropped": duplicates,
+        "triangles_before": before,
+        "triangles_after": len(rows),
+        **label,
+    }
