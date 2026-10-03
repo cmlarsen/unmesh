@@ -13,7 +13,7 @@ from ..corpus import load_manifest, select
 from ..groundtruth import generate
 from ..labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from ..oracle import build_oracle_ir
-from .core import OPERATORS, apply, to_original, to_original_points
+from .core import OPERATORS, apply, chain, to_original, to_original_points
 from .faults import DISPOSITION
 
 SEVERITIES = (0.0, 0.5, 1.0)
@@ -102,22 +102,21 @@ def tess_stats(mesh: LabeledMesh) -> dict[str, float]:
     }
 
 
-def run_chain(mesh: LabeledMesh, chain: Chain, severity: float) -> LabeledMesh:
-    for name, fixed in chain:
-        mesh = apply(name, mesh, severity if fixed is None else fixed, SEED)
-    return mesh
+def run_chain(mesh: LabeledMesh, spec: Chain, severity: float) -> LabeledMesh:
+    steps = [(name, severity if fixed is None else fixed) for name, fixed in spec]
+    return chain(mesh, steps, SEED)
 
 
-def stats(meshes: list[LabeledMesh], chain: Chain, severity: float) -> dict[str, float | bool]:
+def stats(meshes: list[LabeledMesh], spec: Chain, severity: float) -> dict[str, float | bool]:
     sq, peak, closed, valid, grown = [], 0.0, True, True, []
-    counts_change = OPERATORS[chain[-1][0]].family == "tessellation"
+    counts_change = OPERATORS[spec[-1][0]].family == "tessellation"
     for mesh in meshes:
-        out = run_chain(mesh, chain, severity)
+        out = run_chain(mesh, spec, severity)
         back = to_original_points(out, out.tris.reshape(-1, 3)).reshape(-1, 3, 3)
         if np.linalg.det(to_original(out)[:3, :3]) < 0:
             back = back[:, [0, 2, 1]]
         if not counts_change:
-            base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
+            base = run_chain(mesh, tuple(c for c in spec if c[0] == "refine"), severity)
             if len(back) == len(base.tris):
                 d = np.linalg.norm(back - base.tris, axis=2).ravel()
                 sq.append(d**2)
@@ -257,11 +256,11 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                 rows = [
                     ("`refine -> noise_off_plane`", (("refine", REFINE_FOR_SHEET), (name, None)))
                 ]
-            for row_label, chain in rows:
+            for row_label, spec in rows:
                 use = group
                 label = f"smoke ({len(use)})" if base == "smoke" else base
                 for severity in (0.0, 1.0) if op.binary else SEVERITIES:
-                    s = stats(use, chain, severity)
+                    s = stats(use, spec, severity)
                     ratio = s["tris_ratio"]
                     tess = op.family == "tessellation"
                     rms = "-" if tess or s["rms_um"] is None else f"{s['rms_um']:.3f}"
