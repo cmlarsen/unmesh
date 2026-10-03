@@ -4714,6 +4714,3136 @@
           7.332
         ]
       }
+    },
+    {
+      "id": "planar_chamfer-0000",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 0,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 63887.015384834,
+        "face_count": 10,
+        "bbox_min": [
+          -30.7915,
+          -20.583,
+          0.0
+        ],
+        "bbox_max": [
+          30.7915,
+          20.583,
+          25.851
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0000",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 0,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 17723.672683374,
+        "face_count": 10,
+        "bbox_min": [
+          -30.7915,
+          -17.494,
+          0.0
+        ],
+        "bbox_max": [
+          30.7915,
+          17.494,
+          8.364
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0000",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 0,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 76486.42080452,
+        "face_count": 4,
+        "bbox_min": [
+          -35.003,
+          -35.003,
+          0.0
+        ],
+        "bbox_max": [
+          35.003,
+          35.003,
+          20.173
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0000",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 0,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 17807.797949367,
+        "face_count": 4,
+        "bbox_min": [
+          -21.639,
+          -21.639,
+          0.0
+        ],
+        "bbox_max": [
+          21.639,
+          21.639,
+          12.463
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0000",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 0,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 47214.176325681,
+        "face_count": 26,
+        "bbox_min": [
+          -22.5515,
+          -17.084,
+          -0.0
+        ],
+        "bbox_max": [
+          22.5515,
+          17.084,
+          33.0
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0001",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 1,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 138603.814560933,
+        "face_count": 10,
+        "bbox_min": [
+          -58.0185,
+          -20.6,
+          0.0
+        ],
+        "bbox_max": [
+          58.0185,
+          20.6,
+          29.531
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0001",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 1,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 133630.135188362,
+        "face_count": 10,
+        "bbox_min": [
+          -58.0185,
+          -20.0455,
+          0.0
+        ],
+        "bbox_max": [
+          58.0185,
+          20.0455,
+          28.87
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0001",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 1,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 201141.36781023,
+        "face_count": 4,
+        "bbox_min": [
+          -58.061,
+          -58.061,
+          0.0
+        ],
+        "bbox_max": [
+          58.061,
+          58.061,
+          19.159
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0001",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 1,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 199582.97396325,
+        "face_count": 4,
+        "bbox_min": [
+          -41.223,
+          -41.223,
+          0.0
+        ],
+        "bbox_max": [
+          41.223,
+          41.223,
+          39.412
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0001",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 1,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 197966.53046084,
+        "face_count": 26,
+        "bbox_min": [
+          -38.6645,
+          -16.9265,
+          -0.0
+        ],
+        "bbox_max": [
+          38.6645,
+          16.9265,
+          77.231
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0002",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 2,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70150.053489045,
+        "face_count": 10,
+        "bbox_min": [
+          -31.9395,
+          -43.498,
+          0.0
+        ],
+        "bbox_max": [
+          31.9395,
+          43.498,
+          12.797
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0002",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 2,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 55628.709637575,
+        "face_count": 10,
+        "bbox_min": [
+          -31.9395,
+          -43.498,
+          0.0
+        ],
+        "bbox_max": [
+          31.9395,
+          43.498,
+          10.022
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0002",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 2,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 87144.158519302,
+        "face_count": 4,
+        "bbox_min": [
+          -28.432,
+          -28.432,
+          0.0
+        ],
+        "bbox_max": [
+          28.432,
+          28.432,
+          34.427
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0002",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 2,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 287830.259579974,
+        "face_count": 8,
+        "bbox_min": [
+          -50.3175,
+          -60.9275,
+          0.0
+        ],
+        "bbox_max": [
+          50.3175,
+          60.9275,
+          25.114
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0002",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 2,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65759.707208257,
+        "face_count": 26,
+        "bbox_min": [
+          -18.9545,
+          -34.427,
+          -0.0
+        ],
+        "bbox_max": [
+          18.9545,
+          34.427,
+          25.515
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0003",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 3,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 105435.459360551,
+        "face_count": 10,
+        "bbox_min": [
+          -29.4725,
+          -43.0445,
+          0.0
+        ],
+        "bbox_max": [
+          29.4725,
+          43.0445,
+          20.808
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0003",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 3,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 105571.248989344,
+        "face_count": 10,
+        "bbox_min": [
+          -29.4725,
+          -43.0445,
+          0.0
+        ],
+        "bbox_max": [
+          29.4725,
+          43.0445,
+          20.808
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0003",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 3,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70349.886611239,
+        "face_count": 4,
+        "bbox_min": [
+          -25.656,
+          -25.656,
+          0.0
+        ],
+        "bbox_max": [
+          25.656,
+          25.656,
+          34.038
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0003",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 3,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 241285.339115565,
+        "face_count": 8,
+        "bbox_min": [
+          -66.1465,
+          -49.0245,
+          0.0
+        ],
+        "bbox_max": [
+          66.1465,
+          49.0245,
+          19.796
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0003",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 3,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 127777.45267455,
+        "face_count": 26,
+        "bbox_min": [
+          -17.1045,
+          -34.038,
+          -0.0
+        ],
+        "bbox_max": [
+          17.1045,
+          34.038,
+          54.93
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0004",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 4,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 326033.919873715,
+        "face_count": 10,
+        "bbox_min": [
+          -44.522,
+          -49.485,
+          0.0
+        ],
+        "bbox_max": [
+          44.522,
+          49.485,
+          38.172
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0004",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 4,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 80772.113498087,
+        "face_count": 10,
+        "bbox_min": [
+          -42.215,
+          -49.373,
+          0.0
+        ],
+        "bbox_max": [
+          42.215,
+          49.373,
+          9.778
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0004",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 4,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 295641.593246237,
+        "face_count": 4,
+        "bbox_min": [
+          -49.136,
+          -49.136,
+          0.0
+        ],
+        "bbox_max": [
+          49.136,
+          49.136,
+          39.723
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0004",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 4,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 189456.349325816,
+        "face_count": 4,
+        "bbox_min": [
+          -59.07,
+          -59.07,
+          0.0
+        ],
+        "bbox_max": [
+          59.07,
+          59.07,
+          17.603
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0004",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 4,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 239060.594035542,
+        "face_count": 26,
+        "bbox_min": [
+          -31.988,
+          -39.6105,
+          -0.0
+        ],
+        "bbox_max": [
+          31.988,
+          39.6105,
+          49.861
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0005",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 5,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 261618.444785327,
+        "face_count": 10,
+        "bbox_min": [
+          -53.137,
+          -37.528,
+          0.0
+        ],
+        "bbox_max": [
+          53.137,
+          37.528,
+          33.785
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0005",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 5,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 105633.485701411,
+        "face_count": 10,
+        "bbox_min": [
+          -52.3605,
+          -35.5675,
+          0.0
+        ],
+        "bbox_max": [
+          52.3605,
+          35.5675,
+          14.288
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0005",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 5,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 299556.705330752,
+        "face_count": 4,
+        "bbox_min": [
+          -54.691,
+          -54.691,
+          0.0
+        ],
+        "bbox_max": [
+          54.691,
+          54.691,
+          32.375
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0005",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 5,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 189923.82291774,
+        "face_count": 4,
+        "bbox_min": [
+          -46.658,
+          -46.658,
+          0.0
+        ],
+        "bbox_max": [
+          46.658,
+          46.658,
+          28.826
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0005",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 5,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 218236.357628883,
+        "face_count": 26,
+        "bbox_min": [
+          -36.2015,
+          -30.4145,
+          0.0
+        ],
+        "bbox_max": [
+          36.2015,
+          30.4145,
+          51.75
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0006",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 6,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 93981.41779091,
+        "face_count": 10,
+        "bbox_min": [
+          -33.731,
+          -28.8145,
+          0.0
+        ],
+        "bbox_max": [
+          33.731,
+          28.8145,
+          24.931
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0006",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 6,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 60750.405462226,
+        "face_count": 10,
+        "bbox_min": [
+          -33.731,
+          -27.9175,
+          0.0
+        ],
+        "bbox_max": [
+          33.731,
+          27.9175,
+          16.239
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0006",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 6,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 95192.163999866,
+        "face_count": 4,
+        "bbox_min": [
+          -34.976,
+          -34.976,
+          0.0
+        ],
+        "bbox_max": [
+          34.976,
+          34.976,
+          25.124
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0006",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 6,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 84028.484705908,
+        "face_count": 4,
+        "bbox_min": [
+          -34.763,
+          -34.763,
+          0.0
+        ],
+        "bbox_max": [
+          34.763,
+          34.763,
+          22.486
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0006",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 6,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 96734.655705644,
+        "face_count": 26,
+        "bbox_min": [
+          -22.718,
+          -23.397,
+          -0.0
+        ],
+        "bbox_max": [
+          22.718,
+          23.397,
+          47.08
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0007",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 7,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 248980.459568778,
+        "face_count": 10,
+        "bbox_min": [
+          -55.8885,
+          -43.0415,
+          0.0
+        ],
+        "bbox_max": [
+          55.8885,
+          43.0415,
+          26.43
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0007",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 7,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 122154.456179017,
+        "face_count": 10,
+        "bbox_min": [
+          -55.8885,
+          -42.332,
+          0.0
+        ],
+        "bbox_max": [
+          55.8885,
+          42.332,
+          12.955
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0007",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 7,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 350059.233775564,
+        "face_count": 4,
+        "bbox_min": [
+          -56.434,
+          -56.434,
+          0.0
+        ],
+        "bbox_max": [
+          56.434,
+          56.434,
+          35.284
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0007",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 7,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 271080.854863831,
+        "face_count": 4,
+        "bbox_min": [
+          -54.61,
+          -54.61,
+          0.0
+        ],
+        "bbox_max": [
+          54.61,
+          54.61,
+          29.911
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0007",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 7,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 214542.727048088,
+        "face_count": 26,
+        "bbox_min": [
+          -37.514,
+          -34.575,
+          -0.0
+        ],
+        "bbox_max": [
+          37.514,
+          34.575,
+          42.523
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0008",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 8,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 163226.488381067,
+        "face_count": 10,
+        "bbox_min": [
+          -59.491,
+          -26.155,
+          0.0
+        ],
+        "bbox_max": [
+          59.491,
+          26.155,
+          26.536
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0008",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 8,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 157512.519366823,
+        "face_count": 10,
+        "bbox_min": [
+          -59.491,
+          -26.155,
+          0.0
+        ],
+        "bbox_max": [
+          59.491,
+          26.155,
+          25.348
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0008",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 8,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 217716.517923911,
+        "face_count": 4,
+        "bbox_min": [
+          -59.427,
+          -59.427,
+          0.0
+        ],
+        "bbox_max": [
+          59.427,
+          59.427,
+          19.706
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0008",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 8,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 336277.260627236,
+        "face_count": 8,
+        "bbox_min": [
+          -69.4275,
+          -64.7275,
+          0.0
+        ],
+        "bbox_max": [
+          69.4275,
+          64.7275,
+          19.04
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0008",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 8,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 206875.586956024,
+        "face_count": 26,
+        "bbox_min": [
+          -39.6185,
+          -19.5615,
+          -0.0
+        ],
+        "bbox_max": [
+          39.6185,
+          19.5615,
+          67.313
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0009",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 9,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 218435.32269765,
+        "face_count": 10,
+        "bbox_min": [
+          -35.883,
+          -40.5485,
+          0.0
+        ],
+        "bbox_max": [
+          35.883,
+          40.5485,
+          38.8
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0009",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 9,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 126101.229584953,
+        "face_count": 10,
+        "bbox_min": [
+          -32.7705,
+          -38.8165,
+          0.0
+        ],
+        "bbox_max": [
+          32.7705,
+          38.8165,
+          25.106
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0009",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 9,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 188236.140428934,
+        "face_count": 4,
+        "bbox_min": [
+          -42.108,
+          -42.108,
+          0.0
+        ],
+        "bbox_max": [
+          42.108,
+          42.108,
+          34.517
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0009",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 9,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 205349.238404906,
+        "face_count": 4,
+        "bbox_min": [
+          -44.126,
+          -44.126,
+          0.0
+        ],
+        "bbox_max": [
+          44.126,
+          44.126,
+          33.771
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0009",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 9,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 243311.023691435,
+        "face_count": 26,
+        "bbox_min": [
+          -27.0345,
+          -32.785,
+          -0.0
+        ],
+        "bbox_max": [
+          27.0345,
+          32.785,
+          71.911
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0010",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 10,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 247066.941598458,
+        "face_count": 10,
+        "bbox_min": [
+          -35.206,
+          -46.347,
+          0.0
+        ],
+        "bbox_max": [
+          35.206,
+          46.347,
+          39.022
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0010",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 10,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 63667.253580992,
+        "face_count": 10,
+        "bbox_min": [
+          -31.415,
+          -45.5265,
+          0.0
+        ],
+        "bbox_max": [
+          31.415,
+          45.5265,
+          11.284
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0010",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 10,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 213960.80076376,
+        "face_count": 4,
+        "bbox_min": [
+          -42.788,
+          -42.788,
+          0.0
+        ],
+        "bbox_max": [
+          42.788,
+          42.788,
+          38.063
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0010",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 10,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 142706.514375324,
+        "face_count": 4,
+        "bbox_min": [
+          -53.138,
+          -53.138,
+          0.0
+        ],
+        "bbox_max": [
+          53.138,
+          53.138,
+          16.18
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0010",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 10,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 200691.591697869,
+        "face_count": 26,
+        "bbox_min": [
+          -27.2615,
+          -37.242,
+          -0.0
+        ],
+        "bbox_max": [
+          27.2615,
+          37.242,
+          52.645
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0011",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 11,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49431.010910677,
+        "face_count": 10,
+        "bbox_min": [
+          -39.971,
+          -36.0525,
+          0.0
+        ],
+        "bbox_max": [
+          39.971,
+          36.0525,
+          8.631
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0011",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 11,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49735.171940539,
+        "face_count": 10,
+        "bbox_min": [
+          -39.971,
+          -36.0525,
+          0.0
+        ],
+        "bbox_max": [
+          39.971,
+          36.0525,
+          8.631
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0011",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 11,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 123580.896849,
+        "face_count": 4,
+        "bbox_min": [
+          -37.468,
+          -37.468,
+          0.0
+        ],
+        "bbox_max": [
+          37.468,
+          37.468,
+          28.045
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0011",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 11,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 190626.204715264,
+        "face_count": 8,
+        "bbox_min": [
+          -40.8115,
+          -44.143,
+          0.0
+        ],
+        "bbox_max": [
+          40.8115,
+          44.143,
+          28.708
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0011",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 11,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 60634.536679421,
+        "face_count": 26,
+        "bbox_min": [
+          -24.9785,
+          -28.045,
+          0.0
+        ],
+        "bbox_max": [
+          24.9785,
+          28.045,
+          21.721
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0012",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 12,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 69511.204776528,
+        "face_count": 10,
+        "bbox_min": [
+          -57.87,
+          -21.626,
+          0.0
+        ],
+        "bbox_max": [
+          57.87,
+          21.626,
+          14.105
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0012",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 12,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 59719.066731675,
+        "face_count": 10,
+        "bbox_min": [
+          -57.87,
+          -21.626,
+          0.0
+        ],
+        "bbox_max": [
+          57.87,
+          21.626,
+          11.944
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0012",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 12,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 162913.03495362,
+        "face_count": 4,
+        "bbox_min": [
+          -57.604,
+          -57.604,
+          0.0
+        ],
+        "bbox_max": [
+          57.604,
+          57.604,
+          15.68
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0012",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 12,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 98967.403215494,
+        "face_count": 8,
+        "bbox_min": [
+          -38.9645,
+          -40.745,
+          0.0
+        ],
+        "bbox_max": [
+          38.9645,
+          40.745,
+          16.15
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0012",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 12,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 73261.741928429,
+        "face_count": 26,
+        "bbox_min": [
+          -38.4025,
+          -15.6795,
+          -0.0
+        ],
+        "bbox_max": [
+          38.4025,
+          15.6795,
+          30.757
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0013",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 13,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 350808.157413158,
+        "face_count": 10,
+        "bbox_min": [
+          -55.084,
+          -45.4695,
+          0.0
+        ],
+        "bbox_max": [
+          55.084,
+          45.4695,
+          36.007
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0013",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 13,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 132861.125021579,
+        "face_count": 10,
+        "bbox_min": [
+          -54.4565,
+          -44.6495,
+          0.0
+        ],
+        "bbox_max": [
+          54.4565,
+          44.6495,
+          13.752
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0013",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 13,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 367011.544341899,
+        "face_count": 4,
+        "bbox_min": [
+          -56.339,
+          -56.339,
+          0.0
+        ],
+        "bbox_max": [
+          56.339,
+          56.339,
+          37.359
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0013",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 13,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 272624.1889865,
+        "face_count": 4,
+        "bbox_min": [
+          -55.149,
+          -55.149,
+          0.0
+        ],
+        "bbox_max": [
+          55.149,
+          55.149,
+          29.473
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0013",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 13,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 276961.338297189,
+        "face_count": 26,
+        "bbox_min": [
+          -37.35,
+          -36.5395,
+          -0.0
+        ],
+        "bbox_max": [
+          37.35,
+          36.5395,
+          52.95
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0014",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 14,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 233085.372261662,
+        "face_count": 10,
+        "bbox_min": [
+          -37.6535,
+          -42.578,
+          0.0
+        ],
+        "bbox_max": [
+          37.6535,
+          42.578,
+          37.677
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0014",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 14,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 154147.334297492,
+        "face_count": 10,
+        "bbox_min": [
+          -34.9875,
+          -41.338,
+          0.0
+        ],
+        "bbox_max": [
+          34.9875,
+          41.338,
+          26.923
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0014",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 14,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 202513.916689487,
+        "face_count": 4,
+        "bbox_min": [
+          -42.986,
+          -42.986,
+          0.0
+        ],
+        "bbox_max": [
+          42.986,
+          42.986,
+          35.551
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0014",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 14,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 260319.394231392,
+        "face_count": 4,
+        "bbox_min": [
+          -48.11,
+          -48.11,
+          0.0
+        ],
+        "bbox_max": [
+          48.11,
+          48.11,
+          36.083
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0014",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 14,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 273369.101870029,
+        "face_count": 26,
+        "bbox_min": [
+          -27.7685,
+          -34.3105,
+          -0.0
+        ],
+        "bbox_max": [
+          27.7685,
+          34.3105,
+          74.645
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0015",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 15,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 179252.567655211,
+        "face_count": 10,
+        "bbox_min": [
+          -52.811,
+          -30.966,
+          0.0
+        ],
+        "bbox_max": [
+          52.811,
+          30.966,
+          28.18
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0015",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 15,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 53871.230677677,
+        "face_count": 10,
+        "bbox_min": [
+          -52.6325,
+          -28.675,
+          0.0
+        ],
+        "bbox_max": [
+          52.6325,
+          28.675,
+          8.986
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0015",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 15,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 249687.092766648,
+        "face_count": 4,
+        "bbox_min": [
+          -54.098,
+          -54.098,
+          0.0
+        ],
+        "bbox_max": [
+          54.098,
+          54.098,
+          27.522
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0015",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 15,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 136085.723276971,
+        "face_count": 4,
+        "bbox_min": [
+          -42.155,
+          -42.155,
+          0.0
+        ],
+        "bbox_max": [
+          42.155,
+          42.155,
+          25.276
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0015",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 15,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 127532.673143578,
+        "face_count": 26,
+        "bbox_min": [
+          -35.851,
+          -25.231,
+          -0.0
+        ],
+        "bbox_max": [
+          35.851,
+          25.231,
+          36.965
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0016",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 16,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 75304.723699631,
+        "face_count": 10,
+        "bbox_min": [
+          -37.23,
+          -20.347,
+          0.0
+        ],
+        "bbox_max": [
+          37.23,
+          20.347,
+          25.452
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0016",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 16,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 42208.93780643,
+        "face_count": 10,
+        "bbox_min": [
+          -37.23,
+          -18.2925,
+          0.0
+        ],
+        "bbox_max": [
+          37.23,
+          18.2925,
+          15.658
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0016",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 16,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 91294.486604899,
+        "face_count": 4,
+        "bbox_min": [
+          -38.951,
+          -38.951,
+          0.0
+        ],
+        "bbox_max": [
+          38.951,
+          38.951,
+          19.406
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0016",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 16,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 38670.432672309,
+        "face_count": 4,
+        "bbox_min": [
+          -23.763,
+          -23.763,
+          0.0
+        ],
+        "bbox_max": [
+          23.763,
+          23.763,
+          22.57
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0016",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 16,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 76146.861578121,
+        "face_count": 26,
+        "bbox_min": [
+          -25.4215,
+          -16.799,
+          -0.0
+        ],
+        "bbox_max": [
+          25.4215,
+          16.799,
+          46.609
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0017",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 17,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 168568.520301273,
+        "face_count": 10,
+        "bbox_min": [
+          -31.0085,
+          -39.141,
+          0.0
+        ],
+        "bbox_max": [
+          31.0085,
+          39.141,
+          35.768
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0017",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 17,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 64874.849267581,
+        "face_count": 10,
+        "bbox_min": [
+          -27.45,
+          -37.2655,
+          0.0
+        ],
+        "bbox_max": [
+          27.45,
+          37.2655,
+          16.098
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0017",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 17,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 149818.963515423,
+        "face_count": 4,
+        "bbox_min": [
+          -38.125,
+          -38.125,
+          0.0
+        ],
+        "bbox_max": [
+          38.125,
+          38.125,
+          33.563
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0017",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 17,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 125031.917749582,
+        "face_count": 4,
+        "bbox_min": [
+          -42.31,
+          -42.31,
+          0.0
+        ],
+        "bbox_max": [
+          42.31,
+          42.31,
+          22.306
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0017",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 17,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 163183.185165042,
+        "face_count": 26,
+        "bbox_min": [
+          -24.2305,
+          -31.688,
+          -0.0
+        ],
+        "bbox_max": [
+          24.2305,
+          31.688,
+          56.246
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0018",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 18,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 83230.087461054,
+        "face_count": 10,
+        "bbox_min": [
+          -48.6965,
+          -24.829,
+          0.0
+        ],
+        "bbox_max": [
+          48.6965,
+          24.829,
+          17.573
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0018",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 18,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 47350.27353139,
+        "face_count": 10,
+        "bbox_min": [
+          -48.6965,
+          -24.829,
+          0.0
+        ],
+        "bbox_max": [
+          48.6965,
+          24.829,
+          9.82
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0018",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 18,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 142622.41389207,
+        "face_count": 4,
+        "bbox_min": [
+          -47.694,
+          -47.694,
+          0.0
+        ],
+        "bbox_max": [
+          47.694,
+          47.694,
+          20.107
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0018",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 18,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 201605.745036917,
+        "face_count": 8,
+        "bbox_min": [
+          -34.136,
+          -68.7335,
+          0.0
+        ],
+        "bbox_max": [
+          34.136,
+          68.7335,
+          22.151
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0018",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 18,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 58268.437499921,
+        "face_count": 26,
+        "bbox_min": [
+          -31.6025,
+          -18.628,
+          -0.0
+        ],
+        "bbox_max": [
+          31.6025,
+          18.628,
+          25.482
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0019",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 19,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 99144.121770731,
+        "face_count": 10,
+        "bbox_min": [
+          -57.035,
+          -24.5855,
+          0.0
+        ],
+        "bbox_max": [
+          57.035,
+          24.5855,
+          18.044
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0019",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 19,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 52131.57030387,
+        "face_count": 10,
+        "bbox_min": [
+          -57.035,
+          -24.5855,
+          0.0
+        ],
+        "bbox_max": [
+          57.035,
+          24.5855,
+          9.321
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0019",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 19,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 205244.151945776,
+        "face_count": 4,
+        "bbox_min": [
+          -56.833,
+          -56.833,
+          0.0
+        ],
+        "bbox_max": [
+          56.833,
+          56.833,
+          20.365
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0019",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 19,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 127811.21494222,
+        "face_count": 8,
+        "bbox_min": [
+          -33.0025,
+          -40.945,
+          0.0
+        ],
+        "bbox_max": [
+          33.0025,
+          40.945,
+          24.927
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0019",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 19,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 69315.040191996,
+        "face_count": 26,
+        "bbox_min": [
+          -37.8355,
+          -18.797,
+          -0.0
+        ],
+        "bbox_max": [
+          37.8355,
+          18.797,
+          25.107
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0020",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 20,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 62127.049268547,
+        "face_count": 10,
+        "bbox_min": [
+          -38.446,
+          -19.26,
+          0.0
+        ],
+        "bbox_max": [
+          38.446,
+          19.26,
+          21.302
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0020",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 20,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 57602.616302121,
+        "face_count": 10,
+        "bbox_min": [
+          -38.446,
+          -19.26,
+          0.0
+        ],
+        "bbox_max": [
+          38.446,
+          19.26,
+          19.497
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0020",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 20,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 54410.574116592,
+        "face_count": 4,
+        "bbox_min": [
+          -35.752,
+          -35.752,
+          0.0
+        ],
+        "bbox_max": [
+          35.752,
+          35.752,
+          13.652
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0020",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 20,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 127125.94878878,
+        "face_count": 8,
+        "bbox_min": [
+          -56.1305,
+          -43.4125,
+          0.0
+        ],
+        "bbox_max": [
+          56.1305,
+          43.4125,
+          13.29
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0020",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 20,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65935.168815473,
+        "face_count": 26,
+        "bbox_min": [
+          -23.8345,
+          -13.6515,
+          -0.0
+        ],
+        "bbox_max": [
+          23.8345,
+          13.6515,
+          51.357
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0021",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 21,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 239430.601818664,
+        "face_count": 10,
+        "bbox_min": [
+          -45.639,
+          -42.3285,
+          0.0
+        ],
+        "bbox_max": [
+          45.639,
+          42.3285,
+          31.865
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0021",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 21,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 72059.128816955,
+        "face_count": 10,
+        "bbox_min": [
+          -44.234,
+          -41.189,
+          0.0
+        ],
+        "bbox_max": [
+          44.234,
+          41.189,
+          9.96
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0021",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 21,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 258970.924441591,
+        "face_count": 4,
+        "bbox_min": [
+          -48.735,
+          -48.735,
+          0.0
+        ],
+        "bbox_max": [
+          48.735,
+          48.735,
+          35.231
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0021",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 21,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 153977.096188282,
+        "face_count": 4,
+        "bbox_min": [
+          -49.712,
+          -49.712,
+          0.0
+        ],
+        "bbox_max": [
+          49.712,
+          49.712,
+          20.335
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0021",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 21,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 178444.306473389,
+        "face_count": 26,
+        "bbox_min": [
+          -31.974,
+          -34.091,
+          -0.0
+        ],
+        "bbox_max": [
+          31.974,
+          34.091,
+          42.904
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0022",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 22,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49186.001063635,
+        "face_count": 10,
+        "bbox_min": [
+          -27.972,
+          -18.0995,
+          0.0
+        ],
+        "bbox_max": [
+          27.972,
+          18.0995,
+          24.853
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0022",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 22,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 45026.036399383,
+        "face_count": 10,
+        "bbox_min": [
+          -27.972,
+          -18.0995,
+          0.0
+        ],
+        "bbox_max": [
+          27.972,
+          18.0995,
+          22.37
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0022",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 22,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 24983.671843888,
+        "face_count": 4,
+        "bbox_min": [
+          -24.096,
+          -24.096,
+          0.0
+        ],
+        "bbox_max": [
+          24.096,
+          24.096,
+          13.905
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0022",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 22,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 336116.150655516,
+        "face_count": 8,
+        "bbox_min": [
+          -62.6595,
+          -45.67,
+          0.0
+        ],
+        "bbox_max": [
+          62.6595,
+          45.67,
+          29.778
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0022",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 22,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 46522.306709181,
+        "face_count": 26,
+        "bbox_min": [
+          -15.979,
+          -12.657,
+          -0.0
+        ],
+        "bbox_max": [
+          15.979,
+          12.657,
+          59.192
+        ]
+      }
+    },
+    {
+      "id": "planar_chamfer-0023",
+      "tier": "generated",
+      "family": "planar_chamfer",
+      "seed": 23,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 126784.024269513,
+        "face_count": 10,
+        "bbox_min": [
+          -46.018,
+          -24.7335,
+          0.0
+        ],
+        "bbox_max": [
+          46.018,
+          24.7335,
+          28.573
+        ]
+      }
+    },
+    {
+      "id": "straight_fillet-0023",
+      "tier": "generated",
+      "family": "straight_fillet",
+      "seed": 23,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 41146.615914466,
+        "face_count": 10,
+        "bbox_min": [
+          -45.6585,
+          -21.683,
+          0.0
+        ],
+        "bbox_max": [
+          45.6585,
+          21.683,
+          10.502
+        ]
+      }
+    },
+    {
+      "id": "circular_fillet-0023",
+      "tier": "generated",
+      "family": "circular_fillet",
+      "seed": 23,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 171281.173539518,
+        "face_count": 4,
+        "bbox_min": [
+          -48.528,
+          -48.528,
+          0.0
+        ],
+        "bbox_max": [
+          48.528,
+          48.528,
+          23.447
+        ]
+      }
+    },
+    {
+      "id": "bore_chamfer-0023",
+      "tier": "generated",
+      "family": "bore_chamfer",
+      "seed": 23,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 60304.181141449,
+        "face_count": 4,
+        "bbox_min": [
+          -30.325,
+          -30.325,
+          0.0
+        ],
+        "bbox_max": [
+          30.325,
+          30.325,
+          21.794
+        ]
+      }
+    },
+    {
+      "id": "corner_fillet-0023",
+      "tier": "generated",
+      "family": "corner_fillet",
+      "seed": 23,
+      "strata": {
+        "category": "chamfer_fillet"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 98896.347318642,
+        "face_count": 26,
+        "bbox_min": [
+          -31.9335,
+          -20.3965,
+          -0.0
+        ],
+        "bbox_max": [
+          31.9335,
+          20.3965,
+          40.121
+        ]
+      }
     }
   ]
 }

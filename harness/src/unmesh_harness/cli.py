@@ -7,12 +7,11 @@ from pathlib import Path
 from .corpus import (
     GRID_ORDER,
     build_grid,
-    curved_entries,
     default_cache_dir,
     empty_manifest,
     find_manifest,
     load_manifest,
-    planar_entries,
+    planned_entries,
     sync_manifest,
 )
 
@@ -94,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     path = args.manifest or find_manifest()
     manifest = json.loads(path.read_text()) if path.exists() else empty_manifest()
-    manifest = sync_manifest(manifest, planar_entries() + curved_entries())
+    manifest = sync_manifest(manifest, planned_entries())
     path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"pinned {len(manifest['entries'])} entries in {path}")
     return 0

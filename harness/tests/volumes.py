@@ -79,4 +79,42 @@ def expected_volume(gt):
         return math.pi * r**2 * h + 2 / 3 * math.pi * r**3
     if f == "revolved_torus":
         return 2 * math.pi**2 * p["major_radius"] * p["minor_radius"] ** 2
+    if f == "planar_chamfer":
+        length, width, height = p["box"]
+        c = p["chamfer"]
+        return length * width * height - c * c * (length + width) + 4 * c**3 / 3
+    if f == "straight_fillet":
+        length, width, height = p["box"]
+        r = p["radius"]
+        return length * width * height - 4 * (1 - math.pi / 4) * r * r * height
+    if f == "circular_fillet":
+        radius, height = p["disc"]
+        r = p["fillet"]
+        return (
+            math.pi * radius * radius * height
+            - 2 * math.pi * radius * r * r * (1 - math.pi / 4)
+            + r**3 * (5 * math.pi / 3 - math.pi**2 / 2)
+        )
+    if f == "bore_chamfer":
+        c = p["chamfer"]
+        if p["variant"] == "bore":
+            length, width, height = p["plate"]
+            bore = p["bore"]
+            return (
+                length * width * height
+                - math.pi * bore * bore * height
+                - (math.pi * c * c * bore + math.pi * c**3 / 3)
+            )
+        radius, height = p["disc"]
+        return math.pi * radius * radius * height - (math.pi * c * c * radius - math.pi * c**3 / 3)
+    if f == "corner_fillet":
+        a, b, height = p["box"]
+        r = p["radius"]
+        u, v, w = a - 2 * r, b - 2 * r, height - 2 * r
+        return (
+            u * v * w
+            + 2 * r * (u * v + u * w + v * w)
+            + math.pi * r * r * (u + v + w)
+            + 4 / 3 * math.pi * r**3
+        )
     raise KeyError(f)
