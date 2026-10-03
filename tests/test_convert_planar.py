@@ -212,6 +212,17 @@ def test_scaled_planar_parts_reach_unscaled_f1(parts):
             assert score_recovery(scaled, scaled.face_id, ir)["f1"] == base
 
 
+def test_thin_walls_off_plane_noise_recovers_every_face():
+    from unmesh_harness.degrade import apply_chain
+    from unmesh_harness.groundtruth import generate
+    from unmesh_harness.metrics.recovery import score_recovery
+
+    clean = tessellate(generate("thin_walls", 0).solid, 0.01, 0.2)
+    degraded = apply_chain(clean, [("refine", 0.15), ("noise_off_plane", 0.2)], 2)
+    ir, _ = unmesh.convert(degraded.tris)
+    assert score_recovery(clean, degraded.face_id, ir)["f1"] >= 0.98
+
+
 @pytest.mark.benchmark
 def test_million_triangle_planar_mesh_converts_fast(capsys):
     soup = grid_box(289)

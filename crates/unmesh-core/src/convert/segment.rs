@@ -41,11 +41,16 @@ struct Grower<'a> {
     f: &'a [[u32; 3]],
     info: &'a [TriInfo],
     tol: f64,
+    strict: bool,
 }
 
 impl Grower<'_> {
     fn accept(&self, g: usize, n: V3, c: V3, count: usize) -> bool {
-        let limit = self.tol * (1.0 + 2.0 / (count as f64).sqrt());
+        let limit = if self.strict {
+            self.tol
+        } else {
+            self.tol * (1.0 + 2.0 / (count as f64).sqrt())
+        };
         let t = self.f[g];
         for &i in &t {
             if dot(n, sub(self.v[i as usize], c)).abs() > limit {
@@ -83,8 +88,15 @@ pub fn run(
     info: &[TriInfo],
     eligible: &[bool],
     tol: f64,
+    strict: bool,
 ) -> (Vec<u32>, usize) {
-    let grower = Grower { v, f, info, tol };
+    let grower = Grower {
+        v,
+        f,
+        info,
+        tol,
+        strict,
+    };
     let mut label = vec![NONE; f.len()];
     let mut seeds: Vec<u32> = (0..f.len() as u32)
         .filter(|&i| eligible[i as usize])
@@ -189,5 +201,40 @@ fn refit(mom: &Moments, nsum: V3, n_prev: V3, c_prev: V3) -> (V3, V3) {
             (unit(n), c)
         }
         _ => (n_prev, c_prev),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hinge_pair() -> (Vec<V3>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
+        let t = 1.0_f64.to_radians().tan();
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 3.0, 3.0 * t],
+            [3.0, 0.0, 3.0 * t],
+        ];
+        let f = vec![[0, 1, 2], [3, 5, 4]];
+        let nbr = vec![[1, NONE, NONE], [0, NONE, NONE]];
+        (v, f, nbr)
+    }
+
+    fn labels(strict: bool) -> Vec<u32> {
+        let (v, f, nbr) = hinge_pair();
+        let info = tri_info(&v, &f);
+        let eligible = vec![true; 2];
+        run(&v, &f, &nbr, &info, &eligible, 0.03, strict).0
+    }
+
+    #[test]
+    fn lenient_growth_merges_early_but_strict_does_not() {
+        let lax = labels(false);
+        assert_eq!(lax[0], lax[1]);
+        let strict = labels(true);
+        assert_ne!(strict[0], strict[1]);
     }
 }
