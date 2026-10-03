@@ -85,6 +85,8 @@ def chain(mesh: LabeledMesh, steps: list[tuple[str, float]], seed: int) -> Label
     Step ``i`` runs as ``apply(name, mesh, severity, seed + i)`` and appends its
     own ``(op, severity, seed, params)`` entry to ``metadata["history"]``, so a
     chain is fully described by its step list plus the single chain seed.
+    Per-step seeds overlap across chain seeds: step 1 at chain seed ``s`` uses
+    the same seed as step 0 at chain seed ``s + 1``.
     """
     for i, (name, severity) in enumerate(steps):
         mesh = apply(name, mesh, severity, seed + i)

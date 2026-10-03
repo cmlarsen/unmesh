@@ -30,6 +30,7 @@ __all__ = [
     "Preset",
     "apply",
     "apply_chain",
+    "apply_pair_preprocess",
     "chain",
     "chords",
     "coarsen",
