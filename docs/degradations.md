@@ -10,13 +10,13 @@ Rules every operator follows:
 - Pose operators also transform the analytic parameters in the face table. Mirroring reflects origins, apexes, centres, normals and axes with the same matrix, keeps each face's `reversed` flag (the outward normal is a function of axis and position only), swaps triangle corners 1 and 2, and toggles `forward_in_a` on every adjacency because a reflection reverses the sense in which a face boundary is traversed.
 - Precision and noise operators leave the face table at the true analytic surfaces: that is the ground truth the mesh is supposed to recover.
 - Truth edges and vertices: `adjacency[*].points` and `vertices` move with the mesh so the oracle IR of a degraded mesh stays self-consistent. The clean positions are kept unchanged in `metadata["truth"]` (`vertices`, `edge_points`, captured from the mesh as first passed to `apply`, in that mesh's frame) and no operator touches them; `to_original` maps degraded coordinates into that frame.
-- `refine` (tessellation family) bisects every edge longer than the target, with one midpoint per edge shared by both sides, so the mesh stays conforming and watertight. Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines gain the new boundary nodes. Planar faces have no interior vertices straight out of OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.
+- `refine` (tessellation family) bisects every edge longer than the target, with one midpoint per edge shared by both sides, so the mesh stays conforming and watertight. Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines gain the new boundary nodes. Planar faces have no interior vertices straight out of OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first; meshes with no planar face at all are skipped unchanged.
 - The random stream is `numpy.random.default_rng(seed)`; vertices are visited in `np.unique` order, so output is bit-identical across processes.
-- `coarsen` collapses shortest edges first into the surviving endpoint (CAD vertices never merge, the link condition keeps the mesh a closed manifold, no face loses its last triangle), so surviving curved nodes stay exactly on the analytic surface.
+- `coarsen` collapses shortest edges first into the surviving endpoint (CAD vertices never merge, the link condition keeps the mesh a closed manifold, no face loses its last triangle, b collapses into a only if faces(b) is a subset of faces(a), an edge-polyline node only into an adjacent node of the same polyline, and no collapse may fold a triangle or create a zero-area one), so surviving curved nodes stay exactly on the analytic surface.
 - `retriangulate` reuses boundary vertices bit-exactly and only touches planar faces without interior vertices; curved faces are skipped.
-- `nonuniform_chords` moves only vertices on one or two faces along the surface or the shared edge, reprojects them onto the incident analytic surfaces, and leaves CAD corners fixed.
-- `slivers` splits edges on both sides at once (conforming, watertight) and never splits edges of degenerate input triangles; `t_junctions` splits one side only and so is not watertight by design, while face ids and polylines stay aligned in both.
-- `fillet_rows` rebuilds cylinder fillet strips on the exact analytic arc and re-triangulates the affected planar neighbours; anything else is recorded as skipped and left untouched.
+- `nonuniform_chords` moves only vertices on one or two faces along the surface or the shared edge (up to 45% of the shorter neighbouring segment), reprojects them onto the incident analytic surfaces, rejects moves that flip a triangle, and leaves CAD corners fixed.
+- `slivers` splits edges on both sides at once (conforming, watertight) and never splits edges of degenerate input triangles, and rejects split points whose projection onto the surface flips a triangle; `t_junctions` splits one side only and so is not watertight by design, while face ids and polylines stay aligned in both. `t_junctions` intentionally leaves edge polylines that are not mesh edges on both sides.
+- `fillet_rows` rebuilds cylinder fillet strips with an explicit segment count on the exact analytic arc, triangulating each strip row-band and the affected planar neighbours with the seed-independent canonical triangulation; strips whose tangent-line stations differ, and anything else ineligible, is recorded as skipped and left untouched.
 
 ## Severity scale
 
@@ -24,7 +24,7 @@ Rules every operator follows:
 |---|---|---|---|
 | `refine` | tessellation | identity | edges bisected until none exceeds a target of bbox diagonal / 10 at severity 0+, / 31.6 at 0.5, / 100 at 1 (log-interpolated); midpoints on curved faces are projected onto the analytic surface |
 | `nonuniform_chords` | tessellation | identity | vertices on one or two faces moved along the surface (within a face, or along the shared edge for two-face vertices) by up to severity * 45% of the local chord length, then reprojected onto the incident analytic surfaces; chord spacing becomes non-uniform while every node stays on-surface; CAD corners and 3+ face vertices stay fixed |
-| `coarsen` | tessellation | identity | shortest edges collapsed until none is shorter than h = diagonal * 0.01 * 10**severity (diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); the surviving endpoint keeps its coordinates, so curved nodes stay on the analytic surface and cylinders become N-gon prisms |
+| `coarsen` | tessellation | identity | shortest edges collapsed until none is shorter than h = diagonal * 0.01 * 10**severity (diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); b collapses into a only if faces(b) is a subset of faces(a), and a node of an edge polyline only into an adjacent node of the same polyline; the surviving endpoint keeps its coordinates and no collapse may fold a triangle or create a zero-area one, so curved nodes stay on the analytic surface and cylinders become N-gon prisms |
 | `slivers` | tessellation | identity | a fraction 0.3 * severity of edges is split at an off-centre point (half-length offset 0.45 * severity toward a random endpoint, so 5% from the endpoint at severity 1) on both sides at once; the mesh stays conforming and watertight while sliver triangles appear |
 | `t_junctions` | tessellation | identity | up to 10% * severity of edges gain a hanging midpoint on one side only; the neighbour keeps its original edge, so the mesh is non-conforming and not watertight by design, while face ids and polylines stay aligned |
 | `retriangulate` | tessellation | identity | planar faces re-triangulated from their boundary loops by ear clipping biased toward a fan (severity up to 1/3), a strip (up to 2/3) or a Delaunay-like choice (above); boundary vertices are untouched, curved faces and faces with interior vertices are skipped |
@@ -43,7 +43,7 @@ Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise dra
 
 ## Displacement sheet
 
-Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation family, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. `refine -> noise_off_plane` covers only meshes with at least one planar face.
+Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation family, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. Meshes without a planar face skip `noise_off_plane` with history params `{"skipped": "no planar faces"}`.
 
 | parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
 |---|---|---|---|---|---|---|---|
@@ -74,9 +74,9 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (46) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (46) | `noise_normal` | 0.5 | 14.198 | 24.983 | 1.0 | yes | yes |
 | smoke (46) | `noise_normal` | 1.0 | 28.397 | 49.965 | 1.0 | yes | yes |
-| smoke (45) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 90.4 | yes | yes |
-| smoke (45) | `refine -> noise_off_plane` | 0.5 | 12.486 | 24.997 | 90.4 | yes | yes |
-| smoke (45) | `refine -> noise_off_plane` | 1.0 | 24.971 | 49.994 | 90.4 | yes | yes |
+| smoke (46) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 88.5 | yes | yes |
+| smoke (46) | `refine -> noise_off_plane` | 0.5 | 12.416 | 24.997 | 88.5 | yes | yes |
+| smoke (46) | `refine -> noise_off_plane` | 1.0 | 24.833 | 49.994 | 88.5 | yes | yes |
 | smoke (46) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (46) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
 | smoke (46) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
@@ -183,5 +183,5 @@ Seed 20260101. Chord length is over unique mesh edges; aspect ratio is Lmax^2 / 
 | fillet | `t_junctions` | 1.0 | 46 | 19.4964 | 25.4423 | 22.926 | 67.039 | 4.929 | 11 |
 | fillet | `retriangulate` | 0.5 | 40 | 22.8959 | 28.7163 | 46.758 | 442.990 | 5.455 | 7 |
 | fillet | `retriangulate` | 1.0 | 40 | 20.0047 | 27.4717 | 22.488 | 43.316 | 5.455 | 9 |
-| fillet | `fillet_rows` | 0.5 | 20 | 36.1658 | 31.0273 | 9.806 | 40.021 | 5.000 | 8 |
-| fillet | `fillet_rows` | 1.0 | 16 | 44.1652 | 29.6297 | 9.342 | 40.021 | 4.800 | 7 |
+| fillet | `fillet_rows` | 0.5 | 20 | 36.1658 | 31.0273 | 9.806 | 40.021 | 5.000 | 7 |
+| fillet | `fillet_rows` | 1.0 | 16 | 44.1652 | 29.6297 | 9.342 | 40.021 | 4.800 | 6 |

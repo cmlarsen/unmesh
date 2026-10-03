@@ -176,22 +176,31 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the "
         "incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines "
         "gain the new boundary nodes. Planar faces have no interior vertices straight out of "
-        "OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.",
+        "OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first; "
+        "meshes with no planar face at all are skipped unchanged.",
         "- The random stream is `numpy.random.default_rng(seed)`; vertices are visited in "
         "`np.unique` order, so output is bit-identical across processes.",
         "- `coarsen` collapses shortest edges first into the surviving endpoint (CAD vertices "
         "never merge, the link condition keeps the mesh a closed manifold, no face loses its "
-        "last triangle), so surviving curved nodes stay exactly on the analytic surface.",
+        "last triangle, b collapses into a only if faces(b) is a subset of faces(a), an edge-"
+        "polyline node only into an adjacent node of the same polyline, and no collapse may "
+        "fold a triangle or create a zero-area one), so surviving curved nodes stay exactly "
+        "on the analytic surface.",
         "- `retriangulate` reuses boundary vertices bit-exactly and only touches planar faces "
         "without interior vertices; curved faces are skipped.",
         "- `nonuniform_chords` moves only vertices on one or two faces along the surface or the "
-        "shared edge, reprojects them onto the incident analytic surfaces, and leaves CAD "
+        "shared edge (up to 45% of the shorter neighbouring segment), reprojects them onto "
+        "the incident analytic surfaces, rejects moves that flip a triangle, and leaves CAD "
         "corners fixed.",
         "- `slivers` splits edges on both sides at once (conforming, watertight) and never "
-        "splits edges of degenerate input triangles; `t_junctions` splits one side only and so "
-        "is not watertight by design, while face ids and polylines stay aligned in both.",
-        "- `fillet_rows` rebuilds cylinder fillet strips on the exact analytic arc and "
-        "re-triangulates the affected planar neighbours; anything else is recorded as skipped "
+        "splits edges of degenerate input triangles, and rejects split points whose projection "
+        "onto the surface flips a triangle; `t_junctions` splits one side only and so "
+        "is not watertight by design, while face ids and polylines stay aligned in both. "
+        "`t_junctions` intentionally leaves edge polylines that are not mesh edges on both sides.",
+        "- `fillet_rows` rebuilds cylinder fillet strips with an explicit segment count on the "
+        "exact analytic arc, triangulating each strip row-band and the affected planar "
+        "neighbours with the seed-independent canonical triangulation; strips whose "
+        "tangent-line stations differ, and anything else ineligible, is recorded as skipped "
         "and left untouched.",
         "",
         "## Severity scale",
@@ -220,8 +229,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
         "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
         "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and "
-        "sweeps the noise severity. `refine -> noise_off_plane` covers only meshes with at "
-        "least one planar face.",
+        "sweeps the noise severity. Meshes without a planar face skip `noise_off_plane` "
+        'with history params `{"skipped": "no planar faces"}`.',
         "",
         "| parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |",
         "|---|---|---|---|---|---|---|---|",
