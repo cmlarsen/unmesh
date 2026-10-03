@@ -25,6 +25,15 @@ def planar_only(mesh):
     return all(f.surface == "plane" for f in mesh.faces)
 
 
+def curved_bounded_faces(mesh):
+    bounded = set()
+    for adj in mesh.adjacency:
+        if adj.curve != "line":
+            bounded.add(adj.face_a)
+            bounded.add(adj.face_b)
+    return bounded
+
+
 @pytest.mark.parametrize("entry", smoke_entries(curved_slow=True))
 def test_oracle_scores_its_own_input(entry):
     shape = generate(entry["family"], entry["seed"]).solid
@@ -40,7 +49,22 @@ def test_oracle_scores_its_own_input(entry):
         for region in ir.regions:
             bound = LIN * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
             assert result.region_max[region.id] <= bound + 1e-9
-        fine_bound = max(FINE[0] * MESHER_CHORD_FACTOR.get(f.surface, 1.0) for f in fine.faces)
+        # An oracle region's footprint follows the input mesh polygon, whose chords sit up
+        # to LIN inside a curved boundary edge while the fine truth mesh follows it within
+        # FINE, so rim samples of a curved-bounded region legitimately measure up to
+        # LIN + FINE against the fine truth (through_bore-0000 top annulus: 0.00499).
+        bounded = curved_bounded_faces(mesh)
+        pts, owner = sample_ir(ir, mesh, samples_per_mm2=2.0, seed=1)
+        dist = np.asarray(_core.mesh_distances(fine.tris, np.ascontiguousarray(pts)))
+        fine_bound = 0.0
+        for region in ir.regions:
+            if region.id in bounded:
+                region_fine = LIN + FINE[0]
+            else:
+                region_fine = FINE[0] * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
+            fine_bound = max(fine_bound, region_fine)
+            cell = dist[owner == region.id]
+            assert cell.size and cell.max() <= region_fine + 1e-9
         assert result.truth.ir_to_mesh.max <= fine_bound + 1e-9
         assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 

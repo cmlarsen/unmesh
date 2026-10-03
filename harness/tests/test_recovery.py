@@ -558,9 +558,7 @@ def test_merged_masked_region_counts_as_false_positive():
         merged.append(dataclasses.replace(by_id[c], triangles=tris))
     regions = merged + [r for r in ir.regions if r.id not in consumed]
     regions = [dataclasses.replace(r, id=i) for i, r in enumerate(regions)]
-    result = score_recovery(
-        mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4)
-    )
+    result = score_recovery(mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4))
     assert result["regions"] == len(regions)
     assert result["precision"] < 1.0
     assert result["precision"] == pytest.approx(14 / 18)
