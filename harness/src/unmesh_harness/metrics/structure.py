@@ -24,6 +24,8 @@ def score_validity(
     expected_shells: int = 1,
     tolerance_bound: float | None = None,
     fallback: bool | None = None,
+    shape: Any = None,
+    load_error: str | None = None,
 ) -> dict[str, Any]:
     from ..groundtruth import validity_problems
 
@@ -47,16 +49,24 @@ def score_validity(
         "problems": [],
         "valid": False,
     }
-    if step_path is None or not Path(step_path).is_file() or Path(step_path).stat().st_size == 0:
-        missing["problems"] = ["no STEP file written"]
+    if load_error is not None:
+        missing["problems"] = [load_error]
         return missing
-    try:
-        from build123d import import_step
+    if shape is None:
+        if (
+            step_path is None
+            or not Path(step_path).is_file()
+            or Path(step_path).stat().st_size == 0
+        ):
+            missing["problems"] = ["no STEP file written"]
+            return missing
+        try:
+            from build123d import import_step
 
-        shape = import_step(str(step_path))
-    except Exception as e:
-        missing["problems"] = [f"STEP check failed: {type(e).__name__}: {e}"]
-        return missing
+            shape = import_step(str(step_path))
+        except Exception as e:
+            missing["problems"] = [f"STEP check failed: {type(e).__name__}: {e}"]
+            return missing
     problems = validity_problems(shape, expected_solids, expected_shells)
     brepcheck_valid = bool(BRepCheck_Analyzer(shape.wrapped).IsValid())
     volume = float(shape.volume)

@@ -63,7 +63,7 @@ def _score(
     from ..judge import judge, under_reports
     from ..metrics.structure import score_structure, score_topology, score_validity
     from .converters import BASELINES, get_converter
-    from .score import face_recovery, step_problems
+    from .score import face_recovery, load_step_shape, step_problems
 
     baseline = task["converter"] in BASELINES
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
@@ -127,12 +127,15 @@ def _score(
         bound = None
         if not baseline and task["step_deviation"]:
             bound = min(result.input.max, task["dev_input_floor"]) + STEP_TOLERANCE_MM
+        shape, load_error = load_step_shape(step_path)
         problems, step_faces = step_problems(
             step_path,
             task["entry"]["fingerprint"]["volume"],
             tris if bound is not None else None,
             bound,
             task["samples_per_mm2"],
+            shape=shape,
+            load_error=load_error,
         )
         if write.get("skipped"):
             problems.append("STEP write skipped by a non-baseline converter")
@@ -168,6 +171,8 @@ def _score(
             fallback=record["fallback"],
             expected_solids=outer or 1,
             expected_shells=len(clean.shells) or 1,
+            shape=shape,
+            load_error=load_error,
         )
     record["analytic_area_fraction"] = (report or {}).get("analytic_area_fraction")
     record["warnings"] = (report or {}).get("warnings", [])
