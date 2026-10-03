@@ -14,6 +14,8 @@ from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from unmesh_harness.runner import load_grid, run_grid
 from unmesh_harness.runner.grid import find_grid, steps_for
 
+from .cases import is_planar
+
 LIN, ANG = DEFLECTION_SETTINGS[0]
 SEED = 20260101
 EXPECTED = {
@@ -26,9 +28,18 @@ EXPECTED = {
 
 
 @pytest.fixture(scope="module")
-def smoke():
+def mesh0():
+    entry = next(e for e in select(load_manifest(), "smoke") if is_planar(e) and e["seed"] == 0)
+    return tessellate(generate(entry["family"], entry["seed"]).solid, LIN, ANG)
+
+
+def preset_entries():
     return [
-        (e["id"], tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG))
+        pytest.param(
+            e,
+            id=e["id"],
+            marks=() if (is_planar(e) and e["seed"] == 0) else (pytest.mark.slow,),
+        )
         for e in select(load_manifest(), "smoke")
     ]
 
@@ -43,45 +54,45 @@ def test_expected_presets_are_registered():
             assert 0.0 <= severity <= 1.0
 
 
-def test_chain_applies_steps_in_order_with_derived_seeds(smoke):
-    _, mesh = smoke[2]
+def test_chain_applies_steps_in_order_with_derived_seeds(mesh0):
     steps = [("rotation", 0.8), ("float32", 1.0)]
-    out = chain(mesh, steps, 5)
+    out = chain(mesh0, steps, 5)
     assert [h["op"] for h in out.metadata["history"]] == ["rotation", "float32"]
     assert [h["severity"] for h in out.metadata["history"]] == [0.8, 1.0]
     assert [h["seed"] for h in out.metadata["history"]] == [5, 6]
-    expected = apply("float32", apply("rotation", mesh, 0.8, 5), 1.0, 6)
+    expected = apply("float32", apply("rotation", mesh0, 0.8, 5), 1.0, 6)
     assert (out.tris == expected.tris).all()
     assert out.metadata == expected.metadata
 
 
-def test_chain_empty_is_identity(smoke):
-    _, mesh = smoke[0]
-    out = chain(mesh, [], 5)
-    assert (out.tris == mesh.tris).all()
-    assert out.metadata == mesh.metadata
+def test_chain_empty_is_identity(mesh0):
+    out = chain(mesh0, [], 5)
+    assert (out.tris == mesh0.tris).all()
+    assert out.metadata == mesh0.metadata
 
 
-@pytest.mark.parametrize("name", sorted(EXPECTED))
-def test_preset_runs_on_smoke_corpus(name, smoke):
-    steps = list(PRESETS[name].steps)
-    for part_id, mesh in smoke:
+@pytest.mark.parametrize("entry", preset_entries())
+def test_preset_runs_on_smoke_corpus(entry):
+    mesh = tessellate(generate(entry["family"], entry["seed"]).solid, LIN, ANG)
+    for name in sorted(EXPECTED):
+        steps = list(PRESETS[name].steps)
         out = chain(mesh, steps, SEED)
-        assert [h["op"] for h in out.metadata["history"]] == [s[0] for s in steps], part_id
+        label = f"{entry['id']}/{name}"
+        assert [h["op"] for h in out.metadata["history"]] == [s[0] for s in steps], label
         assert [h["seed"] for h in out.metadata["history"]] == list(
             range(SEED, SEED + len(steps))
-        ), part_id
-        assert len(out.face_id) == len(out.tris), part_id
-        assert set(out.face_id.tolist()) <= set(mesh.face_id.tolist()) | {-1}, part_id
-        assert [f.id for f in out.faces] == [f.id for f in mesh.faces], part_id
+        ), label
+        assert len(out.face_id) == len(out.tris), label
+        assert set(out.face_id.tolist()) <= set(mesh.face_id.tolist()) | {-1}, label
+        assert [f.id for f in out.faces] == [f.id for f in mesh.faces], label
         assert [(a.face_a, a.face_b, a.edge_id) for a in out.adjacency] == [
             (a.face_a, a.face_b, a.edge_id) for a in mesh.adjacency
-        ], part_id
+        ], label
 
 
-def test_presets_deterministic_across_processes(smoke, tmp_path):
+def test_presets_deterministic_across_processes(mesh0, tmp_path):
     src = tmp_path / "mesh.npz"
-    smoke[3][1].save(src)
+    mesh0.save(src)
     script = (
         "import sys, hashlib\n"
         "from unmesh_harness.degrade import PRESETS, chain\n"
@@ -173,6 +184,5 @@ def test_run_grid_resolves_preset_cell(tmp_path):
     assert record["status"] == "ok", record
 
 
-def test_chain_matches_degrade_apply_pair(smoke):
-    _, mesh = smoke[0]
+def test_chain_matches_degrade_apply_pair():
     assert degrade.chain is chain
