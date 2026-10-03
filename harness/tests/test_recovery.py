@@ -219,6 +219,49 @@ def test_bore_axis_tilted_0_19_deg_is_recovered():
     assert detail["errors"]["axis_mm"] <= 0.01
 
 
+@pytest.mark.parametrize(("length", "tilt"), [(10, 0.19), (100, 0.05)])
+def test_long_bore_tilted_within_spec_about_its_centroid_is_recovered(length, tilt):
+    mesh = tessellate(Box(20, 20, length) - Cylinder(2, length * 2), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_bore = lambda r: r.surface.type == "cylinder"  # noqa: E731
+    face = next(f for f in mesh.faces if f.surface == "cylinder")
+    centroid = _area_centroid(mesh.face_tris(face.id))
+    gt_origin = np.array(face.params["origin"], float)
+    gt_axis = np.array(face.params["axis"], float) / np.linalg.norm(face.params["axis"])
+    pivot = gt_origin + float((centroid - gt_origin) @ gt_axis) * gt_axis
+    tilted = _rotate(gt_axis, _perp(gt_axis), tilt)
+    moved = _with_surface(
+        ir, is_bore, lambda s: dataclasses.replace(s, origin=tuple(pivot), axis=tuple(tilted))
+    )
+    detail = _detail(score_recovery(mesh, mesh.face_id, moved, np.eye(4)), "cylinder")
+    assert detail["recovered"] is True
+    assert detail["errors"]["axis_mm"] <= 0.01
+
+
+@pytest.mark.parametrize(("radii", "delta_deg"), [((5, 2), 0.1), ((5, 4.5), 0.05)])
+def test_cone_half_angle_within_spec_at_the_face_is_recovered(radii, delta_deg):
+    mesh = tessellate(Cone(*radii, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_cone = lambda r: r.surface.type == "cone"  # noqa: E731
+    face = next(f for f in mesh.faces if f.surface == "cone")
+    centroid = _area_centroid(mesh.face_tris(face.id))
+    apex = np.array(face.params["apex"], float)
+    axis = np.array(face.params["axis"], float) / np.linalg.norm(face.params["axis"])
+    height = float((centroid - apex) @ axis)
+    point = apex + height * axis
+    radius = height * np.tan(face.params["half_angle"])
+    half_angle = face.params["half_angle"] + np.deg2rad(delta_deg)
+    new_apex = point - (radius / np.tan(half_angle)) * axis
+    moved = _with_surface(
+        ir,
+        is_cone,
+        lambda s: dataclasses.replace(s, apex=tuple(new_apex), half_angle=float(half_angle)),
+    )
+    detail = _detail(score_recovery(mesh, mesh.face_id, moved, np.eye(4)), "cone")
+    assert detail["recovered"] is True
+    assert detail["errors"]["apex_mm"] > 0.01
+
+
 def test_plate_tilted_0_05_deg_about_centroid_is_recovered():
     mesh = tessellate(Box(100, 100, 10), LIN, ANG)
     ir = build_oracle_ir(mesh)

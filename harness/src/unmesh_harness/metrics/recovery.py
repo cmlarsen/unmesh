@@ -112,22 +112,22 @@ def _point_to_line(points: np.ndarray, origin: np.ndarray, axis: np.ndarray) -> 
     return np.linalg.norm(rel - np.outer(rel @ unit, unit), axis=1)
 
 
-def _axis_line_error(
-    face_params: dict[str, Any],
-    mapped: dict[str, Any],
-    gt_points: np.ndarray,
-    centroid: np.ndarray,
-) -> float:
-    gt_origin = np.asarray(face_params["origin"], dtype=np.float64)
-    gt_axis = np.asarray(face_params["axis"], dtype=np.float64)
-    gt_axis = gt_axis / np.linalg.norm(gt_axis)
-    centroid = np.asarray(centroid, dtype=np.float64)
-    axis_point = gt_origin + float((centroid - gt_origin) @ gt_axis) * gt_axis
-    pts = np.asarray(gt_points, dtype=np.float64).reshape(-1, 3)
-    t = (pts - gt_origin) @ gt_axis
-    ends = np.array([gt_origin + t.min() * gt_axis, gt_origin + t.max() * gt_axis])
-    probe = np.vstack([axis_point, ends])
-    return float(_point_to_line(probe, mapped["origin"], mapped["axis"]).max())
+def _axis_point(face_params: dict[str, Any], key: str, centroid: np.ndarray) -> np.ndarray:
+    base = np.asarray(face_params[key], dtype=np.float64)
+    axis = np.asarray(face_params["axis"], dtype=np.float64)
+    axis = axis / np.linalg.norm(axis)
+    return base + float((np.asarray(centroid, dtype=np.float64) - base) @ axis) * axis
+
+
+def _axis_line_error(face_params: dict[str, Any], mapped: dict[str, Any], centroid) -> float:
+    point = _axis_point(face_params, "origin", centroid)
+    return float(_point_to_line(point[None, :], mapped["origin"], mapped["axis"])[0])
+
+
+def _cone_radius_at(apex, axis, half_angle: float, point: np.ndarray) -> float:
+    unit = np.asarray(axis, dtype=np.float64) / np.linalg.norm(axis)
+    height = float((point - np.asarray(apex, dtype=np.float64)) @ unit)
+    return height * math.tan(half_angle)
 
 
 def _position_error(face: FaceInfo, gt_points: np.ndarray, mapped: dict[str, Any]) -> float:
@@ -178,7 +178,7 @@ def surface_matches(
             np.asarray(mapped["axis"], dtype=np.float64),
         )
         errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
-        errors["axis_mm"] = _axis_line_error(face_params, mapped, gt_points, centroid)
+        errors["axis_mm"] = _axis_line_error(face_params, mapped, centroid)
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
             ok_r
@@ -202,12 +202,23 @@ def surface_matches(
                 - np.asarray(face_params["apex"], dtype=np.float64)
             )
         )
+        point = _axis_point(face_params, "apex", centroid)
+        errors["axis_mm"] = float(_point_to_line(point[None, :], mapped["apex"], mapped["axis"])[0])
+        ok_r, rel, absolute = _radius_ok(
+            _cone_radius_at(mapped["apex"], mapped["axis"], mapped["half_angle"], point),
+            _cone_radius_at(
+                face_params["apex"], face_params["axis"], face_params["half_angle"], point
+            ),
+        )
+        errors["radius_rel"] = rel
+        errors["radius_abs_mm"] = absolute
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
             errors["axis_deg"] <= ANGLE_TOL_DEG
             and errors["half_angle_deg"] <= HALF_ANGLE_TOL_DEG
             and not errors["orientation_mismatch"]
-            and errors["apex_mm"] <= CENTER_TOL_MM,
+            and errors["axis_mm"] <= POSITION_TOL_MM
+            and ok_r,
             errors,
         )
     if face_surface == "sphere":
