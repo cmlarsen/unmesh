@@ -14,7 +14,8 @@ all, so no operator ever skips and no test needs it.
 Label policy: every output triangle keeps the face table, adjacency, edge
 polylines, vertices and shells of the clean mesh as the ground truth it is
 judged against, and takes the ``face_id`` of its nearest source face, measured
-by triangle-centroid distance to the input mesh. Each triangle also gets a
+by triangle-centroid distance to each source face's analytic surface (centroid
+distance for non-analytic faces). Each triangle also gets a
 ``label_confidence`` in [0, 1] (``mesh.metadata["label_confidence"]``),
 ``d2 / (d1 + d2)`` where ``d1`` is the distance to the nearest source face and
 ``d2`` to the second-nearest (1.0 when the mesh has a single face). Metrics
@@ -25,9 +26,13 @@ with the mesh; the remeshing operators leave the polylines on the clean mesh.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
+from ..labels import distance_to_surface
 from .core import register
+from .refine import _split_triangle
 
 CONFIDENCE_KEY = "label_confidence"
 MASK_THRESHOLD = 0.9
@@ -47,15 +52,19 @@ def transfer_labels(mesh, src_tris, src_ids) -> dict:
     src_cent = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3).mean(axis=1)
     new_cent = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3).mean(axis=1)
     faces = np.unique(src_ids)
-    masks = [src_ids == f for f in faces]
+    analytic = [mesh.faces[int(f)].surface != "other" for f in faces]
+    fallback = [src_cent[src_ids == f] for f in faces]
     fids = np.empty(len(new_cent), dtype=src_ids.dtype)
     conf = np.ones(len(new_cent), dtype=np.float64)
     for start in range(0, len(new_cent), _TRANSFER_CHUNK):
         chunk = new_cent[start : start + _TRANSFER_CHUNK]
-        d = np.linalg.norm(chunk[:, None, :] - src_cent[None, :, :], axis=2)
         best = np.empty((len(chunk), len(faces)))
-        for j, mask in enumerate(masks):
-            best[:, j] = d[:, mask].min(axis=1)
+        for j, f in enumerate(faces):
+            if analytic[j]:
+                d = distance_to_surface(mesh.faces[int(f)], chunk)
+            else:
+                d = np.linalg.norm(chunk[:, None, :] - fallback[j][None, :, :], axis=2).min(axis=1)
+            best[:, j] = np.where(np.isfinite(d), d, 1e300)
         order = np.argsort(best, axis=1, kind="stable")
         rows = np.arange(len(chunk))
         d1 = best[rows, order[:, 0]]
@@ -82,9 +91,7 @@ def _owners(ids: list[tuple[int, int, int]]) -> dict[tuple[int, int], list[int]]
     return owners
 
 
-def _live_neighbors(
-    ids: list[tuple[int, int, int]], live: list[bool], n: int
-) -> list[set[int]]:
+def _live_neighbors(ids: list[tuple[int, int, int]], live: list[bool], n: int) -> list[set[int]]:
     nbrs: list[set[int]] = [set() for _ in range(n)]
     for ti, (a, b, c) in enumerate(ids):
         if not live[ti]:
@@ -294,5 +301,130 @@ def quadric_decimation(mesh, severity, rng):
         "collapses": collapses,
         "triangles_before": before,
         "triangles_after": len(kept),
+        **label,
+    }
+
+
+REMESH_EDGE_AT_ZERO = 0.02
+REMESH_GROWTH = 2.0
+
+
+def target_edge_mm(severity: float, diagonal: float) -> float:
+    return diagonal * REMESH_EDGE_AT_ZERO * REMESH_GROWTH**severity
+
+
+def remesh_passes(severity: float) -> int:
+    return 1 + int(round(2.0 * severity))
+
+
+def _split_long(
+    tris: list[tuple[tuple, tuple, tuple]], fids: list[int], limit: float
+) -> tuple[list[tuple[tuple, tuple, tuple]], list[int], int]:
+    def key(p, q):
+        return (p, q) if p <= q else (q, p)
+
+    edges = set()
+    for t in tris:
+        for p, q in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            if math.dist(p, q) > limit:
+                edges.add(key(p, q))
+    if not edges:
+        return tris, fids, 0
+    mids = {}
+    for k in sorted(edges):
+        p, q = k
+        mids[k] = tuple(((np.array(p) + np.array(q)) / 2.0).tolist())
+    new_tris, new_ids = [], []
+    for t, f in zip(tris, fids, strict=True):
+        pieces = _split_triangle(t, mids, f)
+        new_tris += pieces
+        new_ids += [f] * len(pieces)
+    return new_tris, new_ids, len(mids)
+
+
+def _collapse_short(
+    tris: list[tuple[tuple, tuple, tuple]], fids: list[int], limit: float, nfaces: int
+) -> tuple[list[tuple[tuple, tuple, tuple]], list[int], int]:
+    ids, coords = _indexed(tris)
+    live = [True] * len(ids)
+    counts = [0] * nfaces
+    for f in fids:
+        counts[f] += 1
+    nbrs = _live_neighbors(ids, live, len(coords))
+    owners = _owners(ids)
+    edges = sorted(
+        (
+            e
+            for e, members in owners.items()
+            if any(live[t] for t in members) and math.dist(coords[e[0]], coords[e[1]]) < limit
+        ),
+        key=lambda e: (
+            math.dist(coords[e[0]], coords[e[1]]),
+            tuple(coords[e[0]].tolist()),
+            tuple(coords[e[1]].tolist()),
+        ),
+    )
+    collapses = 0
+    used: set[int] = set()
+    for a, b in edges:
+        if a in used or b in used:
+            continue
+        if not _link_ok(a, b, ids, live, owners, nbrs):
+            continue
+        w = (coords[a] + coords[b]) / 2.0
+        if not _fold_ok(a, b, w, ids, live, coords):
+            continue
+        if not _count_ok(a, b, ids, live, owners, fids, counts):
+            continue
+        _collapse(a, b, w, ids, live, fids, counts, coords)
+        nbrs = _live_neighbors(ids, live, len(coords))
+        owners = _owners(ids)
+        used.update((a, b))
+        collapses += 1
+    table = [tuple(c.tolist()) for c in coords]
+    return (
+        [tuple(table[v] for v in ids[i]) for i, v in enumerate(live) if v],
+        [f for f, v in zip(fids, live, strict=True) if v],
+        collapses,
+    )
+
+
+@register(
+    "isotropic_remesh",
+    "processing",
+    "identity",
+    "uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, "
+    "/25 at severity 1); 1 + round(2*severity) passes splitting edges longer than 4/3 "
+    "of target conformingly at midpoints and collapsing edges shorter than 4/5 of "
+    "target to midpoints under manifold guards",
+    preserves_watertight=True,
+)
+def isotropic_remesh(mesh, severity, rng):
+    src_tris = mesh.tris.copy()
+    src_ids = mesh.face_id.copy()
+    before = len(src_tris)
+    diagonal = bbox_diagonal(src_tris)
+    h = target_edge_mm(severity, diagonal)
+    passes = remesh_passes(severity)
+    tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
+    fids = mesh.face_id.tolist()
+    splits = collapses = 0
+    for _ in range(passes):
+        tris, fids, n_split = _split_long(tris, fids, 4.0 / 3.0 * h)
+        tris, fids, n_coll = _collapse_short(tris, fids, 4.0 / 5.0 * h, len(mesh.faces))
+        splits += n_split
+        collapses += n_coll
+        if not n_split and not n_coll:
+            break
+    mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+    label = transfer_labels(mesh, src_tris, src_ids)
+    return {
+        "target_edge_mm": h,
+        "bbox_diagonal_mm": diagonal,
+        "passes": passes,
+        "splits": splits,
+        "collapses": collapses,
+        "triangles_before": before,
+        "triangles_after": len(tris),
         **label,
     }

@@ -17,8 +17,8 @@ from .test_labels import closed_manifold_problems
 LIN, ANG = DEFLECTION_SETTINGS[0]
 SEED = 11
 
-PROC_OPS = ("quadric_decimation",)
-WATERTIGHT = {"quadric_decimation": True}
+PROC_OPS = ("quadric_decimation", "isotropic_remesh")
+WATERTIGHT = {"quadric_decimation": True, "isotropic_remesh": True}
 SMOOTHING = ()
 
 
@@ -180,6 +180,42 @@ def test_decimate_keeps_every_face_represented(cyl):
     params = out.metadata["history"][-1]["params"]
     assert params["triangles_after"] <= params["triangles_before"]
     assert 0.0 < params["keep_ratio_achieved"] <= 1.0
+
+
+def test_remesh_target_edge_scales_with_severity(cyl):
+    from unmesh_harness.degrade.processing import target_edge_mm
+
+    flat = cyl.tris.reshape(-1, 3)
+    diagonal = float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
+    for severity in (0.5, 1.0):
+        out = degrade.apply("isotropic_remesh", cyl, severity, SEED)
+        params = out.metadata["history"][-1]["params"]
+        assert params["target_edge_mm"] == pytest.approx(target_edge_mm(severity, diagonal))
+        assert params["bbox_diagonal_mm"] == pytest.approx(diagonal)
+        assert params["passes"] == 1 + round(2 * severity)
+        assert params["splits"] > 0
+
+
+def test_remesh_uniformizes_edge_lengths(cyl):
+    def chord_std(mesh):
+        edges = set()
+        for tri in mesh.tris:
+            for i in range(3):
+                a, b = tuple(tri[i]), tuple(tri[(i + 1) % 3])
+                edges.add((min(a, b), max(a, b)))
+        import math
+
+        return float(np.std([math.dist(a, b) for a, b in edges]))
+
+    before = chord_std(cyl)
+    after = chord_std(degrade.apply("isotropic_remesh", cyl, 1.0, SEED))
+    assert after < before
+
+
+def test_remesh_high_confidence_on_smooth_refinement(box):
+    out = degrade.apply("isotropic_remesh", box, 0.5, SEED)
+    assert len(out.tris) > len(box.tris)
+    assert out.metadata["history"][-1]["params"]["fraction_below_0_9"] == 0.0
 
 
 @pytest.mark.slow

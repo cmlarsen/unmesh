@@ -209,7 +209,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "",
         "- `processing`-family operators (decimation, remeshing, smoothing) rebuild or move "
         "the triangulation the way mesh-processing pipelines do. Every output triangle takes "
-        "the `face_id` of its nearest source face by triangle-centroid distance, with a "
+        "the `face_id` of its nearest source face by triangle-centroid distance to each "
+        "source face's analytic surface (centroid distance for non-analytic faces), with a "
         'per-triangle `metadata["label_confidence"]` in [0, 1] (`d2 / (d1 + d2)` for the '
         "nearest vs second-nearest source face; 1.0 on single-face meshes). Metrics that score "
         "per-triangle labels should mask triangles below 0.9 confidence. The face table, "
@@ -336,7 +337,7 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "## Processing statistics",
         "",
         f"Seed {SEED}. Per-operator stats over the same meshes as above. `conf<0.9` is the "
-        'fraction of output triangles whose `label_confidence` is below 0.9; metrics that '
+        "fraction of output triangles whose `label_confidence` is below 0.9; metrics that "
         "score per-triangle labels should mask those triangles. `closed` and `IR valid` "
         "are as in the displacement sheet.",
         "",
@@ -344,9 +345,7 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "|---|---|---|---|---|---|---|---|",
     ]
     for label, mesh in tess_meshes():
-        lines.append(
-            f"| {label} | `-` | - | {len(mesh.tris)} | yes | yes | 1.000 | 0.000 |"
-        )
+        lines.append(f"| {label} | `-` | - | {len(mesh.tris)} | yes | yes | 1.000 | 0.000 |")
         for name, op in OPERATORS.items():
             if op.family != "processing":
                 continue
