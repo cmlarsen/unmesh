@@ -90,6 +90,19 @@ pub fn run(
     tol: f64,
     strict: bool,
 ) -> (Vec<u32>, usize) {
+    run_fenced(v, f, nbr, info, eligible, None, tol, strict)
+}
+
+pub fn run_fenced(
+    v: &[V3],
+    f: &[[u32; 3]],
+    nbr: &[[u32; 3]],
+    info: &[TriInfo],
+    eligible: &[bool],
+    fence: Option<&[u32]>,
+    tol: f64,
+    strict: bool,
+) -> (Vec<u32>, usize) {
     let grower = Grower {
         v,
         f,
@@ -131,6 +144,11 @@ pub fn run(
                 for k in 0..3 {
                     let g = nbr[cur as usize][k];
                     if g == NONE || label[g as usize] != NONE || !eligible[g as usize] {
+                        continue;
+                    }
+                    if let Some(fence) = fence
+                        && fence[g as usize] != fence[cur as usize]
+                    {
                         continue;
                     }
                     if grower.accept(g as usize, n, c, count) {
@@ -209,7 +227,11 @@ mod tests {
     use super::*;
 
     fn hinge_pair() -> (Vec<V3>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
-        let t = 1.0_f64.to_radians().tan();
+        hinge_pair_deg(1.0)
+    }
+
+    fn hinge_pair_deg(deg: f64) -> (Vec<V3>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
+        let t = deg.to_radians().tan();
         let v = vec![
             [0.0, 0.0, 0.0],
             [3.0, 0.0, 0.0],
@@ -236,5 +258,18 @@ mod tests {
         assert_eq!(lax[0], lax[1]);
         let strict = labels(true);
         assert_ne!(strict[0], strict[1]);
+    }
+
+    #[test]
+    fn fenced_run_keeps_growth_inside_fence() {
+        let (v, f, nbr) = hinge_pair_deg(0.0);
+        let info = tri_info(&v, &f);
+        let eligible = vec![true; 2];
+        let (open, n_open) = run(&v, &f, &nbr, &info, &eligible, 0.03, false);
+        assert_eq!((open, n_open), (vec![0, 0], 1));
+        let fence = vec![0u32, 1];
+        let (fenced, n_fenced) =
+            run_fenced(&v, &f, &nbr, &info, &eligible, Some(&fence), 0.03, false);
+        assert_eq!((fenced, n_fenced), (vec![0, 1], 2));
     }
 }
