@@ -178,6 +178,15 @@ def test_subdivided_planar_mesh_with_noise():
     assert report.max_deviation < 0.03
 
 
+def test_clean_plate_with_bore_gets_micron_auto_tolerance():
+    from build123d import Box, Cylinder, Pos
+
+    plate = Pos(0, 0, 2.0) * Box(20.0, 20.0, 4.0) - Pos(0, 0, 5.0) * Cylinder(3.0, 10.0)
+    mesh = tessellate(plate, 0.01, 0.2)
+    ir, _ = unmesh.convert(mesh.tris)
+    assert ir.tolerances.linear <= 2e-3
+
+
 @pytest.mark.benchmark
 def test_million_triangle_planar_mesh_converts_fast(capsys):
     soup = grid_box(289)

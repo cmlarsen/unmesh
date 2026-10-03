@@ -22,10 +22,10 @@ use emit::Asm;
 use fit::{label_faces, region_pairs};
 use linalg::{V3, add};
 use project::Projected;
+use snap::NOISE_FACTOR;
 use topology::NONE;
 
 const MIN_TOLERANCE: f64 = 1e-3;
-const NOISE_FACTOR: f64 = 5.0;
 
 pub fn convert_soup(
     soup: &TriangleSoup,
@@ -162,7 +162,7 @@ fn finish(
     let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
     if auto_tol {
-        sigma = snap::estimate_noise(&w.vc, &regions);
+        sigma = snap::estimate_noise(&w.vc, &regions, tol);
         let derived = (NOISE_FACTOR * sigma).max(MIN_TOLERANCE);
         if derived < tol {
             tol = derived;

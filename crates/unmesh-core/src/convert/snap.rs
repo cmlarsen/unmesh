@@ -2,6 +2,11 @@ use super::fit::{Region, offset_fit, residual};
 use super::linalg::{V3, dot, scale, sub, unit};
 use super::surface::Surface;
 
+pub const NOISE_FACTOR: f64 = 5.0;
+
+const ANCHOR_MIN_VERTS: usize = 50;
+const ANCHOR_MIN_DOF_FRAC: f64 = 0.25;
+
 pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap_deg: f64) {
     let rms_limit = (2.5 * sigma).max(0.5e-3);
     let n = regions.len();
@@ -89,11 +94,11 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
     }
 }
 
-pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
+pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
     let mut stats: Vec<(f64, f64, f64)> = Vec::new();
     for r in regions {
         let nv = r.verts.len();
-        if r.area <= 0.0 || nv < 4 {
+        if r.area <= 0.0 || nv < ANCHOR_MIN_VERTS {
             continue;
         }
         let Some((n, d)) = r.surface.as_plane() else {
@@ -108,19 +113,24 @@ pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
         stats.push(((ss / dof).sqrt(), ss, dof));
     }
     if stats.is_empty() {
-        return 0.0;
+        return tol / NOISE_FACTOR;
     }
     stats.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let median = stats[stats.len() / 2].0;
-    let keep = stats
-        .iter()
-        .take_while(|x| x.0 <= 10.0 * median + 1e-9)
-        .count()
-        .max(1);
-    let (ss, dof) = stats[..keep]
-        .iter()
-        .fold((0.0, 0.0), |(s, d), x| (s + x.1, d + x.2));
-    (ss / dof).sqrt()
+    let anchor = stats[0].0;
+    let total_dof: f64 = stats.iter().map(|x| x.2).sum();
+    let mut keep_ss = 0.0;
+    let mut keep_dof = 0.0;
+    for x in &stats {
+        if x.0 > 10.0 * anchor + 1e-9 {
+            break;
+        }
+        keep_ss += x.1;
+        keep_dof += x.2;
+    }
+    if keep_dof < ANCHOR_MIN_DOF_FRAC * total_dof {
+        return tol / NOISE_FACTOR;
+    }
+    (keep_ss / keep_dof).sqrt()
 }
 
 #[cfg(test)]
