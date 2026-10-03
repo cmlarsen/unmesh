@@ -95,7 +95,7 @@ def test_pair_one_vertex_sets_match_at_pair_deflection():
         vb = vertex_set(tessellate(b.solid, lin, ang))
         assert len(va) == len(vb) == 2 * a.parameters["n"], seed
         assert_vertex_sets_match(va, vb)
-        assert math.isclose(ang, 4 * math.pi / a.parameters["n"], rel_tol=1e-6)
+        assert math.isclose(ang, 4 * math.pi / a.parameters["n"] * 1.02, rel_tol=1e-9)
 
 
 def test_pair_two_families_registered():
