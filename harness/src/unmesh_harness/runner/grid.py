@@ -162,6 +162,8 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         ]
         if not entries:
             raise KeyError(f"grid {name} selects no indistinguishable parts")
+    for spec in raw["cells"]:
+        steps_for(spec)
     return Grid(
         raw["name"],
         raw["corpus_grid"],

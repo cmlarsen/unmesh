@@ -1,5 +1,6 @@
 import dataclasses
 import hashlib
+import json
 import subprocess
 import sys
 
@@ -11,7 +12,7 @@ from unmesh_harness.degrade import OPERATORS, PRESETS, apply, chain
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from unmesh_harness.runner import load_grid, run_grid
-from unmesh_harness.runner.grid import steps_for
+from unmesh_harness.runner.grid import find_grid, steps_for
 
 LIN, ANG = DEFLECTION_SETTINGS[0]
 SEED = 20260101
@@ -120,6 +121,41 @@ def test_preset_cell_rejects_steps_and_unknown_presets():
         steps_for({"operator": "x", "severity": 1.0, "preset": "fusion-export", "steps": []})
     with pytest.raises(ValueError, match="unknown degradation preset"):
         steps_for({"operator": "x", "severity": 1.0, "preset": "no-such-preset"})
+
+
+def _grid_with_cells(cells, tmp_path, monkeypatch):
+    import unmesh_harness.runner.grid as grid_module
+
+    raw = json.loads(find_grid("smoke").read_text())
+    raw["cells"] = cells
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+
+
+def test_load_grid_rejects_unknown_preset(tmp_path, monkeypatch):
+    _grid_with_cells(
+        [{"operator": "x", "severity": 1.0, "preset": "no-such-preset"}], tmp_path, monkeypatch
+    )
+    with pytest.raises(ValueError, match="unknown degradation preset"):
+        load_grid("bad")
+
+
+def test_load_grid_rejects_preset_and_steps(tmp_path, monkeypatch):
+    _grid_with_cells(
+        [
+            {
+                "operator": "x",
+                "severity": 1.0,
+                "preset": "fusion-export",
+                "steps": [["float32", 1.0]],
+            }
+        ],
+        tmp_path,
+        monkeypatch,
+    )
+    with pytest.raises(ValueError, match="either 'preset' or 'steps'"):
+        load_grid("bad")
 
 
 def test_run_grid_resolves_preset_cell(tmp_path):
