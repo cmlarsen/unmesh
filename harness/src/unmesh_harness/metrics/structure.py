@@ -242,9 +242,9 @@ def _shell_genus(tris: np.ndarray, row_groups: list[np.ndarray]) -> tuple[list[f
     faces = np.asarray(faces, dtype=np.int64)
     kept = np.asarray(kept)
     kept = kept[kept < len(tris)]
-    n = min(len(kept), len(faces))
+    assert len(kept) == len(faces)
     row_of = np.full(len(tris), -1, dtype=np.int64)
-    row_of[kept[:n]] = np.arange(n, dtype=np.int64)
+    row_of[kept] = np.arange(len(faces), dtype=np.int64)
     genus: list[float] = []
     for group in row_groups:
         rows = row_of[np.asarray(group, dtype=np.int64)]
