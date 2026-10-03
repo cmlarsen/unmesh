@@ -13,7 +13,7 @@ from unmesh_harness.labels import LabeledMesh, distance_to_surface, tessellate
 
 from .test_labels import closed_manifold_problems
 
-TESS_OPS = ("coarsen", "retriangulate")
+TESS_OPS = ("coarsen", "retriangulate", "nonuniform_chords")
 SLOW_SEED = 11
 
 
@@ -261,3 +261,46 @@ def test_retriangulate_valence_differs_from_occt(ngon):
         assert got not in seen, severity
         seen.add(got)
     assert len(seen) == 4
+
+
+def side_circumferential_chords(mesh: LabeledMesh, fid: int) -> list[float]:
+    import math
+
+    edges = set()
+    for tri in mesh.tris[mesh.face_id == fid]:
+        for i in range(3):
+            a, b = tuple(tri[i]), tuple(tri[(i + 1) % 3])
+            edges.add((min(a, b), max(a, b)))
+    return [math.dist(a, b) for a, b in edges if abs(a[2] - b[2]) < 1e-9]
+
+
+def test_nonuniform_chords_stays_on_surface_and_watertight(cyl, drilled):
+    for mesh in (cyl, drilled):
+        assert closed_manifold_problems(mesh.tris)[0] == []
+        for severity in (0.5, 1.0):
+            out = degrade.apply("nonuniform_chords", mesh, severity, 5)
+            assert closed_manifold_problems(out.tris)[0] == [], severity
+            assert_tess_labels_aligned(mesh, out)
+            assert_on_surface(out)
+            params = out.metadata["history"][-1]["params"]
+            assert params["moved_vertices"] >= 0
+            assert params["max_displacement_mm"] <= 0.45 * severity * 25 + 1e-9
+
+
+def test_nonuniform_chords_spreads_chord_spacing(cyl):
+    side = next(f.id for f in cyl.faces if f.surface == "cylinder")
+    before = side_circumferential_chords(cyl, side)
+    assert np.std(before) == pytest.approx(0.0, abs=1e-9)
+    low = degrade.apply("nonuniform_chords", cyl, 0.5, 3)
+    high = degrade.apply("nonuniform_chords", cyl, 1.0, 3)
+    assert np.std(side_circumferential_chords(low, side)) > 0.05
+    assert np.std(side_circumferential_chords(high, side)) > np.std(
+        side_circumferential_chords(low, side)
+    )
+
+
+def test_nonuniform_chords_fixes_cad_corners(cyl):
+    out = degrade.apply("nonuniform_chords", cyl, 1.0, 3)
+    assert out.vertices == cyl.vertices
+    assert [a.points[0] for a in out.adjacency] == [a.points[0] for a in cyl.adjacency]
+    assert [a.points[-1] for a in out.adjacency] == [a.points[-1] for a in cyl.adjacency]

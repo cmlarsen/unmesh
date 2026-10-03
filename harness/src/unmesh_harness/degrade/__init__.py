@@ -1,4 +1,4 @@
-from . import coarsen, noise, pose, precision, refine, retriangulate
+from . import chords, coarsen, noise, pose, precision, refine, retriangulate
 from .core import (
     OPERATORS,
     Operator,
@@ -14,6 +14,7 @@ __all__ = [
     "Operator",
     "apply",
     "apply_chain",
+    "chords",
     "coarsen",
     "noise",
     "pose",
