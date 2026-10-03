@@ -187,11 +187,35 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
     if len(face_id) and (face_id.min() < 0 or face_id.max() >= truth_faces):
         raise ValueError(f"face_id outside [0, {truth_faces})")
     truth_pairs = _pairs([(a.face_a, a.face_b) for a in clean.adjacency])
-    output_pairs = _pairs([tuple(a.regions) for a in ir.adjacencies])
-    pairs_match = truth_pairs == output_pairs
+    from .recovery import match_faces
+
+    matches, _ = match_faces(clean, face_id, ir)
+    region_to_face: dict[int, int] = {}
+    for m in matches:
+        if m["region"] is not None and m["region"] not in region_to_face:
+            region_to_face[m["region"]] = m["face"]
+    unmatched_regions = sorted(r.id for r in ir.regions if r.id not in region_to_face)
+    remapped_pairs = []
+    pairs_unmatched = False
+    for adj in ir.adjacencies:
+        if any(r not in region_to_face for r in adj.regions):
+            pairs_unmatched = True
+            continue
+        remapped_pairs.append(tuple(sorted(region_to_face[r] for r in adj.regions)))
+    output_pairs = _pairs(remapped_pairs)
+    pairs_match = not unmatched_regions and not pairs_unmatched and truth_pairs == output_pairs
     truth_roles = _role_signatures(clean.adjacency)
-    output_roles = sorted(tuple(sorted(v.regions)) for v in ir.vertices)
-    roles_match = truth_roles == output_roles
+    remapped_roles = []
+    roles_unmatched = False
+    for v in ir.vertices:
+        if any(r not in region_to_face for r in v.regions):
+            roles_unmatched = True
+            continue
+        remapped_roles.append(tuple(sorted(region_to_face[r] for r in v.regions)))
+    output_roles = sorted(remapped_roles)
+    roles_match = (
+        not unmatched_regions and not roles_unmatched and truth_roles == output_roles
+    )
     truth_shells = [(s.role, len(s.faces)) for s in clean.shells]
     output_shells = [(s.role, len(s.regions)) for s in ir.shells]
     shells_match = len(clean.shells) == len(ir.shells) and sorted(truth_shells) == sorted(
