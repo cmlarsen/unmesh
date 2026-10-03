@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -48,6 +51,44 @@ jobs:
           name: smoke-results-${{ matrix.os }}
           path: ${{ runner.temp }}/smoke/smoke.jsonl
           if-no-files-found: ignore
+      - name: Upload smoke baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-baseline-${{ matrix.os }}
+          path: ${{ runner.temp }}/smoke/smoke.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Compare against main baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          base="$RUNNER_TEMP/baseline"
+          mkdir -p "$base"
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow ci.yml \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "compare: no successful main run yet, skipping"
+            exit 0
+          fi
+          if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            -n "smoke-baseline-${{ matrix.os }}" -D "$base"; then
+            echo "compare: main baseline artifact missing, skipping"
+            exit 0
+          fi
+          if uv run unmesh-harness compare "$base/smoke.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
+            echo "compare: no regressions"
+            exit 0
+          fi
+          echo "compare: regressions found, checking for a human-approved waiver"
+          if uv run scripts/check-waiver; then
+            echo "compare: regression waived by a human"
+            exit 0
+          fi
+          echo "compare: regressions without a human-approved waiver"
+          exit 1
       - name: Wheel imports on Python 3.11 without OCP
         run: |
           uv build --wheel -o "$RUNNER_TEMP/wheels"
