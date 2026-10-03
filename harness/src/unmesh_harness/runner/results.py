@@ -72,6 +72,13 @@ def _valid_rate(rs: list[dict]) -> str:
     return f"{sum(1 for r in checked if r['status'] == 'ok' and r['valid']) / len(checked):.0%}"
 
 
+def _match_rate(rs: list[dict], field: str) -> str:
+    have = [r for r in rs if r["status"] == "ok" and isinstance(r.get("topology"), dict)]
+    if not have:
+        return "n/a"
+    return f"{sum(1 for r in have if (r['topology'] or {}).get(field)) / len(have):.0%}"
+
+
 def _um(x: float | None) -> str:
     return "-" if x is None else f"{x * 1000:.2f}"
 
@@ -136,7 +143,7 @@ def summarize(records: list[dict[str, Any]]) -> str:
         groups[(r["converter"], r["operator"], r["severity"])].append(r)
     header = (
         "converter  operator                severity  cells  F1 mean  F1 min  dev max um  "
-        "calib min um  under  valid  fallback  failed  time mean s  time max s"
+        "calib min um  under  valid  fallback  failed  topo  holes  time mean s  time max s"
     )
     lines = [header, "-" * len(header)]
     for (converter, operator, severity), rs in sorted(groups.items()):
@@ -156,6 +163,8 @@ def summarize(records: list[dict[str, Any]]) -> str:
             f"{_valid_rate(rs):>5}  "
             f"{sum(1 for r in ok if r['fallback']) / len(rs):>8.0%}  "
             f"{len(rs) - len(ok):>6}  "
+            f"{_match_rate(rs, 'topology_match'):>4}  "
+            f"{_match_rate(rs, 'holes_match'):>5}  "
             f"{np.mean(times) if times else float('nan'):>11.3f}  "
             f"{max(times) if times else float('nan'):>10.3f}"
         )
@@ -193,6 +202,19 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
         bad(f"F1 {r['f1']:.3f} below floor {floors['f1_cell']}")
     if floors.get("regions_equal_faces") and r["regions"] != r["faces"]:
         bad(f"{r['regions']} regions for {r['faces']} ground-truth faces")
+    if floors.get("topology_match"):
+        topo = r.get("topology") or {}
+        if topo.get("topology_match") is not True:
+            aspects = ("faces", "pairs", "roles", "shells", "genera", "holes")
+            failed = [k for k in aspects if not topo.get(f"{k}_match")]
+            bad(f"topology mismatch ({', '.join(failed) if failed else 'not scored'})")
+    if floors.get("through_holes_equal"):
+        topo = r.get("topology") or {}
+        if topo.get("through_holes") != topo.get("truth_through_holes"):
+            bad(
+                f"through-holes {topo.get('through_holes')} "
+                f"!= truth {topo.get('truth_through_holes')}"
+            )
     if "fallback_max" in floors and int(r["fallback"]) > floors["fallback_max"]:
         bad("writer fell back to faceted")
     if "dev_input_max" in floors and not r["dev_input_max"] <= floors["dev_input_max"]:

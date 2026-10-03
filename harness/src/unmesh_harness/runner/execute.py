@@ -61,6 +61,7 @@ def _score(
 
     from ..degrade import to_original
     from ..judge import judge, under_reports
+    from ..metrics.structure import score_structure, score_topology, score_validity
     from .converters import BASELINES, get_converter
     from .score import face_recovery, step_problems
 
@@ -153,6 +154,20 @@ def _score(
     mark = time.perf_counter()
     record.update(face_recovery(clean, degraded.face_id, ir, frame))
     phases["f1"] = time.perf_counter() - mark
+    mark = time.perf_counter()
+    record["topology"] = score_topology(clean, degraded.face_id, tris, ir)
+    record["structure"] = score_structure(ir, len(clean.faces), tris)
+    phases["topology"] = time.perf_counter() - mark
+    if skipped:
+        record["validity"] = None
+    else:
+        outer = sum(1 for s in clean.shells if s.role == "outer")
+        record["validity"] = score_validity(
+            step_path,
+            write=write,
+            expected_solids=outer or 1,
+            expected_shells=len(clean.shells) or 1,
+        )
     record["analytic_area_fraction"] = (report or {}).get("analytic_area_fraction")
     record["warnings"] = (report or {}).get("warnings", [])
     record["status"] = "ok"

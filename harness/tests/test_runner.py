@@ -283,6 +283,57 @@ def test_gate_row_floors_and_truth():
     assert not gate(weak, grid, ["unmesh"], "s").passed
 
 
+def test_gate_topology_floors_are_optional():
+    grid = small_grid(parts=2, cells=("identity",))
+    assert gate(row_records(grid), grid, ["unmesh"], "s").passed
+    topo = {
+        "topology_match": True,
+        "faces_match": True,
+        "pairs_match": True,
+        "roles_match": True,
+        "shells_match": True,
+        "genera_match": True,
+        "holes_match": True,
+        "through_holes": 0.0,
+        "truth_through_holes": 0.0,
+    }
+    assert gate(row_records(grid, topology=topo), grid, ["unmesh"], "s").passed
+
+    def with_floors(**floors):
+        cells = [{**c, "floors": {**c.get("floors", {}), **floors}} for c in grid.cells]
+        return dataclasses.replace(grid, cells=cells)
+
+    topo_grid = with_floors(topology_match=True)
+    assert gate(row_records(topo_grid, topology=topo), topo_grid, ["unmesh"], "s").passed
+    assert not gate(row_records(topo_grid), topo_grid, ["unmesh"], "s").passed
+    broken = {**topo, "topology_match": False, "faces_match": False}
+    assert not gate(row_records(topo_grid, topology=broken), topo_grid, ["unmesh"], "s").passed
+
+    holes_grid = with_floors(through_holes_equal=True)
+    assert gate(row_records(holes_grid, topology=topo), holes_grid, ["unmesh"], "s").passed
+    assert not gate(
+        row_records(holes_grid, topology={**topo, "through_holes": 1.0}),
+        holes_grid,
+        ["unmesh"],
+        "s",
+    ).passed
+
+
+def test_records_carry_validity_topology_structure(tmp_path):
+    grid = small_grid(parts=1, cells=("identity",))
+    summary = run_grid(grid, ["unmesh"], tmp_path, jobs=1, sha="s", log=lambda *_: None)
+    assert summary.ran == 1
+    (record,) = read_results(summary.results_path)
+    assert record["status"] == "ok", record
+    assert record["topology"]["topology_match"] is True, record["topology"]
+    assert record["topology"]["holes_match"] is True
+    assert record["validity"]["valid"] is True, record["validity"]
+    assert record["validity"]["fallback"] is False
+    assert record["structure"]["face_count_ratio"] == pytest.approx(1.0)
+    table = summarize(summary.records)
+    assert "topo" in table and "holes" in table
+
+
 def test_under_reports_rejects_non_finite():
     from unmesh_harness.judge import Comparison, Stats, under_reports
 
