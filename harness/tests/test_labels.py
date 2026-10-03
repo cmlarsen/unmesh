@@ -57,7 +57,7 @@ def check_part(shape, lin, ang, exact_volume=True):
         assert vol == pytest.approx(shape.volume, rel=1e-9)
     elif exact_volume:
         area = sum(f.area for f in shape.faces())
-        assert vol == pytest.approx(shape.volume, rel=lin * area / shape.volume)
+        assert vol == pytest.approx(shape.volume, rel=min(0.02, lin * area / shape.volume))
     else:
         assert vol == pytest.approx(shape.volume, rel=0.02)
     assert len(mesh.faces) == len(shape.faces())
