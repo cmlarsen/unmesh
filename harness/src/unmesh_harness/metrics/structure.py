@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.ShapeAnalysis import ShapeAnalysis_ShapeTolerance
+
+WELD_TOLERANCE_MM = 1e-6
 
 
 def _default_tolerance_bound() -> float:
@@ -74,4 +77,195 @@ def score_validity(
         "fallback": bool(fallback),
         "problems": problems,
         "valid": not problems,
+    }
+
+
+def _role_signatures(adjacency) -> list[tuple[int, ...]]:
+    faces_at: dict[int, set[int]] = {}
+    ends_at: dict[int, list[str]] = {}
+    for adj in adjacency:
+        kind = "tangent" if adj.tangent else "transversal"
+        for v in (adj.start_vertex, adj.end_vertex):
+            if v is None or v < 0:
+                continue
+            faces_at.setdefault(v, set()).update((adj.face_a, adj.face_b))
+            ends_at.setdefault(v, []).append(kind)
+    roles = []
+    for v, faces in faces_at.items():
+        if len(faces) >= 3:
+            roles.append(tuple(sorted(faces)))
+        elif len(faces) == 2 and sorted(ends_at[v]) == ["tangent", "transversal"]:
+            roles.append(tuple(sorted(faces)))
+    return sorted(roles)
+
+
+def _pairs(ids: list[tuple[int, int]]) -> list[list[int]]:
+    return sorted([min(a, b), max(a, b)] for a, b in ids)
+
+
+def _union_find(n: int):
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    return find, union
+
+
+def _boundary_loops(edges: np.ndarray, incidence: np.ndarray) -> int:
+    loose = edges[incidence == 1]
+    if len(loose) == 0:
+        return 0
+    verts, packed = np.unique(loose, return_inverse=True)
+    find, union = _union_find(len(verts))
+    for a, b in packed.reshape(-1, 2):
+        union(int(a), int(b))
+    return len({find(i) for i in range(len(verts))})
+
+
+def _complex_stats(faces: np.ndarray) -> tuple[int, int, int, int]:
+    if len(faces) == 0:
+        return 0, 0, 0, 0
+    edges = np.stack(
+        [
+            np.minimum(faces[:, 0], faces[:, 1]),
+            np.maximum(faces[:, 0], faces[:, 1]),
+            np.minimum(faces[:, 1], faces[:, 2]),
+            np.maximum(faces[:, 1], faces[:, 2]),
+            np.minimum(faces[:, 2], faces[:, 0]),
+            np.maximum(faces[:, 2], faces[:, 0]),
+        ],
+        axis=1,
+    ).reshape(-1, 2)
+    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    ordered = edges[order]
+    change = np.ones(len(ordered), dtype=bool)
+    change[1:] = (ordered[1:] != ordered[:-1]).any(axis=1)
+    starts = np.nonzero(change)[0]
+    counts = np.diff(np.append(starts, len(ordered)))
+    verts = np.unique(faces)
+    loops = _boundary_loops(ordered[starts], counts)
+    return int(len(verts)), int(len(starts)), int(len(faces)), int(loops)
+
+
+def _shell_genus(tris: np.ndarray, row_groups: list[np.ndarray]) -> tuple[list[float], int]:
+    import unmesh
+
+    verts, faces, kept, _ = unmesh.weld(
+        np.ascontiguousarray(tris, dtype=np.float64), WELD_TOLERANCE_MM
+    )
+    faces = np.asarray(faces, dtype=np.int64)
+    kept = np.asarray(kept)
+    kept = kept[kept < len(tris)]
+    n = min(len(kept), len(faces))
+    row_of = np.full(len(tris), -1, dtype=np.int64)
+    row_of[kept[:n]] = np.arange(n, dtype=np.int64)
+    genus: list[float] = []
+    for group in row_groups:
+        rows = row_of[np.asarray(group, dtype=np.int64)]
+        rows = rows[rows >= 0]
+        v, e, f, loops = _complex_stats(faces[rows] if len(rows) else np.zeros((0, 3), np.int64))
+        genus.append(0.0 if f == 0 else (2 - (v - e + f) - loops) / 2)
+    return genus, int(len(kept))
+
+
+def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str, Any]:
+    face_id = np.asarray(face_id)
+    tris = np.asarray(tris, dtype=np.float64)
+    truth_faces = len(clean.faces)
+    output_faces = len(ir.regions)
+    if len(face_id) != len(tris):
+        raise ValueError(f"face_id has {len(face_id)} entries for {len(tris)} triangles")
+    if len(face_id) and (face_id.min() < 0 or face_id.max() >= truth_faces):
+        raise ValueError(f"face_id outside [0, {truth_faces})")
+    truth_pairs = _pairs([(a.face_a, a.face_b) for a in clean.adjacency])
+    output_pairs = _pairs([tuple(a.regions) for a in ir.adjacencies])
+    pairs_match = truth_pairs == output_pairs
+    truth_roles = _role_signatures(clean.adjacency)
+    output_roles = sorted(tuple(sorted(v.regions)) for v in ir.vertices)
+    roles_match = truth_roles == output_roles
+    truth_shells = [(s.role, len(s.faces)) for s in clean.shells]
+    output_shells = [(s.role, len(s.regions)) for s in ir.shells]
+    shells_match = len(clean.shells) == len(ir.shells) and sorted(truth_shells) == sorted(
+        output_shells
+    )
+
+    face_shell = [-1] * truth_faces
+    for i, s in enumerate(clean.shells):
+        for f in s.faces:
+            if 0 <= f < truth_faces:
+                face_shell[f] = i
+    region_shell = [-1] * output_faces
+    for i, s in enumerate(ir.shells):
+        for r in s.regions:
+            if 0 <= r < output_faces:
+                region_shell[r] = i
+    owned_region: dict[int, int] = {}
+    for r in ir.regions:
+        for t in r.triangles:
+            if 0 <= t < len(tris) and t not in owned_region:
+                owned_region[t] = r.id
+    gt_groups = [
+        np.nonzero(np.array([face_shell[f] == i for f in face_id], dtype=bool))[0]
+        for i in range(len(clean.shells))
+    ]
+    ir_groups = []
+    for i in range(len(ir.shells)):
+        members = [t for t, r in owned_region.items() if region_shell[r] == i]
+        ir_groups.append(np.asarray(members, dtype=np.int64))
+    truth_genus, _ = _shell_genus(tris, gt_groups)
+    output_genus, _ = _shell_genus(tris, ir_groups)
+    genera_match = sorted(truth_genus) == sorted(output_genus)
+
+    def holes(shells, genus: list[float]) -> float:
+        outer = [g for s, g in zip(shells, genus, strict=True) if s.role == "outer"]
+        return float(sum(outer if outer else genus))
+
+    truth_holes = holes(clean.shells, truth_genus)
+    through_holes = holes(ir.shells, output_genus)
+    holes_match = truth_holes == through_holes
+    faces_match = truth_faces == output_faces
+    topology_match = bool(
+        faces_match
+        and pairs_match
+        and roles_match
+        and shells_match
+        and genera_match
+        and holes_match
+    )
+    return {
+        "truth_faces": int(truth_faces),
+        "output_faces": int(output_faces),
+        "faces_match": bool(faces_match),
+        "truth_edges": int(len(clean.adjacency)),
+        "output_edges": int(sum(len(a.boundaries) for a in ir.adjacencies)),
+        "truth_edge_pairs": truth_pairs,
+        "output_edge_pairs": output_pairs,
+        "pairs_match": bool(pairs_match),
+        "truth_vertices": int(len(clean.vertices)),
+        "output_vertices": int(len(ir.vertices)),
+        "truth_role_vertices": int(len(truth_roles)),
+        "output_role_vertices": int(len(output_roles)),
+        "roles_match": bool(roles_match),
+        "truth_shells": int(len(clean.shells)),
+        "output_shells": int(len(ir.shells)),
+        "truth_shell_roles": [list(x) for x in truth_shells],
+        "output_shell_roles": [list(x) for x in output_shells],
+        "shells_match": bool(shells_match),
+        "truth_genus": [float(g) for g in truth_genus],
+        "output_genus": [float(g) for g in output_genus],
+        "genera_match": bool(genera_match),
+        "truth_through_holes": float(truth_holes),
+        "through_holes": float(through_holes),
+        "holes_match": bool(holes_match),
+        "topology_match": topology_match,
+        "uncovered_triangles": int(len(tris) - len(owned_region)),
     }

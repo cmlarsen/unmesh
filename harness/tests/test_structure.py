@@ -1,10 +1,14 @@
+import dataclasses
 import json
 
 import pytest
 from build123d import Box, Cylinder
 
+from unmesh.ir import Adjacency, Region, validate
+from unmesh_harness.corpus import load_manifest, select
+from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import tessellate
-from unmesh_harness.metrics.structure import score_validity
+from unmesh_harness.metrics.structure import score_topology, score_validity
 from unmesh_harness.oracle import build_oracle_ir
 
 LIN, ANG = 0.01, 0.2
@@ -83,3 +87,136 @@ def test_validity_through_bore_counts_one_solid(tmp_path):
     assert result["valid"], result["problems"]
     assert (result["solids"], result["shells"]) == (1, 1)
     assert result["volume"] == pytest.approx(1000 - 3.14159265 * 4 * 10, rel=1e-3)
+
+
+def _drop_region(ir, rid):
+    remap = {old: new for new, old in enumerate(r.id for r in ir.regions if r.id != rid)}
+    regions = [dataclasses.replace(r, id=remap[r.id]) for r in ir.regions if r.id != rid]
+    shells = [
+        dataclasses.replace(s, regions=[remap[r] for r in s.regions if r != rid]) for s in ir.shells
+    ]
+    adjacencies = [
+        Adjacency((remap[a], remap[b]), list(adj.boundaries))
+        for adj in ir.adjacencies
+        for a, b in [adj.regions]
+        if rid not in adj.regions
+    ]
+    vertices = [
+        dataclasses.replace(v, id=i, regions=[remap[r] for r in v.regions])
+        for i, v in enumerate(v for v in ir.vertices if rid not in v.regions)
+    ]
+    return dataclasses.replace(
+        ir, regions=regions, shells=shells, adjacencies=adjacencies, vertices=vertices
+    )
+
+
+def _merge_regions(ir, keep_id, drop_id):
+    keep = next(r for r in ir.regions if r.id == keep_id)
+    others = [r.id for r in ir.regions if r.id not in (keep_id, drop_id)]
+    remap = {keep_id: 0, drop_id: 0}
+    remap.update({old: new for new, old in enumerate(others, 1)})
+    merged = Region(
+        0,
+        keep.surface,
+        keep.triangles + next(r for r in ir.regions if r.id == drop_id).triangles,
+        keep.residual,
+    )
+    regions = [merged] + [dataclasses.replace(ir.regions[o], id=remap[o]) for o in others]
+    shells = [
+        dataclasses.replace(s, regions=sorted({remap[r] for r in s.regions})) for s in ir.shells
+    ]
+    grouped: dict[tuple[int, int], list] = {}
+    for adj in ir.adjacencies:
+        a, b = (remap[r] for r in adj.regions)
+        if a == b:
+            continue
+        grouped.setdefault((min(a, b), max(a, b)), []).extend(adj.boundaries)
+    adjacencies = [Adjacency(pair, bounds) for pair, bounds in sorted(grouped.items())]
+    vertices = [
+        dataclasses.replace(v, id=i, regions=sorted({remap[r] for r in v.regions}))
+        for i, v in enumerate(ir.vertices)
+    ]
+    return dataclasses.replace(
+        ir, regions=regions, shells=shells, adjacencies=adjacencies, vertices=vertices
+    )
+
+
+PRIMITIVE_CASES = {
+    "box": (lambda: Box(10, 10, 10), 0.0),
+    "through_bore": (lambda: Box(10, 10, 10) - Cylinder(2, 20), 1.0),
+    "solid_cylinder": (lambda: Cylinder(5, 10), 0.0),
+}
+
+
+@pytest.mark.parametrize("name", sorted(PRIMITIVE_CASES))
+def test_oracle_topology_matches_primitives(name):
+    make, holes = PRIMITIVE_CASES[name]
+    mesh = tessellate(make(), LIN, ANG)
+    result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
+    assert result["topology_match"], result
+    assert result["through_holes"] == result["truth_through_holes"] == holes
+    assert result["truth_faces"] == result["output_faces"] == len(mesh.faces)
+    assert result["pairs_match"] and result["roles_match"] and result["shells_match"]
+    json.dumps(result)
+
+
+CURVED_FAMILIES = [
+    "through_bore",
+    "blind_bore",
+    "round_boss",
+    "counterbore",
+    "countersink",
+    "round_slot_through",
+    "round_slot_blind",
+    "revolved_cone",
+    "revolved_dome",
+    "revolved_torus",
+]
+
+
+@pytest.mark.parametrize("family", CURVED_FAMILIES)
+def test_oracle_topology_matches_curved_families(family):
+    mesh = tessellate(generate(family, 0).solid, LIN, ANG)
+    result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
+    assert result["topology_match"], (family, result)
+    assert result["through_holes"] == result["truth_through_holes"]
+    json.dumps(result)
+
+
+def test_oracle_topology_matches_smoke_parts():
+    for entry in select(load_manifest(), "smoke"):
+        mesh = tessellate(generate(entry["family"], entry["seed"]).solid, 0.1, 0.5)
+        result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
+        assert result["topology_match"], (entry["id"], result)
+
+
+def test_dropped_bore_is_caught_by_through_holes():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    bore = next(r.id for r in ir.regions if r.surface.type == "cylinder")
+    dropped = _drop_region(ir, bore)
+    assert validate(dropped) == []
+    assert len(dropped.regions) == len(ir.regions) - 1
+    result = score_topology(mesh, mesh.face_id, mesh.tris, dropped)
+    assert result["topology_match"] is False
+    assert result["truth_faces"] == len(mesh.faces)
+    assert result["output_faces"] == len(mesh.faces) - 1
+    assert result["truth_through_holes"] == 1.0
+    assert result["through_holes"] == 0.0
+    assert result["holes_match"] is False
+    json.dumps(result)
+
+
+def test_merged_regions_are_caught_by_face_count():
+    mesh = tessellate(Cylinder(5, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    side = next(r.id for r in ir.regions if r.surface.type == "cylinder")
+    cap = next(r.id for r in ir.regions if r.surface.type == "plane")
+    merged = _merge_regions(ir, side, cap)
+    assert validate(merged) == []
+    result = score_topology(mesh, mesh.face_id, mesh.tris, merged)
+    assert result["topology_match"] is False
+    assert result["truth_faces"] == 3
+    assert result["output_faces"] == 2
+    assert result["faces_match"] is False
+    json.dumps(result)
