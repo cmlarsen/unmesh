@@ -5,6 +5,7 @@ from pathlib import Path
 
 from unmesh_harness.cli import main as cli_main
 from unmesh_harness.runner.compare import (
+    compare_files,
     compare_groups,
     format_comparison,
     group_records,
@@ -91,14 +92,24 @@ def test_failed_cell_counts_as_regression():
     assert any(v.metric == "f1" and v.verdict == "REGRESSION" for v in comp.regressions)
 
 
-def test_missing_cells_are_listed_not_flagged():
+def test_cell_missing_in_b_is_a_regression():
     comp = run(
         [record(part="a"), record(part="b")],
         [record(part="a")],
     )
-    assert not comp.regressions
     assert len(comp.only_a) == 1 and not comp.only_b
+    assert [v.metric for v in comp.regressions] == ["missing"]
     assert "ONLY-A" in format_comparison(comp)
+
+
+def test_cell_only_in_b_is_listed_not_flagged():
+    comp = run(
+        [record(part="a")],
+        [record(part="a"), record(part="b")],
+    )
+    assert not comp.regressions
+    assert not comp.only_a and len(comp.only_b) == 1
+    assert "ONLY-B" in format_comparison(comp)
 
 
 def test_other_converters_are_filtered():
@@ -122,3 +133,22 @@ def test_cli_exit_codes(tmp_path):
     assert cli_main(["compare", str(a), str(a)]) == 0
     assert cli_main(["compare", str(a), str(b)]) == 1
     assert cli_main(["compare", str(b), str(a)]) == 0
+
+
+def test_empty_b_is_an_error(tmp_path):
+    a = write_jsonl(tmp_path / "a.jsonl", seeds([1.0, 1.0, 1.0]))
+    b = write_jsonl(tmp_path / "b.jsonl", [])
+    comp = compare_files(a, b)
+    assert comp.error and "empty" in comp.error
+    assert comp.regressions
+    assert cli_main(["compare", str(a), str(b)]) == 2
+
+
+def test_b_without_converter_records_is_an_error(tmp_path):
+    recs = [record(converter="faceted", f1=0.5)]
+    b = write_jsonl(tmp_path / "b.jsonl", recs)
+    a = write_jsonl(tmp_path / "a.jsonl", seeds([1.0, 1.0, 1.0]))
+    comp = compare_files(a, b)
+    assert comp.error and "faceted" not in comp.error
+    assert "unmesh" in comp.error
+    assert cli_main(["compare", str(a), str(b)]) == 2

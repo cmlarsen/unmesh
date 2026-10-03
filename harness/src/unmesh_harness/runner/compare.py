@@ -87,6 +87,7 @@ class Comparison:
     only_a: list[tuple] = field(default_factory=list)
     only_b: list[tuple] = field(default_factory=list)
     unchanged: int = 0
+    error: str | None = None
 
     @property
     def regressions(self) -> list[CellVerdict]:
@@ -105,6 +106,9 @@ def compare_groups(
     for key in sorted(groups_a, key=str):
         if key not in groups_b:
             out.only_a.append(key)
+            out.verdicts.append(
+                CellVerdict(key, "missing", 1.0, 0.0, len(groups_a[key]), 0.0, 0, 0.0, "REGRESSION")
+            )
             continue
         for metric in METRICS:
             sa = metric_samples(groups_a[key], metric.name)
@@ -167,10 +171,17 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def compare_files(path_a: Path, path_b: Path, converter: str = "unmesh") -> Comparison:
-    return compare_groups(
-        group_records(read_jsonl(path_a), converter),
-        group_records(read_jsonl(path_b), converter),
+    records_a = read_jsonl(path_a)
+    records_b = read_jsonl(path_b)
+    comp = compare_groups(
+        group_records(records_a, converter),
+        group_records(records_b, converter),
     )
+    if not records_b:
+        comp.error = f"run B {path_b} is empty"
+    elif not any(r.get("converter") == converter for r in records_b):
+        comp.error = f"run B {path_b} has no records for converter {converter!r}"
+    return comp
 
 
 def _show(value: float, metric: str) -> str:

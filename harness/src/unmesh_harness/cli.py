@@ -56,6 +56,9 @@ def _compare(args) -> int:
 
     comp = compare_files(args.run_a, args.run_b, args.converter)
     print(format_comparison(comp, label_a=args.run_a.name, label_b=args.run_b.name))
+    if comp.error:
+        print(f"ERROR: {comp.error}")
+        return 2
     if comp.regressions:
         print(f"{len(comp.regressions)} regression(s) vs {args.run_a.name}")
         return 1
