@@ -40,7 +40,7 @@ def _edge_tangent(mesh, faces: set[int], point: tuple) -> tuple[np.ndarray, floa
     "tessellation",
     "identity",
     "vertices on one or two faces moved along the surface (within a face, or along the shared "
-    "edge for two-face vertices) by up to severity * 45% of their local mean edge length, then "
+    "edge for two-face vertices) by up to severity * 45% of the local chord length, then "
     "reprojected onto the incident analytic surfaces; chord spacing becomes non-uniform while "
     "every node stays on-surface; CAD corners and 3+ face vertices stay fixed",
 )

@@ -4,7 +4,6 @@ import math
 
 import numpy as np
 
-from ..labels import outward_normals
 from .core import register
 from .retriangulate import triangulate_loops_3d
 
@@ -78,7 +77,7 @@ def _chain(edge_polys: list[list[tuple]]) -> list[list[tuple]] | None:
     return loops
 
 
-def _plan_face(fid, faces, adjacency, polymap, k):
+def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     face = faces[fid]
     if face.surface != "cylinder":
         return None
@@ -160,10 +159,13 @@ def _plan_face(fid, faces, adjacency, polymap, k):
         for j in range(k):
             a, b, c, d = grid[j][si], grid[j + 1][si], grid[j + 1][si + 1], grid[j][si + 1]
             rows += [(a, b, c), (a, c, d)]
-    mid = (np.array(rows[0][0]) + np.array(rows[0][2])) / 2
-    n = outward_normals(face, mid[None])[0]
+    ref = np.zeros(3)
+    for t in face_tris:
+        ref += np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0])) / 2
+    if float(np.linalg.norm(ref)) <= 0.0:
+        return None
     probe = np.cross(np.subtract(rows[0][1], rows[0][0]), np.subtract(rows[0][2], rows[0][0]))
-    if float(probe @ n) < 0:
+    if float(probe @ ref) < 0:
         rows = [(a, c, b) for a, b, c in rows]
     across = []
     for idx in spans:
@@ -201,7 +203,9 @@ def fillet_rows(mesh, severity, rng):
     for fid in sorted(by_face):
         if mesh.faces[fid].surface != "cylinder":
             continue
-        plan = _plan_face(fid, mesh.faces, mesh.adjacency, polymap, k)
+        plan = _plan_face(
+            fid, mesh.faces, mesh.adjacency, polymap, k, [tris[ti] for ti in by_face[fid]]
+        )
         if plan is None:
             skipped.append(fid)
             continue
