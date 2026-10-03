@@ -7,6 +7,7 @@ from . import (
     noise,
     pose,
     precision,
+    presets,
     refine,
     retriangulate,
 )
@@ -20,14 +21,16 @@ from .core import (
     to_original,
     to_original_points,
 )
+from .presets import PRESETS, Preset
 
 __all__ = [
     "OPERATORS",
     "Operator",
+    "PRESETS",
+    "Preset",
     "apply",
     "apply_chain",
     "chain",
-    "apply_pair_preprocess",
     "chords",
     "coarsen",
     "defects",
@@ -36,6 +39,7 @@ __all__ = [
     "noise",
     "pose",
     "precision",
+    "presets",
     "refine",
     "register",
     "retriangulate",

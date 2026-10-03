@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .execute import run_pool
-from .grid import Grid, git_sha, prep_hash
+from .grid import Grid, git_sha, prep_hash, steps_for
 from .results import append_result, completed_keys, latest, read_results
 
 PREP_TIMEOUT_S = 120.0
@@ -119,7 +119,7 @@ def run_grid(
             "entry": entries[cell.part],
             "cache": str(cache),
             "work": str(work),
-            "steps": spec["steps"],
+            "steps": steps_for(spec),
             "samples_per_mm2": grid.judge_samples_per_mm2,
             "judge_truth": bool(spec.get("judge_truth")),
             "step_deviation": grid.checks_step(cell),
