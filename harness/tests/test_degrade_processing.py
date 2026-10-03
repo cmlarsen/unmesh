@@ -17,9 +17,19 @@ from .test_labels import closed_manifold_problems
 LIN, ANG = DEFLECTION_SETTINGS[0]
 SEED = 11
 
-PROC_OPS = ("quadric_decimation", "isotropic_remesh", "laplacian_smoothing")
-WATERTIGHT = {"quadric_decimation": True, "isotropic_remesh": True, "laplacian_smoothing": True}
-SMOOTHING = ("laplacian_smoothing",)
+PROC_OPS = (
+    "quadric_decimation",
+    "isotropic_remesh",
+    "laplacian_smoothing",
+    "taubin_smoothing",
+)
+WATERTIGHT = {
+    "quadric_decimation": True,
+    "isotropic_remesh": True,
+    "laplacian_smoothing": True,
+    "taubin_smoothing": True,
+}
+SMOOTHING = ("laplacian_smoothing", "taubin_smoothing")
 
 
 def box_mesh():
@@ -261,17 +271,34 @@ def test_smoothing_at_full_severity_relabels_with_low_confidence(cyl):
         assert len(out.tris) == len(cyl.tris)
         assert_processing_labels_aligned(cyl, out, name)
         assert not np.array_equal(out.tris, cyl.tris)
-        assert out.metadata["history"][-1]["params"]["iterations"] > 0
+        assert _smoothing_steps(out.metadata["history"][-1]["params"]) > 0
+
+
+def _smoothing_steps(params):
+    return params.get("iterations", params.get("pairs"))
 
 
 def test_smoothing_iterations_scale_with_severity(cyl):
     for name in SMOOTHING:
         counts = [
-            degrade.apply(name, cyl, s, SEED).metadata["history"][-1]["params"]["iterations"]
+            _smoothing_steps(degrade.apply(name, cyl, s, SEED).metadata["history"][-1]["params"])
             for s in (0.25, 0.5, 1.0)
         ]
         assert counts[0] <= counts[1] <= counts[2]
         assert counts[2] > 0
+
+
+def test_taubin_shrinks_less_than_laplacian(box):
+    def volume(t):
+        return float(np.einsum("ij,ij->i", t[:, 0], np.cross(t[:, 1], t[:, 2])).sum() / 6)
+
+    ref = volume(box.tris)
+    lap = volume(degrade.apply("laplacian_smoothing", box, 1.0, SEED).tris)
+    tau = volume(degrade.apply("taubin_smoothing", box, 1.0, SEED).tris)
+    assert abs(tau - ref) < abs(lap - ref)
+    params = degrade.apply("taubin_smoothing", box, 1.0, SEED).metadata["history"][-1]["params"]
+    assert params["pairs"] == 10
+    assert params["mu"] == pytest.approx(-0.53)
 
 
 def test_smoothing_polylines_move_with_mesh(cyl):

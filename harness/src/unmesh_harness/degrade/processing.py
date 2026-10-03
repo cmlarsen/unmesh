@@ -485,3 +485,44 @@ def laplacian_smoothing(mesh, severity, rng):
         "triangles_after": len(mesh.tris),
         **label,
     }
+
+
+TAUBIN_LAMBDA = 0.5
+TAUBIN_MU = -0.53
+TAUBIN_MAX_PAIRS = 10
+
+
+def taubin_pairs(severity: float) -> int:
+    return max(1, int(round(TAUBIN_MAX_PAIRS * severity)))
+
+
+@register(
+    "taubin_smoothing",
+    "processing",
+    "identity",
+    "max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53, "
+    "10 pairs at severity 1) shrinking less than Laplacian; displacement scales with "
+    "the local chord length; connectivity unchanged, shared vertices move once so "
+    "the mesh stays watertight",
+    preserves_watertight=True,
+)
+def taubin_smoothing(mesh, severity, rng):
+    src_tris = mesh.tris.copy()
+    src_ids = mesh.face_id.copy()
+    uniq, inverse, nbrs = _umbrella_neighbors(mesh)
+    pos = uniq.copy()
+    pairs = taubin_pairs(severity)
+    for _ in range(pairs):
+        pos = _laplacian_step(pos, nbrs, TAUBIN_LAMBDA)
+        pos = _laplacian_step(pos, nbrs, TAUBIN_MU)
+    peak = displace_vertices(mesh, uniq, inverse, pos - uniq)
+    label = transfer_labels(mesh, src_tris, src_ids)
+    return {
+        "pairs": pairs,
+        "lambda": TAUBIN_LAMBDA,
+        "mu": TAUBIN_MU,
+        "max_displacement_mm": peak,
+        "triangles_before": len(src_tris),
+        "triangles_after": len(mesh.tris),
+        **label,
+    }
