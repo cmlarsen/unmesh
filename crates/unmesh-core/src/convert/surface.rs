@@ -8,7 +8,7 @@ pub enum Surface {
 
 impl Surface {
     pub fn is_analytic(&self) -> bool {
-        matches!(self, Surface::Plane { .. })
+        !matches!(self, Surface::Facets)
     }
 
     pub fn name(&self) -> &'static str {
