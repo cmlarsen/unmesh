@@ -86,6 +86,8 @@ def noise_off_plane(mesh, severity, rng):
         np.minimum.at(lo, corners[:, corner], ids)
         np.maximum.at(hi, corners[:, corner], ids)
     planar = np.array([f.surface == "plane" for f in mesh.faces], dtype=bool)
+    if not planar.any():
+        return {"skipped": "no planar faces"}
     interior = (lo == hi) & planar[np.clip(lo, 0, len(planar) - 1)]
     if not interior.any():
         raise ValueError(

@@ -327,6 +327,9 @@ def test_noise_moves_shared_vertices_once(name, smoke, curved):
     for _, mesh in smoke + curved:
         mesh = prepared(name, mesh)
         out = degrade.apply(name, mesh, 1.0, 13)
+        if out.metadata["history"][-1]["params"].get("skipped") == "no planar faces":
+            assert np.array_equal(mesh.tris, out.tris)
+            continue
         before = mesh.tris.reshape(-1, 3)
         after = out.tris.reshape(-1, 3)
         mapping: dict[tuple, tuple] = {}
@@ -371,9 +374,21 @@ def test_off_plane_requires_interior_vertices(curved):
     degrade.apply("noise_off_plane", box, 0.0, 0)
 
 
+def test_off_plane_skips_mesh_without_planar_faces():
+    mesh = tessellate(generate("revolved_torus", 0).solid, LIN, ANG)
+    assert not any(f.surface == "plane" for f in mesh.faces)
+    out = degrade.apply("noise_off_plane", mesh, 1.0, 0)
+    assert geometry_equal(mesh, out)
+    assert out.metadata["history"][-1]["params"] == {"skipped": "no planar faces"}
+
+
 def test_off_plane_moves_interior_vertices_along_face_normal(smoke, curved):
     for _, mesh in smoke + curved:
         refined = degrade.apply("refine", mesh, REFINE_SEVERITY, 0)
+        if not any(f.surface == "plane" for f in refined.faces):
+            out = degrade.apply("noise_off_plane", refined, 1.0, 6)
+            assert out.metadata["history"][-1]["params"] == {"skipped": "no planar faces"}
+            continue
         out = degrade.apply("noise_off_plane", refined, 1.0, 6)
         params = out.metadata["history"][-1]["params"]
         assert 0 < params["moved_fraction"] < 1

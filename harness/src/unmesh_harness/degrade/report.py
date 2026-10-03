@@ -238,11 +238,7 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                     ("`refine -> noise_off_plane`", (("refine", REFINE_FOR_SHEET), (name, None)))
                 ]
             for row_label, chain in rows:
-                use = [
-                    m
-                    for m in group
-                    if name != "noise_off_plane" or any(f.surface == "plane" for f in m.faces)
-                ]
+                use = group
                 label = f"smoke ({len(use)})" if base == "smoke" else base
                 for severity in (0.0, 1.0) if op.binary else SEVERITIES:
                     s = stats(use, chain, severity)
