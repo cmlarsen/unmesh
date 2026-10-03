@@ -31,11 +31,12 @@ def _register(name: str, steps: list[Step], rationale: str) -> None:
 _register(
     "fusion-export",
     [("retriangulate", 1.0), ("float32", 1.0)],
-    "Imitates a clean high-quality CAD export saved through STL. STL stores "
-    "coordinates as single-precision floats, hence the float32 rounding. "
-    "retriangulate keeps every face boundary bit-exact while replacing the "
-    "interior triangulation, standing in for a different tessellator's planar "
-    "triangulation of the same faces.",
+    "Approximation of a clean high-quality CAD export saved through STL. STL "
+    "stores coordinates as single-precision floats, binary STL included, "
+    "hence the float32 rounding. retriangulate keeps every face boundary "
+    "bit-exact while replacing the interior triangulation, standing in for a "
+    "different tessellator's planar triangulation of the same faces. "
+    "Curvature-dependent mesh density is not modelled.",
 )
 
 _register(
@@ -50,8 +51,8 @@ _register(
 _register(
     "meshmixer-edit",
     [("retriangulate", 0.5), ("noise_normal", 0.2)],
-    "Imitates a remeshed-then-smoothed sculpting edit. retriangulate rebuilds "
-    "the triangulation from the same face boundaries, as a remesher does. "
+    "A loose approximation: retriangulated interior plus small normal "
+    "displacement; does not model edge rounding or isotropic remeshing. "
     "Light normal noise (10 um bound) stands in for the small surface "
     "displacement smoothing leaves behind.",
 )
