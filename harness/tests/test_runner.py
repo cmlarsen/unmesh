@@ -317,6 +317,7 @@ def test_gate_topology_floors_are_optional():
         ["unmesh"],
         "s",
     ).passed
+    assert not gate(row_records(holes_grid, topology=None), holes_grid, ["unmesh"], "s").passed
 
 
 def test_records_carry_validity_topology_structure(tmp_path):

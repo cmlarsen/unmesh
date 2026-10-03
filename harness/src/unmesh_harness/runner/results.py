@@ -209,8 +209,10 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
             failed = [k for k in aspects if not topo.get(f"{k}_match")]
             bad(f"topology mismatch ({', '.join(failed) if failed else 'not scored'})")
     if floors.get("through_holes_equal"):
-        topo = r.get("topology") or {}
-        if topo.get("through_holes") != topo.get("truth_through_holes"):
+        topo = r.get("topology")
+        if not isinstance(topo, dict):
+            bad("through-holes not scored")
+        elif topo.get("through_holes") != topo.get("truth_through_holes"):
             bad(
                 f"through-holes {topo.get('through_holes')} "
                 f"!= truth {topo.get('truth_through_holes')}"
