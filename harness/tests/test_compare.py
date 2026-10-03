@@ -168,6 +168,32 @@ def test_steady_rate_is_unchanged():
     assert not comp.regressions and not comp.improvements
 
 
+def test_latest_duplicate_record_wins():
+    b = [record(seed=0, status="error", error="boom")] + seeds([1.0, 1.0, 1.0])
+    comp = run(seeds([1.0, 1.0, 1.0]), b)
+    assert not comp.regressions and not comp.improvements
+
+
+def test_trailing_duplicate_error_counts():
+    b = seeds([1.0, 1.0, 1.0]) + [record(seed=0, status="error", error="boom")]
+    comp = run(seeds([1.0, 1.0, 1.0]), b)
+    assert any(v.metric == "f1" and v.verdict == "REGRESSION" for v in comp.regressions)
+
+
+def test_records_from_older_runs_are_ignored():
+    old = [record(seed=i, git_sha="old", grid_hash="old", f1=0.0) for i in range(3)]
+    comp = run(seeds([1.0, 1.0, 1.0]), old + seeds([1.0, 1.0, 1.0]))
+    assert not comp.regressions and not comp.improvements
+    comp = run(seeds([1.0, 1.0, 1.0]), seeds([1.0, 1.0, 1.0]) + old)
+    assert comp.regressions
+
+
+def test_records_from_other_grids_are_ignored():
+    other = [record(seed=i, grid_hash="other", f1=0.0) for i in range(3)]
+    comp = run(seeds([1.0, 1.0, 1.0]), other + seeds([1.0, 1.0, 1.0]))
+    assert not comp.regressions and not comp.improvements
+
+
 def test_other_converters_are_filtered():
     comp = run(
         [record(converter="faceted", f1=0.0)],

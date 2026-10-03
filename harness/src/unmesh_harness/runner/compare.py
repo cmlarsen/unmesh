@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .results import record_key
+
 FLOOR_F1 = 0.01
 FLOOR_DEV_MM = 0.001
 FLOOR_RATE = 0.0
@@ -228,10 +230,26 @@ def compare_groups(
 
 
 def group_records(records: list[dict[str, Any]], converter: str) -> dict[tuple, list[dict]]:
+    current = records
+    if records:
+        sha = records[-1].get("git_sha")
+        grid_hash = records[-1].get("grid_hash")
+        dedup: dict[tuple, dict] = {}
+        for r in records:
+            if r.get("git_sha") != sha or r.get("grid_hash") != grid_hash:
+                continue
+            try:
+                dedup[record_key(r)] = r
+            except (KeyError, TypeError, ValueError):
+                continue
+        current = list(dedup.values())
     groups: dict[tuple, list[dict]] = defaultdict(list)
-    for r in records:
+    for r in current:
         if r.get("converter") == converter:
-            groups[cell_key(r)].append(r)
+            try:
+                groups[cell_key(r)].append(r)
+            except (KeyError, TypeError, ValueError):
+                continue
     return groups
 
 
