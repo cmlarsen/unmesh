@@ -6,6 +6,26 @@ use super::segment::{self, TriInfo};
 use super::surface::Surface;
 use super::topology::{CompKind, NONE, Topology};
 
+const RESPLIT_MIN_DIHEDRAL_DEG: f64 = 15.0;
+
+fn has_crease(nbr: &[[u32; 3]], info: &[TriInfo], label: &[u32], region: u32) -> bool {
+    let limit = RESPLIT_MIN_DIHEDRAL_DEG.to_radians().cos();
+    for (f, nb) in nbr.iter().enumerate() {
+        if label[f] != region || info[f].area <= 0.0 {
+            continue;
+        }
+        for &g in nb {
+            if g == NONE || label[g as usize] != region || info[g as usize].area <= 0.0 {
+                continue;
+            }
+            if dot(info[f].normal, info[g as usize].normal) < limit {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub struct Region {
     pub faces: Vec<u32>,
     pub surface: Surface,
@@ -349,7 +369,7 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         snap_deg,
         scratch,
     } = args;
-    let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol);
+    let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, false);
     run(RunArgs {
         vc,
         faces,
@@ -387,6 +407,64 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         snap_deg,
         scratch,
     } = args;
+    let (label2, regions) =
+        merge_and_rebuild(vc, faces, info, nbr, label, n_seg, tol, snap_deg, scratch);
+    let loose: Vec<u32> = regions
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.area > 0.0 && r.max > tol)
+        .map(|(i, _)| i as u32)
+        .collect();
+    if loose.is_empty() {
+        return (label2, regions);
+    }
+    let mut combined = vec![NONE; faces.len()];
+    let mut next_id = 0u32;
+    for r in &regions {
+        if r.area > 0.0 && r.max > tol {
+            continue;
+        }
+        for &f in &r.faces {
+            combined[f as usize] = next_id;
+        }
+        next_id += 1;
+    }
+    for &r in &loose {
+        if !has_crease(nbr, info, &label2, r) {
+            for &f in &regions[r as usize].faces {
+                combined[f as usize] = next_id;
+            }
+            next_id += 1;
+            continue;
+        }
+        let eligible: Vec<bool> = label2.iter().map(|&l| l == r).collect();
+        let (sub, n_sub) = segment::run(vc, faces, nbr, info, &eligible, tol, true);
+        for (f, &l) in sub.iter().enumerate() {
+            if l != NONE {
+                combined[f] = next_id + l;
+            }
+        }
+        next_id += n_sub as u32;
+    }
+    let n_all = next_id as usize;
+    let (label2, regions) = merge_and_rebuild(
+        vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
+    );
+    (label2, regions)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_and_rebuild(
+    vc: &[V3],
+    faces: &[[u32; 3]],
+    info: &[TriInfo],
+    nbr: &[[u32; 3]],
+    label: &[u32],
+    n_seg: usize,
+    tol: f64,
+    snap_deg: f64,
+    scratch: &mut Scratch,
+) -> (Vec<u32>, Vec<Region>) {
     let regions0 = build_regions(vc, faces, info, label, n_seg, tol, scratch);
     let pairs0 = region_pairs(nbr, label);
     let root = merge_coplanar(vc, &regions0, &pairs0, tol, snap_deg);

@@ -178,6 +178,51 @@ def test_subdivided_planar_mesh_with_noise():
     assert report.max_deviation < 0.03
 
 
+def test_clean_plate_with_bore_gets_micron_auto_tolerance():
+    from build123d import Box, Cylinder, Pos
+
+    plate = Pos(0, 0, 2.0) * Box(20.0, 20.0, 4.0) - Pos(0, 0, 5.0) * Cylinder(3.0, 10.0)
+    mesh = tessellate(plate, 0.01, 0.2)
+    ir, _ = unmesh.convert(mesh.tris)
+    assert ir.tolerances.linear <= 2e-3
+
+
+def scaled_mesh(part, factor):
+    import copy
+
+    out = copy.deepcopy(part)
+    out.tris = part.tris * factor
+    for face in out.faces:
+        assert face.surface == "plane"
+        face.params["origin"] = (np.array(face.params["origin"]) * factor).tolist()
+    for adj in out.adjacency:
+        adj.points = (np.array(adj.points) * factor).tolist()
+    return out
+
+
+def test_scaled_planar_parts_reach_unscaled_f1(parts):
+    from unmesh_harness.metrics.recovery import score_recovery
+
+    for part in parts:
+        base = score_recovery(part, part.face_id, unmesh.convert(part.tris)[0])["f1"]
+        assert base == 1.0
+        for factor in (1000.0, 0.001):
+            scaled = scaled_mesh(part, factor)
+            ir, _ = unmesh.convert(scaled.tris)
+            assert score_recovery(scaled, scaled.face_id, ir)["f1"] == base
+
+
+def test_thin_walls_off_plane_noise_recovers_every_face():
+    from unmesh_harness.degrade import apply_chain
+    from unmesh_harness.groundtruth import generate
+    from unmesh_harness.metrics.recovery import score_recovery
+
+    clean = tessellate(generate("thin_walls", 0).solid, 0.01, 0.2)
+    degraded = apply_chain(clean, [("refine", 0.15), ("noise_off_plane", 0.2)], 2)
+    ir, _ = unmesh.convert(degraded.tris)
+    assert score_recovery(clean, degraded.face_id, ir)["f1"] >= 0.98
+
+
 @pytest.mark.benchmark
 def test_million_triangle_planar_mesh_converts_fast(capsys):
     soup = grid_box(289)

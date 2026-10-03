@@ -2,16 +2,25 @@ use super::fit::{Region, offset_fit, residual};
 use super::linalg::{V3, dot, scale, sub, unit};
 use super::surface::Surface;
 
-pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap_deg: f64) {
-    let rms_limit = (2.5 * sigma).max(0.5e-3);
+pub const NOISE_FACTOR: f64 = 5.0;
+
+const ANCHOR_MIN_VERTS: usize = 50;
+const ANCHOR_MIN_AREA_FRAC: f64 = 0.25;
+
+pub fn snap_normals(
+    v: &[V3],
+    regions: &mut [Region],
+    tol: f64,
+    sigma: f64,
+    snap_deg: f64,
+    diag: f64,
+) {
+    let rms_limit = (2.5 * sigma).max(super::floor(diag));
     let n = regions.len();
     let mut done = vec![false; n];
     let mut classes: Vec<V3> = Vec::new();
 
-    let allow = |r: &Region| -> f64 {
-        (snap_deg.to_radians() + (2.0 * tol).atan2(r.width.max(1e-300)))
-            .min(std::f64::consts::FRAC_PI_2)
-    };
+    let allow = |_r: &Region| -> f64 { snap_deg.to_radians() };
     let allow_cos = |r: &Region| -> f64 { allow(r).cos() };
     let try_normal = |r: &Region, cand: V3| -> Option<(f64, f64, f64)> {
         let d = offset_fit(v, &r.verts, cand, tol);
@@ -92,11 +101,17 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
     }
 }
 
-pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
-    let mut stats: Vec<(f64, f64, f64)> = Vec::new();
+pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
+    pool_noise(v, regions, ANCHOR_MIN_VERTS, true)
+        .or_else(|| pool_noise(v, regions, 4, false))
+        .unwrap_or(tol / NOISE_FACTOR)
+}
+
+fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize, anchor_min: bool) -> Option<f64> {
+    let mut stats: Vec<(f64, f64, f64, f64)> = Vec::new();
     for r in regions {
         let nv = r.verts.len();
-        if r.area <= 0.0 || nv < 4 {
+        if r.area <= 0.0 || nv < min_verts {
             continue;
         }
         let Some((n, d)) = r.surface.as_plane() else {
@@ -108,20 +123,89 @@ pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
             .map(|&(vi, _)| (dot(n, v[vi as usize]) - d).powi(2))
             .sum();
         let dof = (nv - 3) as f64;
-        stats.push(((ss / dof).sqrt(), ss, dof));
+        stats.push(((ss / dof).sqrt(), ss, dof, r.area));
     }
     if stats.is_empty() {
-        return 0.0;
+        return None;
     }
     stats.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let median = stats[stats.len() / 2].0;
-    let keep = stats
-        .iter()
-        .take_while(|x| x.0 <= 10.0 * median + 1e-9)
-        .count()
-        .max(1);
-    let (ss, dof) = stats[..keep]
-        .iter()
-        .fold((0.0, 0.0), |(s, d), x| (s + x.1, d + x.2));
-    (ss / dof).sqrt()
+    let anchor = if anchor_min {
+        stats[0].0
+    } else {
+        stats[stats.len() / 2].0
+    };
+    let total_area: f64 = stats.iter().map(|x| x.3).sum();
+    let mut keep_ss = 0.0;
+    let mut keep_dof = 0.0;
+    let mut keep_area = 0.0;
+    for x in &stats {
+        if x.0 > 10.0 * anchor + 1e-9 {
+            break;
+        }
+        keep_ss += x.1;
+        keep_dof += x.2;
+        keep_area += x.3;
+    }
+    if keep_area < ANCHOR_MIN_AREA_FRAC * total_area {
+        return None;
+    }
+    Some((keep_ss / keep_dof).sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::linalg::dot;
+    use super::*;
+
+    fn tilted_strip(tilt_deg: f64) -> (Vec<V3>, Region) {
+        let t = tilt_deg.to_radians().tan();
+        let mut v = Vec::new();
+        for i in 0..6 {
+            let x = -0.025 + 0.01 * i as f64;
+            for &y in &[0.0, 0.5, 1.0] {
+                v.push([x, y, x * t]);
+            }
+        }
+        let n = [-t, 0.0, 1.0];
+        let l = (t * t + 1.0).sqrt();
+        let n = [n[0] / l, 0.0, n[2] / l];
+        let verts: Vec<(u32, f64)> = (0..v.len() as u32).map(|i| (i, 1.0)).collect();
+        let r = Region {
+            faces: vec![0],
+            surface: Surface::Plane {
+                normal: n,
+                offset: 0.0,
+            },
+            area: 0.05,
+            width: 0.05,
+            verts,
+            rms: 0.0,
+            max: 0.0,
+        };
+        (v, r)
+    }
+
+    fn snap_tilt(tilt_deg: f64) -> V3 {
+        let (v, r) = tilted_strip(tilt_deg);
+        let mut regions = vec![r];
+        snap_normals(&v, &mut regions, 1e-3, 1e-4, 0.5, 50.0);
+        regions[0].surface.as_plane().unwrap().0
+    }
+
+    #[test]
+    fn one_degree_tilt_on_50um_face_stays_unsnapped() {
+        let n = snap_tilt(1.0);
+        let cos = dot(n, [0.0, 0.0, 1.0]);
+        assert!(
+            cos < 0.5_f64.to_radians().cos(),
+            "1.0 deg tilt was snapped to the axis"
+        );
+        assert!((cos - 1.0_f64.to_radians().cos()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sub_snap_tilt_still_snaps() {
+        let n = snap_tilt(0.2);
+        assert_eq!(n, [0.0, 0.0, 1.0]);
+    }
 }
