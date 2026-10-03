@@ -5,6 +5,7 @@ import pytest
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 
 from unmesh_harness.corpus import ambiguity_entries, load_manifest, select
+from unmesh_harness.degrade import apply as apply_degradation
 from unmesh_harness.groundtruth import families, generate, validity_problems
 from unmesh_harness.labels import tessellate
 
@@ -170,17 +171,14 @@ def test_pair_two_chamfer_vertices_are_subset_of_fillet():
         assert (d.min(axis=1) <= 1e-6).all(), seed
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
-)
 def test_pair_two_vertex_sets_match_at_pair_deflection():
     for seed in range(8):
         f = generate("one_segment_fillet", seed)
         c = generate("chamfer_same_chord", seed)
         lin, ang = f.parameters["pair_deflection"]
+        degraded = apply_degradation("fillet_rows", tessellate(f.solid, lin, ang), 0.9, 0)
         assert_vertex_sets_match(
-            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(degraded),
             vertex_set(tessellate(c.solid, lin, ang)),
         )
 
@@ -248,17 +246,14 @@ def test_pair_three_cut_points_match_fillet_tangents():
             assert (d.min(axis=0) <= 1e-6).all(), seed
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
-)
 def test_pair_three_vertex_sets_match_at_pair_deflection():
     for seed in range(8):
         f = generate("two_segment_fillet", seed)
         t = generate("two_planes", seed)
         lin, ang = f.parameters["pair_deflection"]
+        degraded = apply_degradation("fillet_rows", tessellate(f.solid, lin, ang), 0.5, 0)
         assert_vertex_sets_match(
-            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(degraded),
             vertex_set(tessellate(t.solid, lin, ang)),
         )
 
