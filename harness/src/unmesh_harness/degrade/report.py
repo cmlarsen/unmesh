@@ -14,6 +14,7 @@ from ..groundtruth import generate
 from ..labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from ..oracle import build_oracle_ir
 from .core import OPERATORS, apply, to_original, to_original_points
+from .faults import DISPOSITION
 
 SEVERITIES = (0.0, 0.5, 1.0)
 SEED = 20260101
@@ -116,20 +117,17 @@ def stats(meshes: list[LabeledMesh], chain: Chain, severity: float) -> dict[str,
         if np.linalg.det(to_original(out)[:3, :3]) < 0:
             back = back[:, [0, 2, 1]]
         if not counts_change:
-            refined = len(out.tris) != len(mesh.tris)
-            if refined:
-                base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
+            base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
+            if len(back) == len(base.tris):
                 d = np.linalg.norm(back - base.tris, axis=2).ravel()
-            else:
-                d = np.linalg.norm(back - mesh.tris, axis=2).ravel()
-            sq.append(d**2)
-            peak = max(peak, float(d.max()))
+                sq.append(d**2)
+                peak = max(peak, float(d.max()))
         grown.append(len(out.tris) / len(mesh.tris))
         closed &= _closed(out)
         valid &= _ir_valid(out)
     return {
-        "rms_um": None if counts_change else 1000.0 * float(np.sqrt(np.concatenate(sq).mean())),
-        "max_um": None if counts_change else 1000.0 * peak,
+        "rms_um": 1000.0 * float(np.sqrt(np.concatenate(sq).mean())) if sq else None,
+        "max_um": 1000.0 * peak if sq else None,
         "closed": closed,
         "ir_valid": valid,
         "tris_ratio": float(np.mean(grown)),
@@ -203,6 +201,19 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "tangent-line stations differ, and anything else ineligible, is recorded as skipped "
         "and left untouched.",
         "",
+        "- `defect`-family operators intentionally break the mesh (open seams, holes, extra "
+        "shells, duplicated or reversed triangles). Triangles copied from the mesh keep their "
+        "source `face_id`; brand-new synthetic triangles (stray shells and fin triangles) get "
+        "`face_id` -1 (unknown face), which the oracle excludes from every region. Operators "
+        "that change the triangle count report no displacement.",
+        "",
+        "## Defect disposition",
+        "",
+        "Whether the converter is expected to REPAIR a defect (same analytic IR as the clean "
+        "mesh, plus a warning) or REPORT it (open/non-manifold facets shell, plus a warning):",
+        "",
+        *[f"- `{name}`: {text}" for name, text in DISPOSITION.items()],
+        "",
         "## Severity scale",
         "",
         "| operator | family | severity 0 | severity 1 |",
@@ -253,8 +264,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                     s = stats(use, chain, severity)
                     ratio = s["tris_ratio"]
                     tess = op.family == "tessellation"
-                    rms = "-" if tess else f"{s['rms_um']:.3f}"
-                    peak = "-" if tess else f"{s['max_um']:.3f}"
+                    rms = "-" if tess or s["rms_um"] is None else f"{s['rms_um']:.3f}"
+                    peak = "-" if tess or s["max_um"] is None else f"{s['max_um']:.3f}"
                     lines.append(
                         f"| {label} | {row_label} | {severity} | {rms} | {peak} | {ratio:.1f} | "
                         f"{'yes' if s['closed'] else 'no'} | {'yes' if s['ir_valid'] else 'no'} |"

@@ -247,10 +247,11 @@ fn finish(
     };
     let out_pos = positions(&pv);
     let result = emit::assemble(&asm, &finals, &flabel, &out_pos);
+    let merge = w.merge_dev;
     let (ir, report_dev, report_rms, region_counts, area_fraction) = match result {
         Ok(ir) => (
             ir,
-            report_dev,
+            report_dev + merge,
             report_rms,
             region_counts,
             if total_area > 0.0 {
@@ -286,7 +287,7 @@ fn finish(
                 .map_err(|e| ConvertError::InvalidInput(e.join("; ")))?;
             let mut counts = BTreeMap::new();
             counts.insert("facets".to_string(), fb.len() as u32);
-            (ir, 0.0, 0.0, counts, 0.0)
+            (ir, merge, 0.0, counts, 0.0)
         }
     };
 
@@ -441,6 +442,17 @@ mod tests {
         let out = convert_tris(tris);
         assert_eq!(out.ir.regions.len(), 6, "{:?}", out.report.warnings);
         assert!(out.report.max_deviation >= 0.0 && out.report.max_deviation < 0.03);
+    }
+
+    #[test]
+    fn sub_weld_split_is_repaired_and_reported() {
+        let mut tris = grid_box([0.0; 3], [10.0, 20.0, 30.0], 1, false);
+        tris[0][0][0] += 5e-7;
+        let out = convert_tris(tris);
+        assert_eq!(out.ir.regions.len(), 6, "{:?}", out.report.warnings);
+        assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+        assert!(out.report.max_deviation >= 5e-7 - 1e-12);
+        assert!(out.report.max_deviation < 2e-6);
     }
 
     #[test]

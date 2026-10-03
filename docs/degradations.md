@@ -18,6 +18,21 @@ Rules every operator follows:
 - `slivers` splits edges on both sides at once (conforming, watertight) and never splits edges of degenerate input triangles, and rejects split points whose projection onto the surface flips a triangle; `t_junctions` splits one side only and so is not watertight by design, while face ids and polylines stay aligned in both. `t_junctions` intentionally leaves edge polylines that are not mesh edges on both sides.
 - `fillet_rows` rebuilds cylinder fillet strips with an explicit segment count on the exact analytic arc, triangulating each strip row-band and the affected planar neighbours with the seed-independent canonical triangulation; strips whose tangent-line stations differ, and anything else ineligible, is recorded as skipped and left untouched.
 
+- `defect`-family operators intentionally break the mesh (open seams, holes, extra shells, duplicated or reversed triangles). Triangles copied from the mesh keep their source `face_id`; brand-new synthetic triangles (stray shells and fin triangles) get `face_id` -1 (unknown face), which the oracle excludes from every region. Operators that change the triangle count report no displacement.
+
+## Defect disposition
+
+Whether the converter is expected to REPAIR a defect (same analytic IR as the clean mesh, plus a warning) or REPORT it (open/non-manifold facets shell, plus a warning):
+
+- `unwelded_corners`: REPAIR: the split copies sit within the converter weld (vertex_merge tolerance); the IR is identical to the clean mesh.
+- `unwelded_gap`: REPORT: the split copies sit outside the converter weld (vertex_merge tolerance); the mesh keeps open edges (warning open_edges).
+- `crack_seam`: REPORT: the seam leaves open edges; the edge-connected component becomes one open facets shell (warning open_edges).
+- `flipped_facets`: REPAIR (planar parts): inconsistent winding is fixed by flood fill (warning repaired_winding); the IR matches the clean mesh. On curved parts the repaired winding segments differently (converter issue #67), so region sets may differ.
+- `duplicate_facets`: REPAIR: same-winding copies are dropped (warning degenerate_triangles); opposite-winding twins are dropped while that leaves the component manifold (warning repaired_winding).
+- `hole_patch`: REPORT: the missing patch leaves open edges; the edge-connected component becomes one open facets shell (warning open_edges).
+- `stray_shells`: REPORT: each stray triangle is its own open facets shell (warning open_edges); each stray tetrahedron is an extra closed shell. The main shell still converts: on planar parts its region sets equal clean, on curved parts tolerances derive from the grown bounding box (converter issue #67), so they may differ.
+- `nonmanifold_fin`: REPORT: the fin edge is used by three triangles, so the whole edge-connected component becomes one open facets shell (warning non_manifold_edges).
+
 ## Severity scale
 
 | operator | family | severity 0 | severity 1 |
@@ -27,6 +42,14 @@ Rules every operator follows:
 | `coarsen` | tessellation | identity | shortest edges collapsed until none is shorter than h = diagonal * 0.01 * 10**severity (diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); b collapses into a only if faces(b) is a subset of faces(a), and a node of an edge polyline only into an adjacent node of the same polyline; the surviving endpoint keeps its coordinates and no collapse may fold a triangle or create a zero-area one, so curved nodes stay on the analytic surface and cylinders become N-gon prisms |
 | `slivers` | tessellation | identity | a fraction 0.3 * severity of edges is split at an off-centre point (half-length offset 0.45 * severity toward a random endpoint, so 5% from the endpoint at severity 1) on both sides at once; the mesh stays conforming and watertight while sliver triangles appear |
 | `t_junctions` | tessellation | identity | up to 10% * severity of edges gain a hanging midpoint on one side only; the neighbour keeps its original edge, so the mesh is non-conforming and not watertight by design, while face ids and polylines stay aligned |
+| `unwelded_corners` | defect | identity | a fraction (severity) of distinct vertices is split with the copies moved by severity * 0.5e-6 mm, below the converter weld, so the weld repairs it (all vertices split at severity 1) |
+| `unwelded_gap` | defect | identity | a fraction (severity) of distinct vertices is split with the copies moved by 1e-4 mm (severity 0+) up to 1e-2 mm (severity 1), outside the converter weld, so the mesh keeps open edges (all vertices split at severity 1) |
+| `crack_seam` | defect | identity | a chain of 2 (severity 0+) to 8 (severity 1) interior mesh edges sharing vertices within a single source face is split open to width severity * 0.2 mm with blunt tips, the copies on one side only shifted along the averaged in-surface perpendicular |
+| `flipped_facets` | defect | identity | a fraction (severity * 10%) of triangles is reversed in place; the converter flood-fills the winding back (up to 10% reversed at severity 1) |
+| `duplicate_facets` | defect | identity | a fraction (severity * 5%) of triangles is appended again with the same source face_id; each copy takes same or opposite winding by rng coin (up to 5% duplicated at severity 1) |
+| `hole_patch` | defect | identity | a connected patch of 1 triangle (severity 0+) up to 8 (severity 1) within a single source face is removed; the converter reports the open shell |
+| `stray_shells` | defect | identity | 1 shell (severity 0+) up to 4 (severity 1) of floating geometry is added beyond a random bounding-box corner, each a single triangle or a tetrahedron by rng coin with 1 mm edges; new triangles get face_id -1 (unknown face) |
+| `nonmanifold_fin` | defect | identity | a fraction (severity * 5%) of interior edges grows an extra triangle fin 0.5 mm tall with face_id -1 (unknown face), so the shared edge is used by three triangles (up to 5% of edges finned at severity 1) |
 | `retriangulate` | tessellation | identity | planar faces re-triangulated from their boundary loops by ear clipping biased toward a fan (severity up to 1/3), a strip (up to 2/3) or a Delaunay-like choice (above); boundary vertices are untouched, curved faces and faces with interior vertices are skipped |
 | `fillet_rows` | tessellation | identity | cylinder fillet strips whose cross edges meet only planar faces re-tessellated with exactly 3, 2 or 1 segments across their width (severity up to 1/3, 2/3, above), using the fillet's tangent-line endpoints as nodes; affected planar neighbours are re-triangulated |
 | `noise_isotropic` | noise | identity | every distinct vertex moved by an independent vector drawn uniformly from a ball of radius A = severity * 50 um (50 um at severity 1) |
@@ -62,6 +85,30 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (46) | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
 | smoke (46) | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
 | smoke (46) | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
+| smoke (46) | `unwelded_corners` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `unwelded_corners` | 0.5 | 0.000 | 0.000 | 1.0 | no | yes |
+| smoke (46) | `unwelded_corners` | 1.0 | 0.000 | 0.001 | 1.0 | no | yes |
+| smoke (46) | `unwelded_gap` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `unwelded_gap` | 0.5 | 0.647 | 1.000 | 1.0 | no | yes |
+| smoke (46) | `unwelded_gap` | 1.0 | 9.123 | 10.000 | 1.0 | no | yes |
+| smoke (46) | `crack_seam` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `crack_seam` | 0.5 | 5.069 | 100.000 | 1.0 | no | yes |
+| smoke (46) | `crack_seam` | 1.0 | 11.223 | 200.000 | 1.0 | no | yes |
+| smoke (46) | `flipped_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `flipped_facets` | 0.5 | 3439.963 | 117264.780 | 1.0 | no | yes |
+| smoke (46) | `flipped_facets` | 1.0 | 4701.381 | 159456.799 | 1.0 | no | yes |
+| smoke (46) | `duplicate_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `duplicate_facets` | 0.5 | - | - | 1.0 | no | yes |
+| smoke (46) | `duplicate_facets` | 1.0 | - | - | 1.0 | no | yes |
+| smoke (46) | `hole_patch` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `hole_patch` | 0.5 | - | - | 0.9 | no | no |
+| smoke (46) | `hole_patch` | 1.0 | - | - | 0.9 | no | no |
+| smoke (46) | `stray_shells` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `stray_shells` | 0.5 | - | - | 1.2 | no | yes |
+| smoke (46) | `stray_shells` | 1.0 | - | - | 1.2 | no | yes |
+| smoke (46) | `nonmanifold_fin` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `nonmanifold_fin` | 0.5 | - | - | 1.0 | no | yes |
+| smoke (46) | `nonmanifold_fin` | 1.0 | - | - | 1.1 | no | yes |
 | smoke (46) | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
 | smoke (46) | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
 | smoke (46) | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
@@ -108,6 +155,30 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
 | filleted box | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
+| filleted box | `unwelded_corners` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `unwelded_corners` | 0.5 | 0.000 | 0.000 | 1.0 | no | yes |
+| filleted box | `unwelded_corners` | 1.0 | 0.000 | 0.001 | 1.0 | no | yes |
+| filleted box | `unwelded_gap` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `unwelded_gap` | 0.5 | 0.643 | 1.000 | 1.0 | no | yes |
+| filleted box | `unwelded_gap` | 1.0 | 9.131 | 10.000 | 1.0 | no | yes |
+| filleted box | `crack_seam` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `crack_seam` | 0.5 | 2.198 | 100.000 | 1.0 | no | yes |
+| filleted box | `crack_seam` | 1.0 | 4.396 | 200.000 | 1.0 | no | yes |
+| filleted box | `flipped_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `flipped_facets` | 0.5 | 977.463 | 14006.542 | 1.0 | no | yes |
+| filleted box | `flipped_facets` | 1.0 | 1543.985 | 19798.990 | 1.0 | no | yes |
+| filleted box | `duplicate_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `duplicate_facets` | 0.5 | - | - | 1.0 | no | yes |
+| filleted box | `duplicate_facets` | 1.0 | - | - | 1.1 | no | yes |
+| filleted box | `hole_patch` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `hole_patch` | 0.5 | - | - | 1.0 | no | yes |
+| filleted box | `hole_patch` | 1.0 | - | - | 1.0 | no | yes |
+| filleted box | `stray_shells` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `stray_shells` | 0.5 | - | - | 1.0 | no | yes |
+| filleted box | `stray_shells` | 1.0 | - | - | 1.0 | no | yes |
+| filleted box | `nonmanifold_fin` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `nonmanifold_fin` | 0.5 | - | - | 1.0 | no | yes |
+| filleted box | `nonmanifold_fin` | 1.0 | - | - | 1.1 | no | yes |
 | filleted box | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
 | filleted box | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
