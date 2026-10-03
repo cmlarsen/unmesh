@@ -46,8 +46,15 @@ impl Surface {
         }
     }
 
-    pub fn to_world(&self, center: V3) -> Surface {
+    pub fn as_plane(&self) -> Option<(V3, f64)> {
         match *self {
+            Surface::Plane { normal, offset } => Some((normal, offset)),
+            Surface::Facets => None,
+        }
+    }
+
+    pub fn to_world(self, center: V3) -> Surface {
+        match self {
             Surface::Plane { normal, offset } => Surface::Plane {
                 normal,
                 offset: offset + dot(normal, center),

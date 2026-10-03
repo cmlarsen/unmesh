@@ -153,10 +153,7 @@ pub fn build(
                     scale(add(pos[g.u as usize], pos[g.v as usize]), 0.5),
                     center,
                 );
-                angle_deg(
-                    normal_of(ra, mid, g.fa),
-                    normal_of(rb, mid, g.fb),
-                )
+                angle_deg(normal_of(ra, mid, g.fa), normal_of(rb, mid, g.fb))
             })
             .collect();
         let tangent: Vec<bool> = dih.iter().map(|d| *d < thr).collect();

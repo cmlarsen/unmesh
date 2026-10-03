@@ -32,7 +32,10 @@ pub fn assemble(
     for (i, fr) in finals.iter().enumerate() {
         let triangles: Vec<u32> = fr.faces.iter().map(|&f| asm.fsrc[f as usize]).collect();
         let (surface, residual) = match fr.surface.to_world(asm.center) {
-            Surface::Plane { normal: n, offset: dw } => {
+            Surface::Plane {
+                normal: n,
+                offset: dw,
+            } => {
                 let p = pos[asm.faces[fr.faces[0] as usize][0] as usize];
                 let off = dot(n, p) - dw;
                 (

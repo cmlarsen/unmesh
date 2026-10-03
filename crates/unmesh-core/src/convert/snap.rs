@@ -1,5 +1,6 @@
 use super::fit::{Region, offset_fit, residual};
 use super::linalg::{V3, dot, scale, sub, unit};
+use super::surface::Surface;
 
 pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap_deg: f64) {
     let rms_limit = (2.5 * sigma).max(0.5e-3);
@@ -18,8 +19,10 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
         (max <= tol && rms <= rms_limit).then_some((d, rms, max))
     };
     let adopt = |r: &mut Region, cand: V3, res: (f64, f64, f64)| {
-        r.n = cand;
-        r.d = res.0;
+        r.surface = Surface::Plane {
+            normal: cand,
+            offset: res.0,
+        };
         r.rms = res.1;
         r.max = res.2;
     };
@@ -29,10 +32,13 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
         if r.area <= 0.0 {
             continue;
         }
+        let Some((n, _)) = r.surface.as_plane() else {
+            continue;
+        };
         for a in 0..3 {
             let mut e = [0.0; 3];
-            e[a] = if r.n[a] >= 0.0 { 1.0 } else { -1.0 };
-            if dot(r.n, e) >= allow_cos(r) {
+            e[a] = if n[a] >= 0.0 { 1.0 } else { -1.0 };
+            if dot(n, e) >= allow_cos(r) {
                 if let Some(res) = try_normal(r, e) {
                     adopt(r, e, res);
                     done[i] = true;
@@ -55,7 +61,9 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
         .collect();
     order.sort_by(|&a, &b| regions[b].area.total_cmp(&regions[a].area).then(a.cmp(&b)));
     for i in order {
-        let ni = regions[i].n;
+        let Some((ni, _)) = regions[i].surface.as_plane() else {
+            continue;
+        };
         let cos_r = allow_cos(&regions[i]);
         if let Some(u) = classes.iter().find(|u| dot(ni, **u).abs() >= cos_r) {
             let s = if dot(ni, *u) >= 0.0 { 1.0 } else { -1.0 };
@@ -87,16 +95,19 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
 pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
     let mut stats: Vec<(f64, f64, f64)> = Vec::new();
     for r in regions {
-        let n = r.verts.len();
-        if r.area <= 0.0 || n < 4 {
+        let nv = r.verts.len();
+        if r.area <= 0.0 || nv < 4 {
             continue;
         }
+        let Some((n, d)) = r.surface.as_plane() else {
+            continue;
+        };
         let ss: f64 = r
             .verts
             .iter()
-            .map(|&(vi, _)| (dot(r.n, v[vi as usize]) - r.d).powi(2))
+            .map(|&(vi, _)| (dot(n, v[vi as usize]) - d).powi(2))
             .sum();
-        let dof = (n - 3) as f64;
+        let dof = (nv - 3) as f64;
         stats.push(((ss / dof).sqrt(), ss, dof));
     }
     if stats.is_empty() {

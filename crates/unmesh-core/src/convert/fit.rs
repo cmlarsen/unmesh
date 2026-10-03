@@ -2,14 +2,13 @@ use rustc_hash::FxHashMap;
 
 use super::dsu::Dsu;
 use super::linalg::{V3, dot, scale, sub, sym_eigen, unit};
-use super::segment::{TriInfo, segment};
+use super::segment::{self, TriInfo};
 use super::surface::Surface;
 use super::topology::{CompKind, NONE, Topology};
 
 pub struct Region {
     pub faces: Vec<u32>,
-    pub n: V3,
-    pub d: f64,
+    pub surface: Surface,
     pub area: f64,
     pub width: f64,
     pub verts: Vec<(u32, f64)>,
@@ -181,8 +180,10 @@ pub fn build_regions(
             };
             Region {
                 faces: fl,
-                n,
-                d,
+                surface: Surface::Plane {
+                    normal: n,
+                    offset: d,
+                },
                 area,
                 width,
                 verts,
@@ -263,7 +264,7 @@ pub fn merge_coplanar(
             verts.sort_unstable_by_key(|x| x.0);
             Comp {
                 verts,
-                n: r.n,
+                n: r.surface.as_plane().map(|(n, _)| n).unwrap_or([0.0; 3]),
                 width: r.width,
                 area: r.area,
             }
@@ -348,9 +349,46 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         snap_deg,
         scratch,
     } = args;
-    let (label, n_seg) = segment(vc, faces, nbr, info, eligible, tol);
-    let regions0 = build_regions(vc, faces, info, &label, n_seg, tol, scratch);
-    let pairs0 = region_pairs(nbr, &label);
+    let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol);
+    run(RunArgs {
+        vc,
+        faces,
+        nbr,
+        info,
+        label: &label,
+        n_seg,
+        tol,
+        snap_deg,
+        scratch,
+    })
+}
+
+pub struct RunArgs<'a> {
+    pub vc: &'a [V3],
+    pub faces: &'a [[u32; 3]],
+    pub nbr: &'a [[u32; 3]],
+    pub info: &'a [TriInfo],
+    pub label: &'a [u32],
+    pub n_seg: usize,
+    pub tol: f64,
+    pub snap_deg: f64,
+    pub scratch: &'a mut Scratch,
+}
+
+pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
+    let RunArgs {
+        vc,
+        faces,
+        nbr,
+        info,
+        label,
+        n_seg,
+        tol,
+        snap_deg,
+        scratch,
+    } = args;
+    let regions0 = build_regions(vc, faces, info, label, n_seg, tol, scratch);
+    let pairs0 = region_pairs(nbr, label);
     let root = merge_coplanar(vc, &regions0, &pairs0, tol, snap_deg);
     let mut compact = vec![NONE; n_seg];
     let mut n_merged = 0u32;
@@ -400,10 +438,7 @@ pub fn finalize(
         if is_analytic[ri] {
             finals.push(Final {
                 faces: r.faces.clone(),
-                surface: Surface::Plane {
-                    normal: r.n,
-                    offset: r.d,
-                },
+                surface: r.surface,
                 rms: r.rms,
                 max: r.max,
                 comp: comp_of[r.faces[0] as usize] as usize,

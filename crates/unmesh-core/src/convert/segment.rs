@@ -76,7 +76,7 @@ impl Grower<'_> {
     }
 }
 
-pub fn segment(
+pub fn run(
     v: &[V3],
     f: &[[u32; 3]],
     nbr: &[[u32; 3]],

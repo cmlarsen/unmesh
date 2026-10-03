@@ -14,7 +14,7 @@ mod weld;
 
 use std::collections::BTreeMap;
 
-use crate::api::{ConvertError, ConvertOptions, ConvertOutput, Report};
+use crate::api::{ConvertError, ConvertOptions, ConvertOutput, ConvertWarning, Report};
 use crate::ir::Tolerances;
 use crate::mesh::{Point, TriangleSoup};
 
@@ -22,6 +22,7 @@ use emit::Asm;
 use fit::{label_faces, region_pairs};
 use linalg::{V3, add};
 use project::Projected;
+use topology::NONE;
 
 const MIN_TOLERANCE: f64 = 1e-3;
 const NOISE_FACTOR: f64 = 5.0;
@@ -30,23 +31,7 @@ pub fn convert_soup(
     soup: &TriangleSoup,
     options: &ConvertOptions,
 ) -> Result<ConvertOutput, ConvertError> {
-    let (mut w, mut warnings) = weld::run(soup, options.vertex_merge)?;
-
-    let auto_tol = options.linear_tolerance.is_none();
-    let mut tol = match options.linear_tolerance {
-        Some(t) if t.is_finite() && t > 0.0 => t,
-        Some(_) => {
-            return Err(ConvertError::InvalidInput(
-                "linear_tolerance must be finite and > 0".to_string(),
-            ));
-        }
-        None => (5e-4 * w.diag).max(MIN_TOLERANCE),
-    };
-
-    let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
-    warnings.extend(shell_warnings);
-
-    let info = segment::tri_info(&w.vc, &w.faces);
+    let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
     let mut scratch = fit::Scratch::new(w.vc.len());
     let mut fit_once = |tol: f64| {
         fit::fit_regions(fit::FitArgs {
@@ -60,6 +45,120 @@ pub fn convert_soup(
             scratch: &mut scratch,
         })
     };
+    finish(
+        &w,
+        &shells,
+        &info,
+        soup.len() as u32,
+        options,
+        tol,
+        auto_tol,
+        warnings,
+        &mut fit_once,
+    )
+}
+
+#[allow(dead_code)]
+pub(crate) fn convert_from_labels(
+    soup: &TriangleSoup,
+    options: &ConvertOptions,
+    source_labels: &[u32],
+) -> Result<ConvertOutput, ConvertError> {
+    if source_labels.len() != soup.len() {
+        return Err(ConvertError::InvalidInput(format!(
+            "label count {} does not match triangle count {}",
+            source_labels.len(),
+            soup.len()
+        )));
+    }
+    let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
+    let face_labels: Vec<u32> = w
+        .fsrc
+        .iter()
+        .enumerate()
+        .map(|(f, &s)| {
+            if shells.eligible[f] {
+                source_labels[s as usize]
+            } else {
+                NONE
+            }
+        })
+        .collect();
+    let n_seg = face_labels
+        .iter()
+        .filter(|&&l| l != NONE)
+        .max()
+        .map(|m| *m as usize + 1)
+        .unwrap_or(0);
+    let mut scratch = fit::Scratch::new(w.vc.len());
+    let mut fit_once = |tol: f64| {
+        fit::run(fit::RunArgs {
+            vc: &w.vc,
+            faces: &w.faces,
+            nbr: &shells.topo.nbr,
+            info: &info,
+            label: &face_labels,
+            n_seg,
+            tol,
+            snap_deg: options.angular_snap_deg,
+            scratch: &mut scratch,
+        })
+    };
+    finish(
+        &w,
+        &shells,
+        &info,
+        soup.len() as u32,
+        options,
+        tol,
+        auto_tol,
+        warnings,
+        &mut fit_once,
+    )
+}
+
+type Prepared = (
+    weld::Welded,
+    topology::Shells,
+    Vec<segment::TriInfo>,
+    f64,
+    bool,
+    Vec<ConvertWarning>,
+);
+
+fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, ConvertError> {
+    let (mut w, mut warnings) = weld::run(soup, options.vertex_merge)?;
+
+    let auto_tol = options.linear_tolerance.is_none();
+    let tol = match options.linear_tolerance {
+        Some(t) if t.is_finite() && t > 0.0 => t,
+        Some(_) => {
+            return Err(ConvertError::InvalidInput(
+                "linear_tolerance must be finite and > 0".to_string(),
+            ));
+        }
+        None => (5e-4 * w.diag).max(MIN_TOLERANCE),
+    };
+
+    let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
+    warnings.extend(shell_warnings);
+
+    let info = segment::tri_info(&w.vc, &w.faces);
+    Ok((w, shells, info, tol, auto_tol, warnings))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    w: &weld::Welded,
+    shells: &topology::Shells,
+    info: &[segment::TriInfo],
+    source_triangles: u32,
+    options: &ConvertOptions,
+    mut tol: f64,
+    auto_tol: bool,
+    mut warnings: Vec<ConvertWarning>,
+    fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
+) -> Result<ConvertOutput, ConvertError> {
     let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
     if auto_tol {
@@ -85,7 +184,7 @@ pub fn convert_soup(
         finals: &finals,
         flabel: &flabel,
         faces: &w.faces,
-        info: &info,
+        info,
         tol,
         diag: w.diag,
         center: w.center,
@@ -125,7 +224,7 @@ pub fn convert_soup(
     };
     let asm = Asm {
         tolerances,
-        source_triangles: soup.len() as u32,
+        source_triangles,
         center: w.center,
         source_vertices: w.unique_vertices,
         faces: &w.faces,
@@ -149,7 +248,7 @@ pub fn convert_soup(
             },
         ),
         Err(errors) => {
-            warnings.push(crate::api::ConvertWarning {
+            warnings.push(ConvertWarning {
                 code: "fallback_facets".to_string(),
                 message: format!(
                     "analytic assembly failed validation ({}); every shell is kept as facets",
@@ -446,6 +545,18 @@ mod tests {
                 .any(|w| w.code == "non_manifold_edges")
         );
         ir.validate().unwrap();
+    }
+
+    #[test]
+    fn oracle_labels_reproduce_segmented_box() {
+        let soup = TriangleSoup {
+            triangles: grid_box([0.0; 3], [10.0, 20.0, 30.0], 1, false),
+        };
+        let labels: Vec<u32> = (0..12).map(|i| i / 2).collect();
+        let a = convert_soup(&soup, &ConvertOptions::default()).unwrap();
+        let b = convert_from_labels(&soup, &ConvertOptions::default(), &labels).unwrap();
+        assert_eq!(a.ir, b.ir);
+        assert_eq!(a.report, b.report);
     }
 
     #[test]
