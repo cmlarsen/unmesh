@@ -349,7 +349,8 @@ def revolved_cone(rng: np.random.Generator):
         {
             "type": "cone_section",
             "center": [0.0, 0.0, _r(h1 + h2 / 2)],
-            "axis": [0, 0, 1],
+            "axis": [0, 0, 1 if r2 > r1 else -1],
+            "apex": [0.0, 0.0, float(h1 - r1 * h2 / (r2 - r1))],
             "radius_bottom": r1,
             "radius_top": r2,
             "height": h2,

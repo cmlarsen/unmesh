@@ -16,6 +16,10 @@ from unmesh_harness.labels import (
     tessellate,
 )
 
+from .cases import smoke_by_deflection
+
+MESHER_CHORD_FACTOR = {"cone": 3.0, "sphere": 2.5, "torus": 4.0}
+
 
 def closed_manifold_problems(tris):
     verts, idx, *_ = unmesh.weld(tris, 0.0)
@@ -56,7 +60,7 @@ def check_part(shape, lin, ang, exact_volume=True):
     assert set(np.unique(mesh.face_id)) == set(range(len(mesh.faces)))
     for face in mesh.faces:
         d = distance_to_surface(face, mesh.face_tris(face.id).mean(axis=1))
-        allowed = lin if face.surface in ("plane", "cylinder") else 4 * lin
+        allowed = lin * MESHER_CHORD_FACTOR.get(face.surface, 1.0)
         assert d.max() <= allowed + 1e-9, (face.id, face.surface, d.max())
     for face in mesh.faces:
         tris = mesh.face_tris(face.id)
@@ -69,8 +73,7 @@ def check_part(shape, lin, ang, exact_volume=True):
     return mesh
 
 
-@pytest.mark.parametrize(("lin", "ang"), DEFLECTION_SETTINGS)
-@pytest.mark.parametrize("entry", select(load_manifest(), "smoke"), ids=lambda e: e["id"])
+@pytest.mark.parametrize(("entry", "lin", "ang"), smoke_by_deflection())
 def test_smoke_parts_closed_manifold_and_on_surface(entry, lin, ang):
     check_part(
         generate(entry["family"], entry["seed"]).solid,

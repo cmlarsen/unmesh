@@ -13,6 +13,8 @@ from unmesh_harness.judge import calibration, judge, sample_ir, under_reports
 from unmesh_harness.labels import tessellate
 from unmesh_harness.oracle import build_oracle_ir
 
+from .cases import smoke_entries
+
 LIN, ANG = 0.01, 0.2
 FINE = (0.001, 0.1)
 
@@ -23,7 +25,7 @@ def planar_only(mesh):
     return all(f.surface == "plane" for f in mesh.faces)
 
 
-@pytest.mark.parametrize("entry", SMOKE, ids=lambda e: e["id"])
+@pytest.mark.parametrize("entry", smoke_entries(curved_slow=True))
 def test_oracle_scores_its_own_input(entry):
     shape = generate(entry["family"], entry["seed"]).solid
     mesh = tessellate(shape, LIN, ANG)

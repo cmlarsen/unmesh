@@ -11,6 +11,8 @@ from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from unmesh_harness.oracle import build_oracle_ir
 
+from .cases import smoke_by_deflection
+
 
 def surface_normals(surface, pts):
     s = surface
@@ -88,8 +90,7 @@ def check_oracle(shape, lin, ang):
     return mesh, ir
 
 
-@pytest.mark.parametrize(("lin", "ang"), DEFLECTION_SETTINGS)
-@pytest.mark.parametrize("entry", select(load_manifest(), "smoke"), ids=lambda e: e["id"])
+@pytest.mark.parametrize(("entry", "lin", "ang"), smoke_by_deflection())
 def test_smoke_oracle_validates(entry, lin, ang):
     mesh, ir = check_oracle(generate(entry["family"], entry["seed"]).solid, lin, ang)
     assert len(ir.shells) == 1 and ir.shells[0].closed
