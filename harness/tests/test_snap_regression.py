@@ -19,9 +19,7 @@ def test_clean_curved_part_recovers_every_plane_face(part_id):
     ir, report = unmesh.convert(mesh.tris)
     result = score_recovery(mesh, mesh.face_id, ir)
     lost = [
-        d["face"]
-        for d in result["faces_detail"]
-        if d["type"] == "plane" and not d["recovered"]
+        d["face"] for d in result["faces_detail"] if d["type"] == "plane" and not d["recovered"]
     ]
     assert lost == [], (part_id, lost)
     assert report.max_deviation <= 1e-3, report.max_deviation
@@ -45,15 +43,11 @@ def top_tilt_deg(ir, tris, width):
         centroid = tris[np.array(region.triangles)].mean(axis=(0, 1))
         normal = np.array(region.surface.normal, float)
         if centroid[2] > 63 and abs(centroid[0]) < width and normal[2] > 0.9:
-            return math.degrees(
-                math.acos(min(1.0, abs(normal[2]) / np.linalg.norm(normal)))
-            )
+            return math.degrees(math.acos(min(1.0, abs(normal[2]) / np.linalg.norm(normal))))
     return None
 
 
-@pytest.mark.parametrize(
-    "width,tilt_deg", [(1.0, 0.8), (1.0, 1.5), (1.0, 2.5), (3.0, 0.8)]
-)
+@pytest.mark.parametrize("width,tilt_deg", [(1.0, 0.8), (1.0, 1.5), (1.0, 2.5), (3.0, 0.8)])
 def test_deliberate_tilt_on_curved_part_stays_unsnapped(width, tilt_deg):
     mesh = tessellate(tilted_boss(width, tilt_deg), LIN, ANG)
     ir, _ = unmesh.convert(mesh.tris)
