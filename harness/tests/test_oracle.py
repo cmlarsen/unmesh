@@ -92,8 +92,10 @@ def check_oracle(shape, lin, ang):
 
 @pytest.mark.parametrize(("entry", "lin", "ang"), smoke_by_deflection())
 def test_smoke_oracle_validates(entry, lin, ang):
-    mesh, ir = check_oracle(generate(entry["family"], entry["seed"]).solid, lin, ang)
-    assert len(ir.shells) == 1 and ir.shells[0].closed
+    gt = generate(entry["family"], entry["seed"])
+    mesh, ir = check_oracle(gt.solid, lin, ang)
+    assert len(ir.shells) == gt.parameters.get("shells", 1)
+    assert all(s.closed for s in ir.shells)
     assert all(v.role == "junction" for v in ir.vertices)
     assert all(not b.closed or len(b.points) >= 3 for a in ir.adjacencies for b in a.boundaries)
 

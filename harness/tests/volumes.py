@@ -1,5 +1,12 @@
 import math
 
+from unmesh_harness.groundtruth.complex import (
+    assembly_volume,
+    finned_volume,
+    mixed_volume,
+    void_volume,
+)
+
 
 def _shoelace(p):
     n = len(p)
@@ -138,4 +145,12 @@ def expected_volume(gt):
         length, width, height = p["box"]
         corner = [(length / 2, width / 2)] + [tuple(q) for q in feats[0]["points"]]
         return length * width * height - _shoelace(corner) * height
+    if f == "complex_mixed":
+        return mixed_volume(p, feats)
+    if f == "complex_thin":
+        return finned_volume(p, feats)
+    if f == "complex_void":
+        return void_volume(p, feats)
+    if f == "complex_assembly":
+        return assembly_volume(p, feats)
     raise KeyError(f)

@@ -8630,6 +8630,1570 @@
           29.525
         ]
       }
+    },
+    {
+      "id": "complex_mixed-0000",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 0,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 56323.905837325,
+        "face_count": 63,
+        "bbox_min": [
+          -52.739,
+          -35.3955,
+          0.0
+        ],
+        "bbox_max": [
+          52.739,
+          35.3955,
+          16.136
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0000",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 0,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 26453.167645114,
+        "face_count": 91,
+        "bbox_min": [
+          -42.739,
+          -24.047,
+          0.0
+        ],
+        "bbox_max": [
+          42.739,
+          24.047,
+          13.036
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0000",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 0,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 123995.007800408,
+        "face_count": 57,
+        "bbox_min": [
+          -42.739,
+          -29.047,
+          0.0
+        ],
+        "bbox_max": [
+          42.739,
+          29.047,
+          37.148
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0000",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 0,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 146067.589925396,
+        "face_count": 225,
+        "bbox_min": [
+          7.9995,
+          -27.698,
+          0.0
+        ],
+        "bbox_max": [
+          240.962,
+          27.698,
+          39.211
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0001",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 1,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 84055.607375677,
+        "face_count": 59,
+        "bbox_min": [
+          -50.2365,
+          -49.0095,
+          0.0
+        ],
+        "bbox_max": [
+          50.2365,
+          49.0095,
+          13.404
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0001",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 1,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 38612.307073461,
+        "face_count": 136,
+        "bbox_min": [
+          -40.2365,
+          -34.257,
+          0.0
+        ],
+        "bbox_max": [
+          40.2365,
+          34.257,
+          15.118
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0001",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 1,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 168497.843393904,
+        "face_count": 61,
+        "bbox_min": [
+          -40.2365,
+          -39.257,
+          0.0
+        ],
+        "bbox_max": [
+          40.2365,
+          39.257,
+          39.543
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0001",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 1,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 135268.98265876,
+        "face_count": 204,
+        "bbox_min": [
+          8.0005,
+          -34.5045,
+          0.0
+        ],
+        "bbox_max": [
+          238.446,
+          34.5045,
+          38.898
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0002",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 2,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 87565.130260518,
+        "face_count": 63,
+        "bbox_min": [
+          -45.232,
+          -35.97,
+          0.0
+        ],
+        "bbox_max": [
+          45.232,
+          35.97,
+          17.601
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0002",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 2,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 38229.228787588,
+        "face_count": 89,
+        "bbox_min": [
+          -35.232,
+          -24.4775,
+          0.0
+        ],
+        "bbox_max": [
+          35.232,
+          24.4775,
+          18.666
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0002",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 2,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 158418.941373876,
+        "face_count": 57,
+        "bbox_min": [
+          -35.232,
+          -29.4775,
+          0.0
+        ],
+        "bbox_max": [
+          35.232,
+          29.4775,
+          52.364
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0002",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 2,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 160594.681521331,
+        "face_count": 213,
+        "bbox_min": [
+          8.0,
+          -28.293,
+          0.0
+        ],
+        "bbox_max": [
+          209.366,
+          28.293,
+          44.289
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0003",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 3,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 75702.43035007,
+        "face_count": 59,
+        "bbox_min": [
+          -41.713,
+          -34.736,
+          0.0
+        ],
+        "bbox_max": [
+          41.713,
+          34.736,
+          17.693
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0003",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 3,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33130.886326545,
+        "face_count": 120,
+        "bbox_min": [
+          -31.713,
+          -23.552,
+          0.0
+        ],
+        "bbox_max": [
+          31.713,
+          23.552,
+          18.973
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0003",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 3,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 140853.999560846,
+        "face_count": 57,
+        "bbox_min": [
+          -31.713,
+          -28.552,
+          0.0
+        ],
+        "bbox_max": [
+          31.713,
+          28.552,
+          53.614
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0003",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 3,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 165300.170995744,
+        "face_count": 200,
+        "bbox_min": [
+          8.0005,
+          -28.7275,
+          0.0
+        ],
+        "bbox_max": [
+          227.134,
+          28.7275,
+          38.79
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0004",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 4,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 140782.683321857,
+        "face_count": 59,
+        "bbox_min": [
+          -58.861,
+          -40.2265,
+          0.0
+        ],
+        "bbox_max": [
+          58.861,
+          40.2265,
+          23.389
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0004",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 4,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65747.899945805,
+        "face_count": 110,
+        "bbox_min": [
+          -48.861,
+          -27.67,
+          0.0
+        ],
+        "bbox_max": [
+          48.861,
+          27.67,
+          21.746
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0004",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 4,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 265679.520216929,
+        "face_count": 57,
+        "bbox_min": [
+          -48.861,
+          -32.67,
+          0.0
+        ],
+        "bbox_max": [
+          48.861,
+          32.67,
+          55.754
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0004",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 4,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 218328.279085587,
+        "face_count": 221,
+        "bbox_min": [
+          8.0,
+          -30.1135,
+          0.0
+        ],
+        "bbox_max": [
+          256.2915,
+          30.1135,
+          43.441
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0005",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 5,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 114086.057757775,
+        "face_count": 63,
+        "bbox_min": [
+          -56.1,
+          -46.159,
+          0.0
+        ],
+        "bbox_max": [
+          56.1,
+          46.159,
+          18.276
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0005",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 5,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 55133.594980385,
+        "face_count": 98,
+        "bbox_min": [
+          -46.1,
+          -32.119,
+          0.0
+        ],
+        "bbox_max": [
+          46.1,
+          32.119,
+          18.376
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0005",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 5,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 237857.684065632,
+        "face_count": 57,
+        "bbox_min": [
+          -46.1,
+          -37.119,
+          0.0
+        ],
+        "bbox_max": [
+          46.1,
+          37.119,
+          45.641
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0005",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 5,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 147211.470441569,
+        "face_count": 206,
+        "bbox_min": [
+          8.0,
+          -33.0795,
+          0.0
+        ],
+        "bbox_max": [
+          231.342,
+          33.0795,
+          35.385
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0006",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 6,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 74848.97449647,
+        "face_count": 63,
+        "bbox_min": [
+          -50.7635,
+          -36.8655,
+          0.0
+        ],
+        "bbox_max": [
+          50.7635,
+          36.8655,
+          13.346
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0006",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 6,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 34603.90195337,
+        "face_count": 105,
+        "bbox_min": [
+          -40.7635,
+          -25.149,
+          0.0
+        ],
+        "bbox_max": [
+          40.7635,
+          25.149,
+          17.163
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0006",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 6,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 144179.766132487,
+        "face_count": 57,
+        "bbox_min": [
+          -40.7635,
+          -30.149,
+          0.0
+        ],
+        "bbox_max": [
+          40.7635,
+          30.149,
+          44.703
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0006",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 6,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 152678.697215773,
+        "face_count": 225,
+        "bbox_min": [
+          7.9995,
+          -28.6115,
+          0.0
+        ],
+        "bbox_max": [
+          239.599,
+          28.6115,
+          32.569
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0007",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 7,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 128888.256475137,
+        "face_count": 59,
+        "bbox_min": [
+          -52.502,
+          -47.9445,
+          0.0
+        ],
+        "bbox_max": [
+          52.502,
+          47.9445,
+          19.452
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0007",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 7,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 61574.970569965,
+        "face_count": 107,
+        "bbox_min": [
+          -42.502,
+          -33.458,
+          0.0
+        ],
+        "bbox_max": [
+          42.502,
+          33.458,
+          20.623
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0007",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 7,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 247318.456168334,
+        "face_count": 57,
+        "bbox_min": [
+          -42.502,
+          -38.458,
+          0.0
+        ],
+        "bbox_max": [
+          42.502,
+          38.458,
+          53.448
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0007",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 7,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 164779.122116449,
+        "face_count": 216,
+        "bbox_min": [
+          8.0005,
+          -33.972,
+          0.0
+        ],
+        "bbox_max": [
+          220.086,
+          33.972,
+          46.314
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0008",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 8,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 91398.196311224,
+        "face_count": 63,
+        "bbox_min": [
+          -46.5395,
+          -49.7455,
+          0.0
+        ],
+        "bbox_max": [
+          46.5395,
+          49.7455,
+          18.354
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0008",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 8,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 41036.141412038,
+        "face_count": 123,
+        "bbox_min": [
+          -36.5395,
+          -34.809,
+          0.0
+        ],
+        "bbox_max": [
+          36.5395,
+          34.809,
+          17.291
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0008",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 8,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 167144.142246865,
+        "face_count": 57,
+        "bbox_min": [
+          -36.5395,
+          -39.809,
+          0.0
+        ],
+        "bbox_max": [
+          36.5395,
+          39.809,
+          43.842
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0008",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 8,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 182397.496647703,
+        "face_count": 211,
+        "bbox_min": [
+          7.9995,
+          -34.873,
+          0.0
+        ],
+        "bbox_max": [
+          237.3575,
+          34.873,
+          42.807
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0009",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 9,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 96998.466181896,
+        "face_count": 59,
+        "bbox_min": [
+          -57.405,
+          -35.7365,
+          0.0
+        ],
+        "bbox_max": [
+          57.405,
+          35.7365,
+          20.602
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0009",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 9,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 45791.65145476,
+        "face_count": 120,
+        "bbox_min": [
+          -47.405,
+          -24.3025,
+          0.0
+        ],
+        "bbox_max": [
+          47.405,
+          24.3025,
+          19.533
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0009",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 9,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 173504.046795078,
+        "face_count": 57,
+        "bbox_min": [
+          -47.405,
+          -29.3025,
+          0.0
+        ],
+        "bbox_max": [
+          47.405,
+          29.3025,
+          48.507
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0009",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 9,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 150062.630117111,
+        "face_count": 218,
+        "bbox_min": [
+          7.9995,
+          -27.868,
+          0.0
+        ],
+        "bbox_max": [
+          240.721,
+          27.868,
+          34.925
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0010",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 10,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 108790.312988458,
+        "face_count": 63,
+        "bbox_min": [
+          -59.12,
+          -34.1535,
+          0.0
+        ],
+        "bbox_max": [
+          59.12,
+          34.1535,
+          18.127
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0010",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 10,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 51149.71317175,
+        "face_count": 101,
+        "bbox_min": [
+          -49.12,
+          -23.115,
+          0.0
+        ],
+        "bbox_max": [
+          49.12,
+          23.115,
+          19.761
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0010",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 10,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 220196.319046767,
+        "face_count": 57,
+        "bbox_min": [
+          -49.12,
+          -28.115,
+          0.0
+        ],
+        "bbox_max": [
+          49.12,
+          28.115,
+          52.171
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0010",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 10,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 167408.022130095,
+        "face_count": 199,
+        "bbox_min": [
+          8.0,
+          -27.486,
+          0.0
+        ],
+        "bbox_max": [
+          251.502,
+          27.486,
+          32.373
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0011",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 11,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 82550.383345172,
+        "face_count": 59,
+        "bbox_min": [
+          -42.5715,
+          -39.9855,
+          0.0
+        ],
+        "bbox_max": [
+          42.5715,
+          39.9855,
+          16.57
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0011",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 11,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 35213.909842429,
+        "face_count": 100,
+        "bbox_min": [
+          -32.5715,
+          -27.489,
+          0.0
+        ],
+        "bbox_max": [
+          32.5715,
+          27.489,
+          19.475
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0011",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 11,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 151660.227703243,
+        "face_count": 57,
+        "bbox_min": [
+          -32.5715,
+          -32.489,
+          0.0
+        ],
+        "bbox_max": [
+          32.5715,
+          32.489,
+          49.915
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0011",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 11,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 139934.253435194,
+        "face_count": 228,
+        "bbox_min": [
+          7.9995,
+          -29.993,
+          0.0
+        ],
+        "bbox_max": [
+          211.105,
+          29.993,
+          38.078
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0012",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 12,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 77415.610760104,
+        "face_count": 63,
+        "bbox_min": [
+          -45.0165,
+          -48.935,
+          0.0
+        ],
+        "bbox_max": [
+          45.0165,
+          48.935,
+          15.639
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0012",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 12,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 34734.797458981,
+        "face_count": 98,
+        "bbox_min": [
+          -35.0165,
+          -34.2015,
+          0.0
+        ],
+        "bbox_max": [
+          35.0165,
+          34.2015,
+          16.629
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0012",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 12,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 159261.893873661,
+        "face_count": 57,
+        "bbox_min": [
+          -35.0165,
+          -39.2015,
+          0.0
+        ],
+        "bbox_max": [
+          35.0165,
+          39.2015,
+          40.459
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0012",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 12,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 142801.583023436,
+        "face_count": 232,
+        "bbox_min": [
+          8.0005,
+          -34.4675,
+          0.0
+        ],
+        "bbox_max": [
+          242.026,
+          34.4675,
+          37.342
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0013",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 13,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 144814.688243092,
+        "face_count": 59,
+        "bbox_min": [
+          -57.296,
+          -47.106,
+          0.0
+        ],
+        "bbox_max": [
+          57.296,
+          47.106,
+          20.923
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0013",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 13,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 68781.220588491,
+        "face_count": 104,
+        "bbox_min": [
+          -47.296,
+          -32.8295,
+          0.0
+        ],
+        "bbox_max": [
+          47.296,
+          32.8295,
+          20.721
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0013",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 13,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 273999.973823738,
+        "face_count": 57,
+        "bbox_min": [
+          -47.296,
+          -37.8295,
+          0.0
+        ],
+        "bbox_max": [
+          47.296,
+          37.8295,
+          51.537
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0013",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 13,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 183214.161816504,
+        "face_count": 220,
+        "bbox_min": [
+          8.0,
+          -33.553,
+          0.0
+        ],
+        "bbox_max": [
+          238.1175,
+          33.553,
+          41.528
+        ]
+      }
+    },
+    {
+      "id": "complex_mixed-0014",
+      "tier": "generated",
+      "family": "complex_mixed",
+      "seed": 14,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 106080.823195576,
+        "face_count": 63,
+        "bbox_min": [
+          -56.6195,
+          -37.219,
+          0.0
+        ],
+        "bbox_max": [
+          56.6195,
+          37.219,
+          20.233
+        ]
+      }
+    },
+    {
+      "id": "complex_thin-0014",
+      "tier": "generated",
+      "family": "complex_thin",
+      "seed": 14,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49411.105059905,
+        "face_count": 100,
+        "bbox_min": [
+          -46.6195,
+          -25.414,
+          0.0
+        ],
+        "bbox_max": [
+          46.6195,
+          25.414,
+          18.368
+        ]
+      }
+    },
+    {
+      "id": "complex_void-0014",
+      "tier": "generated",
+      "family": "complex_void",
+      "seed": 14,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 193959.050430285,
+        "face_count": 61,
+        "bbox_min": [
+          -46.6195,
+          -30.414,
+          0.0
+        ],
+        "bbox_max": [
+          46.6195,
+          30.414,
+          50.613
+        ]
+      }
+    },
+    {
+      "id": "complex_assembly-0014",
+      "tier": "generated",
+      "family": "complex_assembly",
+      "seed": 14,
+      "strata": {
+        "category": "complex"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 149275.960117299,
+        "face_count": 202,
+        "bbox_min": [
+          8.0005,
+          -28.6095,
+          0.0
+        ],
+        "bbox_max": [
+          231.1545,
+          28.6095,
+          37.347
+        ]
+      }
     }
   ]
 }
