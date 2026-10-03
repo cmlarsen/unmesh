@@ -40,11 +40,11 @@ _register(
 
 _register(
     "tinkercad-export",
-    [("coarsen", 0.5), ("truncated_digits", 1.0)],
-    "Imitates a coarse browser-based export. coarsen stands in for the visibly "
-    "low curve resolution of such meshes (cylinders degrade toward N-gon "
-    "prisms) while keeping the mesh a closed manifold. truncated_digits to 3 "
-    "significant digits stands in for ASCII STL text with truncated decimals.",
+    [("coarsen", 0.5), ("truncated_digits", 0.5)],
+    "Approximation of a coarse, low-precision export: coarsen lowers curve "
+    "resolution while keeping the mesh a closed manifold, and truncated_digits "
+    "to 6 significant digits stands in for low-precision decimal text. "
+    "Format (ASCII vs binary) unverified until #29.",
 )
 
 _register(
