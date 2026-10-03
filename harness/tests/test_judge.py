@@ -10,10 +10,10 @@ from unmesh.ir import Ir, Plane
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.judge import calibration, judge, sample_ir, under_reports
-from unmesh_harness.labels import distance_to_surface, tessellate
+from unmesh_harness.labels import tessellate
 from unmesh_harness.oracle import build_oracle_ir
 
-from .cases import smoke_entries
+from .cases import MESHER_CHORD_FACTOR, smoke_entries
 
 LIN, ANG = 0.01, 0.2
 FINE = (0.001, 0.1)
@@ -37,14 +37,10 @@ def test_oracle_scores_its_own_input(entry):
         assert result.truth.ir_to_mesh.max <= FINE[0] + 1e-9
         assert result.truth.mesh_to_ir.max <= LIN + 1e-9
     else:
-        sag = max(
-            distance_to_surface(f, mesh.face_tris(f.id).mean(axis=1)).max() for f in mesh.faces
-        )
-        fine_sag = max(
-            distance_to_surface(f, fine.face_tris(f.id).mean(axis=1)).max() for f in fine.faces
-        )
-        assert result.input.max <= sag + LIN + 1e-9
-        assert result.truth.ir_to_mesh.max <= fine_sag + FINE[0] + 1e-9
+        bound = max(LIN * MESHER_CHORD_FACTOR.get(f.surface, 1.0) for f in mesh.faces)
+        fine_bound = max(FINE[0] * MESHER_CHORD_FACTOR.get(f.surface, 1.0) for f in fine.faces)
+        assert result.input.max <= bound + 1e-9
+        assert result.truth.ir_to_mesh.max <= fine_bound + 1e-9
         assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 
 

@@ -3,6 +3,8 @@ import pytest
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.labels import DEFLECTION_SETTINGS
 
+MESHER_CHORD_FACTOR = {"cone": 3.0, "sphere": 2.5, "torus": 4.0}
+
 
 def is_planar(entry) -> bool:
     return entry["strata"].get("category", "planar") == "planar"

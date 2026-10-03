@@ -16,9 +16,7 @@ from unmesh_harness.labels import (
     tessellate,
 )
 
-from .cases import smoke_by_deflection
-
-MESHER_CHORD_FACTOR = {"cone": 3.0, "sphere": 2.5, "torus": 4.0}
+from .cases import MESHER_CHORD_FACTOR, smoke_by_deflection
 
 
 def closed_manifold_problems(tris):
