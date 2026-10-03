@@ -1,5 +1,8 @@
 use super::linalg::{V3, dot};
 
+/// Analytic parameters live in the centred frame: `distance`, `linearize`
+/// and `normal_at` take centred positions (`Welded::vc`), and `to_world`
+/// converts to world coordinates for IR output.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Surface {
     Plane { normal: V3, offset: f64 },
@@ -43,10 +46,13 @@ impl Surface {
         }
     }
 
-    pub fn outward_normal(&self, facet_normal: V3) -> V3 {
+    pub fn to_world(&self, center: V3) -> Surface {
         match *self {
-            Surface::Plane { normal, .. } => normal,
-            Surface::Facets => facet_normal,
+            Surface::Plane { normal, offset } => Surface::Plane {
+                normal,
+                offset: offset + dot(normal, center),
+            },
+            Surface::Facets => Surface::Facets,
         }
     }
 }

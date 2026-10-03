@@ -31,12 +31,8 @@ pub fn assemble(
     let mut regions = Vec::with_capacity(finals.len());
     for (i, fr) in finals.iter().enumerate() {
         let triangles: Vec<u32> = fr.faces.iter().map(|&f| asm.fsrc[f as usize]).collect();
-        let (surface, residual) = match fr.surface {
-            Surface::Plane {
-                normal: n,
-                offset: d,
-            } => {
-                let dw = d + dot(n, asm.center);
+        let (surface, residual) = match fr.surface.to_world(asm.center) {
+            Surface::Plane { normal: n, offset: dw } => {
                 let p = pos[asm.faces[fr.faces[0] as usize][0] as usize];
                 let off = dot(n, p) - dw;
                 (
@@ -97,6 +93,7 @@ pub fn assemble(
         flabel,
         finals,
         pos,
+        asm.center,
         asm.tolerances.tangent_threshold_deg,
     );
 

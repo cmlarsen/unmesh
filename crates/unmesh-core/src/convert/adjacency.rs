@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::fit::Final;
-use super::linalg::{V3, angle_deg, cross, sub, unit};
+use super::linalg::{V3, add, angle_deg, cross, scale, sub, unit};
 use super::topology::NONE;
 use crate::ir::{Kind, VertexRole};
 use crate::mesh::Point;
@@ -57,6 +57,7 @@ pub fn build(
     flabel: &[u32],
     finals: &[Final],
     pos: &[Point],
+    center: V3,
     tangent_threshold_deg: f64,
 ) -> (Vec<RawAdjacency>, Vec<VertexEntry>) {
     let nv = pos.len();
@@ -101,8 +102,12 @@ pub fn build(
         let (a, b, c) = (pos[t[0] as usize], pos[t[1] as usize], pos[t[2] as usize]);
         unit(cross(sub(b, a), sub(c, a)))
     };
-    let normal_of =
-        |r: u32, f: u32| -> V3 { finals[r as usize].surface.outward_normal(tri_normal(f)) };
+    let normal_of = |r: u32, mid: V3, f: u32| -> V3 {
+        finals[r as usize]
+            .surface
+            .normal_at(mid)
+            .unwrap_or_else(|| tri_normal(f))
+    };
 
     let mut edges: Vec<EdgeRec> = Vec::new();
     for (f, nb) in nbr.iter().enumerate() {
@@ -143,7 +148,16 @@ pub fn build(
         let (ra, rb) = (group[0].ra, group[0].rb);
         let dih: Vec<f64> = group
             .iter()
-            .map(|g| angle_deg(normal_of(ra, g.fa), normal_of(rb, g.fb)))
+            .map(|g| {
+                let mid = sub(
+                    scale(add(pos[g.u as usize], pos[g.v as usize]), 0.5),
+                    center,
+                );
+                angle_deg(
+                    normal_of(ra, mid, g.fa),
+                    normal_of(rb, mid, g.fb),
+                )
+            })
             .collect();
         let tangent: Vec<bool> = dih.iter().map(|d| *d < thr).collect();
         let mut out: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
