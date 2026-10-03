@@ -48,8 +48,15 @@ scripts/check.sh
   F1 0.01, deviation 1 µm); a metric sampled in A but not in B is a REGRESSION.
   `valid`/`fallback`/`under_report` have no noise band: any per-seed good→bad move is a
   REGRESSION. It exits 1 on any regression. A regression is waived only by
-  the `waiver:approved` label applied by a human — `uv run scripts/check-waiver --repo o/r --pr N`
-  verifies this through the issues-events API (bot actors and bot-author self-labels are rejected).
+  the `waiver:approved` label: `uv run scripts/check-waiver --repo o/r --pr N --run-a A --run-b B`
+  accepts it only if the labeling actor's login is in `.github/waiver-approvers` as read from
+  main, the labeling event is newer than the PR head commit's committer date, the label is
+  still present, and a comment by the same actor, also newer than the head commit, names every
+  regressed cell (`waive: <part> <operator> <severity>` lines); only named cells are waived.
+  Events and comments are read through the paginated GitHub API. While agents share the
+  owner's credentials this check is NOT agent-proof (residual risk): anything acting with an
+  approver's credentials can waive. The planned identity split gives agents their own
+  credentials so the allowlist and timing rules bind them.
   CI uploads each main push's smoke JSONL as the `smoke-baseline-<os>` artifact; PR runs download
   the latest one and compare against it. A missing baseline skips compare with a notice, never fails.
 - `scripts/`: `check.sh` and other tooling.
