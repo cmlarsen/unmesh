@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "ambiguity",
+  "corpus_grid": "standard",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "timeout_s": 60,
+  "input_deflection": [
+    0.01,
+    0.2
+  ],
+  "truth_deflection": [
+    0.001,
+    0.1
+  ],
+  "cells": [
+    {
+      "operator": "identity",
+      "severity": 0.0,
+      "steps": [],
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 1.0,
+      "steps": [
+        [
+          "float32",
+          1.0
+        ]
+      ],
+      "seeds": [
+        0
+      ]
+    }
+  ],
+  "judge_samples_per_mm2": 1.0,
+  "step_deviation_sample": [
+    2,
+    5
+  ],
+  "categories": [
+    "ambiguity"
+  ],
+  "indistinguishable_only": true
+}

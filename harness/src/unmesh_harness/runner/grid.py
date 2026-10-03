@@ -106,6 +106,16 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         entries = [e for e in entries if e["strata"].get("category", "planar") in wanted]
         if not entries:
             raise KeyError(f"grid {name} selects no parts for categories {sorted(wanted)}")
+    if raw.get("indistinguishable_only"):
+        from ..groundtruth import generate
+
+        entries = [
+            e
+            for e in entries
+            if generate(e["family"], e["seed"]).parameters.get("indistinguishable") is True
+        ]
+        if not entries:
+            raise KeyError(f"grid {name} selects no indistinguishable parts")
     return Grid(
         raw["name"],
         raw["corpus_grid"],
