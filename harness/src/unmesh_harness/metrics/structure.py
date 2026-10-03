@@ -126,9 +126,25 @@ def _role_vertices(adjacency) -> set[int]:
     return {
         v
         for v, faces in faces_at.items()
-        if len(faces) >= 3
-        or (len(faces) == 2 and sorted(ends_at[v]) == ["tangent", "transversal"])
+        if len(faces) >= 3 or (len(faces) == 2 and sorted(ends_at[v]) == ["tangent", "transversal"])
     }
+
+
+def _walk_chain(
+    first: int,
+    end: list[int],
+    outgoing: dict[int, list[int]],
+    roles: set[int],
+    used: set[int],
+) -> None:
+    used.add(first)
+    tip = end[first]
+    while tip not in roles:
+        nxt = [i for i in outgoing.get(tip, []) if i not in used]
+        if not nxt:
+            break
+        used.add(nxt[0])
+        tip = end[nxt[0]]
 
 
 def _chained_pair_counts(adjacency) -> dict[tuple[int, int], int]:
@@ -154,27 +170,16 @@ def _chained_pair_counts(adjacency) -> dict[tuple[int, int], int]:
         for i in members:
             outgoing.setdefault(start[i], []).append(i)
         used: set[int] = set()
-
-        def walk(first: int) -> None:
-            used.add(first)
-            tip = end[first]
-            while tip not in roles:
-                nxt = [i for i in outgoing.get(tip, []) if i not in used]
-                if not nxt:
-                    break
-                used.add(nxt[0])
-                tip = end[nxt[0]]
-
         boundaries = 0
         for i in members:
             if i in used or start[i] not in roles:
                 continue
-            walk(i)
+            _walk_chain(i, end, outgoing, roles, used)
             boundaries += 1
         for i in members:
             if i in used:
                 continue
-            walk(i)
+            _walk_chain(i, end, outgoing, roles, used)
             boundaries += 1
         counts[pair] = boundaries
     return counts
@@ -289,9 +294,7 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
         and not pairs_unmatched
         and set(map(tuple, output_pairs)) == set(truth_counts)
     )
-    edges_match = (
-        not unmatched_regions and not pairs_unmatched and remapped_counts == truth_counts
-    )
+    edges_match = not unmatched_regions and not pairs_unmatched and remapped_counts == truth_counts
     truth_roles = _role_signatures(clean.adjacency)
     remapped_roles = []
     roles_unmatched = False
@@ -301,9 +304,7 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
             continue
         remapped_roles.append(tuple(sorted(region_to_face[r] for r in v.regions)))
     output_roles = sorted(remapped_roles)
-    roles_match = (
-        not unmatched_regions and not roles_unmatched and truth_roles == output_roles
-    )
+    roles_match = not unmatched_regions and not roles_unmatched and truth_roles == output_roles
     truth_shells = [(s.role, len(s.faces)) for s in clean.shells]
     output_shells = [(s.role, len(s.regions)) for s in ir.shells]
     face_shell = [-1] * truth_faces
@@ -336,11 +337,7 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
             parent = (
                 None
                 if mine.parent is None
-                else (
-                    shell_match[mine.parent]
-                    if 0 <= mine.parent < len(shell_match)
-                    else None
-                )
+                else (shell_match[mine.parent] if 0 <= mine.parent < len(shell_match) else None)
             )
             if (mine.parent is not None and parent is None) or parent != gt.parent:
                 shells_match = False
