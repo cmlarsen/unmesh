@@ -59,7 +59,7 @@ def generate(family: str, seed: int) -> GroundTruth:
 
 
 def _load_builtin_families() -> None:
-    from . import planar  # noqa: F401
+    from . import curved, planar  # noqa: F401
 
 
 def fingerprint(shape: Shape) -> dict[str, Any]:

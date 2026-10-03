@@ -151,5 +151,8 @@
   "step_deviation_sample": [
     2,
     5
+  ],
+  "categories": [
+    "planar"
   ]
 }

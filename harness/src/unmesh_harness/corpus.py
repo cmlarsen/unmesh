@@ -10,8 +10,11 @@ from build123d import export_step
 from .groundtruth import fingerprint, generate
 
 MANIFEST_VERSION = 0
-GRID_SIZES = {"smoke": 20, "standard": 100}
+GRID_SIZES = {"smoke": 30, "standard": 180}
 GRID_ORDER = ["smoke", "standard"]
+
+PLANAR_GRID_COUNTS = {"smoke": 20, "standard": 100}
+CURVED_GRID_COUNTS = {"smoke": 10, "standard": 80}
 
 
 def entry_id(family: str, seed: int) -> str:
@@ -31,11 +34,11 @@ PLANAR_FAMILIES = (
 )
 
 
-def planar_entries(count: int = GRID_SIZES["standard"]) -> list[dict[str, Any]]:
+def planar_entries(count: int = 100) -> list[dict[str, Any]]:
     entries = []
     for i in range(count):
         family, seed = PLANAR_FAMILIES[i % len(PLANAR_FAMILIES)], i // len(PLANAR_FAMILIES)
-        grids = [g for g in GRID_ORDER if i < GRID_SIZES[g]]
+        grids = [g for g in GRID_ORDER if i < PLANAR_GRID_COUNTS[g]]
         entries.append(
             {
                 "id": entry_id(family, seed),
@@ -43,6 +46,38 @@ def planar_entries(count: int = GRID_SIZES["standard"]) -> list[dict[str, Any]]:
                 "family": family,
                 "seed": seed,
                 "strata": {"category": "planar"},
+                "grids": grids,
+            }
+        )
+    return entries
+
+
+CURVED_FAMILIES = (
+    "through_bore",
+    "blind_bore",
+    "round_boss",
+    "counterbore",
+    "countersink",
+    "round_slot_through",
+    "round_slot_blind",
+    "revolved_cone",
+    "revolved_dome",
+    "revolved_torus",
+)
+
+
+def curved_entries(count: int = 80) -> list[dict[str, Any]]:
+    entries = []
+    for i in range(count):
+        family, seed = CURVED_FAMILIES[i % len(CURVED_FAMILIES)], i // len(CURVED_FAMILIES)
+        grids = [g for g in GRID_ORDER if i < CURVED_GRID_COUNTS[g]]
+        entries.append(
+            {
+                "id": entry_id(family, seed),
+                "tier": "generated",
+                "family": family,
+                "seed": seed,
+                "strata": {"category": "curved"},
                 "grids": grids,
             }
         )

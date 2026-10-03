@@ -46,6 +46,7 @@ def small_grid(parts=2, cells=("identity", "float32")):
 def test_smoke_grid_definition():
     grid = load_grid("smoke")
     assert len(grid.entries) == 20
+    assert {e["strata"]["category"] for e in grid.entries} == {"planar"}
     assert grid.seeds == [0, 1, 2]
     operators = {c["operator"] for c in grid.cells}
     assert {"identity", "float32", "rotation", "refine+noise_off_plane"} <= operators

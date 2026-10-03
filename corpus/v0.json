@@ -2624,6 +2624,2096 @@
           24.268
         ]
       }
+    },
+    {
+      "id": "through_bore-0000",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 98425.179724924,
+        "face_count": 7,
+        "bbox_min": [
+          -58.1325,
+          -54.564,
+          0.0
+        ],
+        "bbox_max": [
+          58.1325,
+          54.564,
+          15.28
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0000",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 141468.629117473,
+        "face_count": 8,
+        "bbox_min": [
+          -58.1325,
+          -54.564,
+          0.0
+        ],
+        "bbox_max": [
+          58.1325,
+          54.564,
+          15.28
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0000",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 30551.633992555,
+        "face_count": 12,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          15.101
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0000",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 27848.692817181,
+        "face_count": 18,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "countersink-0000",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 28434.514807982,
+        "face_count": 14,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0000",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 21769.55290735,
+        "face_count": 10,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0000",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 24271.028293701,
+        "face_count": 11,
+        "bbox_min": [
+          -45.4785,
+          -24.4425,
+          0.0
+        ],
+        "bbox_max": [
+          45.4785,
+          24.4425,
+          6.574
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0000",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 13133.22825913,
+        "face_count": 4,
+        "bbox_min": [
+          -18.828,
+          -18.828,
+          0.0
+        ],
+        "bbox_max": [
+          18.828,
+          18.828,
+          14.295
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0000",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 12476.942253693,
+        "face_count": 3,
+        "bbox_min": [
+          -14.554,
+          -14.554,
+          0.0
+        ],
+        "bbox_max": [
+          14.554,
+          14.554,
+          23.601
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0000",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 0,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5418.347455414,
+        "face_count": 1,
+        "bbox_min": [
+          -29.178,
+          -29.178,
+          -3.254
+        ],
+        "bbox_max": [
+          29.178,
+          29.178,
+          3.254
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0001",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 60677.251111776,
+        "face_count": 8,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0001",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 62409.229798755,
+        "face_count": 10,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0001",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 63335.28134015,
+        "face_count": 10,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          14.323
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0001",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 61255.631599866,
+        "face_count": 15,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "countersink-0001",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 61771.983539233,
+        "face_count": 12,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0001",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50305.191248223,
+        "face_count": 22,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0001",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 56223.42815161,
+        "face_count": 26,
+        "bbox_min": [
+          -40.473,
+          -48.266,
+          0.0
+        ],
+        "bbox_max": [
+          40.473,
+          48.266,
+          8.018
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0001",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 27216.34068376,
+        "face_count": 4,
+        "bbox_min": [
+          -16.701,
+          -16.701,
+          0.0
+        ],
+        "bbox_max": [
+          16.701,
+          16.701,
+          38.487
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0001",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 13989.212167093,
+        "face_count": 3,
+        "bbox_min": [
+          -12.677,
+          -12.677,
+          0.0
+        ],
+        "bbox_max": [
+          12.677,
+          12.677,
+          31.934
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0001",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 1,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 25983.71705255,
+        "face_count": 1,
+        "bbox_min": [
+          -30.395,
+          -30.395,
+          -7.599
+        ],
+        "bbox_max": [
+          30.395,
+          30.395,
+          7.599
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0002",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 92059.960446054,
+        "face_count": 7,
+        "bbox_min": [
+          -56.001,
+          -53.643,
+          0.0
+        ],
+        "bbox_max": [
+          56.001,
+          53.643,
+          10.255
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0002",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 110720.440176898,
+        "face_count": 8,
+        "bbox_min": [
+          -56.001,
+          -53.643,
+          0.0
+        ],
+        "bbox_max": [
+          56.001,
+          53.643,
+          10.255
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0002",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 54294.896365294,
+        "face_count": 14,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          24.949
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0002",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48298.467555885,
+        "face_count": 24,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "countersink-0002",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50750.751907614,
+        "face_count": 18,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0002",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 46989.646600844,
+        "face_count": 14,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0002",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49697.51067865,
+        "face_count": 16,
+        "bbox_min": [
+          -30.4645,
+          -25.447,
+          0.0
+        ],
+        "bbox_max": [
+          30.4645,
+          25.447,
+          17.399
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0002",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 9320.870125411,
+        "face_count": 4,
+        "bbox_min": [
+          -18.038,
+          -18.038,
+          0.0
+        ],
+        "bbox_max": [
+          18.038,
+          18.038,
+          15.856
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0002",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 3859.505883496,
+        "face_count": 3,
+        "bbox_min": [
+          -8.924,
+          -8.924,
+          0.0
+        ],
+        "bbox_max": [
+          8.924,
+          8.924,
+          18.401
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0002",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 2,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 3863.510807195,
+        "face_count": 1,
+        "bbox_min": [
+          -19.98,
+          -19.98,
+          -3.44
+        ],
+        "bbox_max": [
+          19.98,
+          19.98,
+          3.44
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0003",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 37404.675831508,
+        "face_count": 8,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0003",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 37373.570074757,
+        "face_count": 10,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0003",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 37615.283814564,
+        "face_count": 8,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          22.348
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0003",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36731.644967885,
+        "face_count": 9,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "countersink-0003",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36964.576798136,
+        "face_count": 8,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0003",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 31613.387370145,
+        "face_count": 22,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0003",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33972.214194172,
+        "face_count": 26,
+        "bbox_min": [
+          -23.426,
+          -23.2885,
+          0.0
+        ],
+        "bbox_max": [
+          23.426,
+          23.2885,
+          17.218
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0003",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 8164.567057326,
+        "face_count": 4,
+        "bbox_min": [
+          -13.538,
+          -13.538,
+          0.0
+        ],
+        "bbox_max": [
+          13.538,
+          13.538,
+          22.284
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0003",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 1581.240893848,
+        "face_count": 3,
+        "bbox_min": [
+          -6.285,
+          -6.285,
+          0.0
+        ],
+        "bbox_max": [
+          6.285,
+          6.285,
+          14.837
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0003",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 3,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 2213.327093707,
+        "face_count": 1,
+        "bbox_min": [
+          -15.18,
+          -15.18,
+          -3.039
+        ],
+        "bbox_max": [
+          15.18,
+          15.18,
+          3.039
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0004",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 143271.105913726,
+        "face_count": 7,
+        "bbox_min": [
+          -56.0735,
+          -51.8825,
+          0.0
+        ],
+        "bbox_max": [
+          56.0735,
+          51.8825,
+          17.623
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0004",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 159996.722642017,
+        "face_count": 8,
+        "bbox_min": [
+          -56.0735,
+          -51.8825,
+          0.0
+        ],
+        "bbox_max": [
+          56.0735,
+          51.8825,
+          17.623
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0004",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 150661.833999604,
+        "face_count": 8,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          23.063
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0004",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 143083.669861371,
+        "face_count": 9,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "countersink-0004",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 143998.541378418,
+        "face_count": 8,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0004",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 116073.312351071,
+        "face_count": 22,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0004",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 127054.333068992,
+        "face_count": 26,
+        "bbox_min": [
+          -57.722,
+          -32.8965,
+          0.0
+        ],
+        "bbox_max": [
+          57.722,
+          32.8965,
+          19.667
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0004",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 43467.065231581,
+        "face_count": 4,
+        "bbox_min": [
+          -40.084,
+          -40.084,
+          0.0
+        ],
+        "bbox_max": [
+          40.084,
+          40.084,
+          18.883
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0004",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 29290.086132483,
+        "face_count": 3,
+        "bbox_min": [
+          -19.146,
+          -19.146,
+          0.0
+        ],
+        "bbox_max": [
+          19.146,
+          19.146,
+          31.816
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0004",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 4,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 15423.157568592,
+        "face_count": 1,
+        "bbox_min": [
+          -38.4,
+          -38.4,
+          -4.824
+        ],
+        "bbox_max": [
+          38.4,
+          38.4,
+          4.824
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0005",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 98925.284854308,
+        "face_count": 7,
+        "bbox_min": [
+          -50.5395,
+          -51.917,
+          0.0
+        ],
+        "bbox_max": [
+          50.5395,
+          51.917,
+          12.902
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0005",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 125313.342619906,
+        "face_count": 8,
+        "bbox_min": [
+          -50.5395,
+          -51.917,
+          0.0
+        ],
+        "bbox_max": [
+          50.5395,
+          51.917,
+          12.902
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0005",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 119448.324771056,
+        "face_count": 8,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          20.434
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0005",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 118620.688653154,
+        "face_count": 9,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "countersink-0005",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 118820.358711065,
+        "face_count": 8,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0005",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 94768.986812545,
+        "face_count": 18,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0005",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 103754.594824938,
+        "face_count": 21,
+        "bbox_min": [
+          -52.2,
+          -43.278,
+          0.0
+        ],
+        "bbox_max": [
+          52.2,
+          43.278,
+          13.215
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0005",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 41695.91520118,
+        "face_count": 4,
+        "bbox_min": [
+          -25.685,
+          -25.685,
+          0.0
+        ],
+        "bbox_max": [
+          25.685,
+          25.685,
+          26.406
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0005",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 26106.68398832,
+        "face_count": 3,
+        "bbox_min": [
+          -17.075,
+          -17.075,
+          0.0
+        ],
+        "bbox_max": [
+          17.075,
+          17.075,
+          34.194
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0005",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 5,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 27109.509751643,
+        "face_count": 1,
+        "bbox_min": [
+          -36.877,
+          -36.877,
+          -6.752
+        ],
+        "bbox_max": [
+          36.877,
+          36.877,
+          6.752
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0006",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 46807.774890478,
+        "face_count": 10,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0006",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48289.26966669,
+        "face_count": 14,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0006",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 50145.457521084,
+        "face_count": 8,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          13.581
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0006",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48646.94007924,
+        "face_count": 12,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "countersink-0006",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48985.060863702,
+        "face_count": 10,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0006",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 41925.283890134,
+        "face_count": 18,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0006",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 45332.160021087,
+        "face_count": 21,
+        "bbox_min": [
+          -41.5265,
+          -27.0145,
+          0.0
+        ],
+        "bbox_max": [
+          41.5265,
+          27.0145,
+          11.167
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0006",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 17772.25298102,
+        "face_count": 4,
+        "bbox_min": [
+          -17.149,
+          -17.149,
+          0.0
+        ],
+        "bbox_max": [
+          17.149,
+          17.149,
+          20.766
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0006",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 10126.516265516,
+        "face_count": 3,
+        "bbox_min": [
+          -13.072,
+          -13.072,
+          0.0
+        ],
+        "bbox_max": [
+          13.072,
+          13.072,
+          23.221
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0006",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 6,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 6444.617702977,
+        "face_count": 1,
+        "bbox_min": [
+          -27.185,
+          -27.185,
+          -3.731
+        ],
+        "bbox_max": [
+          27.185,
+          27.185,
+          3.731
+        ]
+      }
+    },
+    {
+      "id": "through_bore-0007",
+      "tier": "generated",
+      "family": "through_bore",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 38342.213131699,
+        "face_count": 7,
+        "bbox_min": [
+          -53.0015,
+          -54.368,
+          0.0
+        ],
+        "bbox_max": [
+          53.0015,
+          54.368,
+          8.063
+        ]
+      }
+    },
+    {
+      "id": "blind_bore-0007",
+      "tier": "generated",
+      "family": "blind_bore",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 55357.770755623,
+        "face_count": 8,
+        "bbox_min": [
+          -53.0015,
+          -54.368,
+          0.0
+        ],
+        "bbox_max": [
+          53.0015,
+          54.368,
+          8.063
+        ]
+      }
+    },
+    {
+      "id": "round_boss-0007",
+      "tier": "generated",
+      "family": "round_boss",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 142965.616359601,
+        "face_count": 10,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          23.288
+        ]
+      }
+    },
+    {
+      "id": "counterbore-0007",
+      "tier": "generated",
+      "family": "counterbore",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 139784.908493672,
+        "face_count": 12,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "countersink-0007",
+      "tier": "generated",
+      "family": "countersink",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 140331.866616872,
+        "face_count": 10,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "round_slot_through-0007",
+      "tier": "generated",
+      "family": "round_slot_through",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 111851.750314972,
+        "face_count": 22,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "round_slot_blind-0007",
+      "tier": "generated",
+      "family": "round_slot_blind",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 123611.392978188,
+        "face_count": 26,
+        "bbox_min": [
+          -45.004,
+          -46.4025,
+          0.0
+        ],
+        "bbox_max": [
+          45.004,
+          46.4025,
+          16.86
+        ]
+      }
+    },
+    {
+      "id": "revolved_cone-0007",
+      "tier": "generated",
+      "family": "revolved_cone",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 33359.03208801,
+        "face_count": 4,
+        "bbox_min": [
+          -26.025,
+          -26.025,
+          0.0
+        ],
+        "bbox_max": [
+          26.025,
+          26.025,
+          26.836
+        ]
+      }
+    },
+    {
+      "id": "revolved_dome-0007",
+      "tier": "generated",
+      "family": "revolved_dome",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 18206.857195902,
+        "face_count": 3,
+        "bbox_min": [
+          -14.376,
+          -14.376,
+          0.0
+        ],
+        "bbox_max": [
+          14.376,
+          14.376,
+          32.834
+        ]
+      }
+    },
+    {
+      "id": "revolved_torus-0007",
+      "tier": "generated",
+      "family": "revolved_torus",
+      "seed": 7,
+      "strata": {
+        "category": "curved"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 27193.958004106,
+        "face_count": 1,
+        "bbox_min": [
+          -32.959,
+          -32.959,
+          -7.332
+        ],
+        "bbox_max": [
+          32.959,
+          32.959,
+          7.332
+        ]
+      }
     }
   ]
 }
