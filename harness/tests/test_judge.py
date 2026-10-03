@@ -37,9 +37,10 @@ def test_oracle_scores_its_own_input(entry):
         assert result.truth.ir_to_mesh.max <= FINE[0] + 1e-9
         assert result.truth.mesh_to_ir.max <= LIN + 1e-9
     else:
-        bound = max(LIN * MESHER_CHORD_FACTOR.get(f.surface, 1.0) for f in mesh.faces)
+        for region in ir.regions:
+            bound = LIN * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
+            assert result.region_max[region.id] <= bound + 1e-9
         fine_bound = max(FINE[0] * MESHER_CHORD_FACTOR.get(f.surface, 1.0) for f in fine.faces)
-        assert result.input.max <= bound + 1e-9
         assert result.truth.ir_to_mesh.max <= fine_bound + 1e-9
         assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 
