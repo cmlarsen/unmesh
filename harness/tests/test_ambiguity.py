@@ -4,11 +4,13 @@ import numpy as np
 import pytest
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 
+from unmesh_harness.corpus import ambiguity_entries, load_manifest, select
 from unmesh_harness.groundtruth import families, generate, validity_problems
 from unmesh_harness.labels import tessellate
 
 PAIR_ONE = ("ngon_prism", "coarse_cylinder_prism")
 PAIR_TWO = ("one_segment_fillet", "chamfer_same_chord")
+PAIR_THREE = ("two_segment_fillet", "two_planes")
 
 
 def surface_counts(solid):
@@ -180,3 +182,93 @@ def test_pair_two_vertex_sets_match_at_pair_deflection():
             vertex_set(tessellate(f.solid, lin, ang)),
             vertex_set(tessellate(c.solid, lin, ang)),
         )
+
+
+def test_pair_three_families_registered():
+    assert set(PAIR_THREE) <= set(families())
+
+
+def test_pair_three_metadata_links_and_labels():
+    for seed in range(8):
+        f = generate("two_segment_fillet", seed)
+        t = generate("two_planes", seed)
+        assert f.parameters["ambiguity"] == t.parameters["ambiguity"] == "fillet2_vs_two_planes"
+        assert f.parameters["truth"] == "fillet"
+        assert t.parameters["truth"] == "two_planes"
+        assert f.parameters["pair_id"] == f"two_planes-{seed:04d}"
+        assert t.parameters["pair_id"] == f"two_segment_fillet-{seed:04d}"
+        assert f.parameters["box"] == t.parameters["box"]
+        assert f.parameters["radius"] == t.parameters["radius"]
+        assert f.parameters["pair_deflection"] == t.parameters["pair_deflection"]
+
+
+def test_pair_three_surface_types():
+    for seed in range(8):
+        assert surface_counts(generate("two_segment_fillet", seed).solid) == {
+            "GeomAbs_Plane": 6,
+            "GeomAbs_Cylinder": 1,
+        }
+        assert surface_counts(generate("two_planes", seed).solid) == {"GeomAbs_Plane": 8}
+
+
+def test_pair_three_valid_deterministic_and_closed_form_volume():
+    from .volumes import expected_volume
+
+    for seed in range(32):
+        for family in PAIR_THREE:
+            gt = generate(family, seed)
+            assert validity_problems(gt.solid) == [], (family, seed)
+            again = generate(family, seed)
+            assert again.solid.volume == pytest.approx(gt.solid.volume, rel=1e-9)
+            assert again.parameters == gt.parameters
+            assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9), (family, seed)
+
+
+def test_pair_three_cut_points_match_fillet_tangents():
+    for seed in range(8):
+        f = generate("two_segment_fillet", seed)
+        t = generate("two_planes", seed)
+        lin, ang = f.parameters["pair_deflection"]
+        vf = vertex_set(tessellate(f.solid, lin, ang))
+        vt = vertex_set(tessellate(t.solid, lin, ang))
+        assert len(vf) == 14 and len(vt) == 12, seed
+        assert (
+            len(
+                {
+                    (x, y)
+                    for x, y, _ in _face_points(tessellate(f.solid, lin, ang), "cylinder").tolist()
+                }
+            )
+            == 4
+        ), seed
+        p0, _, p2 = (np.array(q) for q in t.features[0]["points"])
+        for mesh in (vf, vt):
+            d = np.linalg.norm(mesh[:, :2][:, None, :] - np.array([p0, p2])[None, :, :], axis=2)
+            assert (d.min(axis=0) <= 1e-6).all(), seed
+
+
+@pytest.mark.xfail(
+    strict=False, reason="OCCT floor: 90-degree fillet tessellates with min 3 segments"
+)
+def test_pair_three_vertex_sets_match_at_pair_deflection():
+    for seed in range(8):
+        f = generate("two_segment_fillet", seed)
+        t = generate("two_planes", seed)
+        lin, ang = f.parameters["pair_deflection"]
+        assert_vertex_sets_match(
+            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(tessellate(t.solid, lin, ang)),
+        )
+
+
+def test_new_smoke_entries_pinned():
+    ids = {e["id"] for e in ambiguity_entries()[:6]}
+    got = [(e["family"], e["seed"]) for e in select(load_manifest(), "smoke") if e["id"] in ids]
+    assert got == [(family, 0) for family in PAIR_ONE + PAIR_TWO + PAIR_THREE]
+
+
+def test_new_standard_entries_pinned():
+    ids = {e["id"] for e in ambiguity_entries()}
+    entries = [e for e in select(load_manifest(), "standard") if e["id"] in ids]
+    assert len(entries) == 30
+    assert all(e["strata"] == {"category": "ambiguity"} for e in entries)

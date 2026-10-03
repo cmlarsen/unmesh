@@ -2,7 +2,18 @@ from __future__ import annotations
 
 import math
 
-from build123d import Axis, Box, Cylinder, Pos, RegularPolygon, Shape, chamfer, extrude, fillet
+from build123d import (
+    Axis,
+    Box,
+    Cylinder,
+    Polygon,
+    Pos,
+    RegularPolygon,
+    Shape,
+    chamfer,
+    extrude,
+    fillet,
+)
 
 from .core import register, validity_problems
 
@@ -165,4 +176,74 @@ def chamfer_same_chord(rng):
         "pair_deflection": [lin, ang],
     }
     features = [{"type": "vertical_chamfer", "length": c, "edges": 1, "axis": [0, 0, 1]}]
+    return solid, params, features
+
+
+def _fillet2_deflection(r: float) -> tuple[float, float]:
+    return r * (1 - math.cos(math.pi / 8)) * 2 + 1e-9, math.pi / 2 * (1 + 1e-9)
+
+
+@register("two_segment_fillet")
+def two_segment_fillet(rng):
+    length, width, height, r = _corner_box_params(rng)
+    solid = _box(length, width, height)
+    for _ in range(8):
+        try:
+            candidate = fillet([_corner_edge(solid)], radius=r)
+        except Exception:
+            r = _r(r / 2)
+            continue
+        if _ok(candidate, 7):
+            solid = candidate
+            break
+        r = _r(r / 2)
+    else:
+        raise RuntimeError("two_segment_fillet: no valid build after 8 attempts")
+    lin, ang = _fillet2_deflection(r)
+    params = {
+        "box": [length, width, height],
+        "radius": r,
+        "ambiguity": "fillet2_vs_two_planes",
+        "truth": "fillet",
+        "pair_family": "two_planes",
+        "pair_deflection": [lin, ang],
+    }
+    features = [
+        {"type": "vertical_fillet", "radius": r, "edges": 1, "segments": 2, "axis": [0, 0, 1]}
+    ]
+    return solid, params, features
+
+
+def _corner_cut_points(length: float, width: float, r: float):
+    hx, hy = length / 2, width / 2
+    k = r / math.sqrt(2)
+    return (hx, hy - r), (hx - r + k, hy - r + k), (hx - r, hy)
+
+
+@register("two_planes")
+def two_planes(rng):
+    length, width, height, r = _corner_box_params(rng)
+    hx, hy = length / 2, width / 2
+    p0, p1, p2 = _corner_cut_points(length, width, r)
+    pts = [(-hx, -hy), (hx, -hy), p0, p1, p2, (-hx, hy)]
+    solid = (Pos(0, 0, 0) * extrude(Polygon(*pts, align=None), amount=height)).clean()
+    if not _ok(solid, 8):
+        raise RuntimeError("two_planes: unexpected face count or validity problems")
+    lin, ang = _fillet2_deflection(r)
+    params = {
+        "box": [length, width, height],
+        "radius": r,
+        "ambiguity": "fillet2_vs_two_planes",
+        "truth": "two_planes",
+        "pair_family": "two_segment_fillet",
+        "pair_deflection": [lin, ang],
+    }
+    features = [
+        {
+            "type": "two_plane_corner_cut",
+            "points": [list(p0), list(p1), list(p2)],
+            "edges": 2,
+            "axis": [0, 0, 1],
+        }
+    ]
     return solid, params, features

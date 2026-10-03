@@ -130,4 +130,12 @@ def expected_volume(gt):
         length, width, height = p["box"]
         c = p["chamfer"]
         return length * width * height - c * c / 2 * height
+    if f == "two_segment_fillet":
+        length, width, height = p["box"]
+        r = p["radius"]
+        return length * width * height - (1 - math.pi / 4) * r * r * height
+    if f == "two_planes":
+        length, width, height = p["box"]
+        corner = [(length / 2, width / 2)] + [tuple(q) for q in feats[0]["points"]]
+        return length * width * height - _shoelace(corner) * height
     raise KeyError(f)
