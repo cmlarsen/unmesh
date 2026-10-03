@@ -15,6 +15,7 @@ from ..labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
 from ..oracle import build_oracle_ir
 from .core import OPERATORS, apply, chain, to_original, to_original_points
 from .faults import DISPOSITION
+from .presets import PRESETS
 
 SEVERITIES = (0.0, 0.5, 1.0)
 SEED = 20260101
@@ -229,6 +230,25 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. "
         "Both can collapse short edges at high severity and so document that they do not "
         "guarantee watertightness there.",
+        "",
+        "## Presets",
+        "",
+        "Named toolchain presets compose the operators above into degradation chains applied "
+        "with `degrade.chain`, which runs step `i` as `apply(name, mesh, severity, seed + i)`. "
+        "Each preset is a fixed list of `(operator, severity)` steps built only from registered "
+        'operators; a grid cell names one with `"preset"` instead of spelling out `"steps"`.',
+        "",
+        "| preset | steps | imitates |",
+        "|---|---|---|",
+        *[
+            f"| `{p.name}` | "
+            + ", ".join(f"`{op}` at {severity}" for op, severity in p.steps)
+            + f" | {p.rationale} |"
+            for p in PRESETS.values()
+        ],
+        "",
+        "Quantitative comparison of each preset's mesh statistics against real exports from "
+        "the tool it imitates waits for #29.",
         "",
         "## Displacement sheet",
         "",
