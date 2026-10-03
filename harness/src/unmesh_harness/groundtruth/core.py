@@ -9,7 +9,7 @@ import numpy as np
 from build123d import Shape
 from OCP.BRepCheck import BRepCheck_Analyzer
 
-Generator = Callable[[np.random.Generator], tuple[Shape, dict[str, Any], list[dict[str, Any]]]]
+Generator = Callable[[np.random.Generator], tuple]
 
 
 @dataclass
@@ -22,13 +22,16 @@ class GroundTruth:
     face_tags: dict[str, Any] | None = None
 
     def metadata(self) -> dict[str, Any]:
-        return {
+        meta = {
             "family": self.family,
             "seed": self.seed,
             "parameters": self.parameters,
             "features": self.features,
             "fingerprint": fingerprint(self.solid),
         }
+        if self.face_tags is not None:
+            meta["face_tags"] = self.face_tags
+        return meta
 
 
 _REGISTRY: dict[str, Generator] = {}
@@ -54,12 +57,14 @@ def generate(family: str, seed: int) -> GroundTruth:
     if family not in _REGISTRY:
         raise KeyError(f"unknown family: {family}")
     rng = np.random.default_rng(seed)
-    solid, parameters, features = _REGISTRY[family](rng)
-    return GroundTruth(family, seed, solid, parameters, features)
+    result = _REGISTRY[family](rng)
+    solid, parameters, features = result[0], result[1], result[2]
+    tags = result[3] if len(result) > 3 else None
+    return GroundTruth(family, seed, solid, parameters, features, face_tags=tags)
 
 
 def _load_builtin_families() -> None:
-    from . import curved, planar  # noqa: F401
+    from . import chamfer_fillet, curved, planar  # noqa: F401
 
 
 def fingerprint(shape: Shape) -> dict[str, Any]:

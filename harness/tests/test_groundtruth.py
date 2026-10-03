@@ -9,7 +9,7 @@ from unmesh_harness.corpus import (
     curved_entries,
     load_manifest,
     pinned_fingerprint,
-    planar_entries,
+    planned_entries,
     select,
 )
 from unmesh_harness.groundtruth import families, fingerprint, generate, validity_problems
@@ -23,7 +23,7 @@ def _entries(grid):
 
 def test_manifest_contains_planned_entries_unchanged():
     ids = {e["id"]: e for e in load_manifest()["entries"]}
-    for planned in planar_entries():
+    for planned in planned_entries():
         entry = ids[planned["id"]]
         assert all(entry[k] == v for k, v in planned.items())
         assert "fingerprint" in entry

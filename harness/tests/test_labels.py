@@ -55,10 +55,18 @@ def check_part(shape, lin, ang, exact_volume=True):
     assert problems == []
     vol = signed_volume(mesh.tris)
     assert vol > 0
-    assert vol == pytest.approx(shape.volume, rel=1e-9 if exact_volume else 0.02)
+    if exact_volume and all(f.surface == "plane" for f in mesh.faces):
+        assert vol == pytest.approx(shape.volume, rel=1e-9)
+    elif exact_volume:
+        area = sum(f.area for f in shape.faces())
+        assert vol == pytest.approx(shape.volume, rel=lin * area / shape.volume)
+    else:
+        assert vol == pytest.approx(shape.volume, rel=0.02)
     assert len(mesh.faces) == len(shape.faces())
     assert set(np.unique(mesh.face_id)) == set(range(len(mesh.faces)))
     for face in mesh.faces:
+        nodes = distance_to_surface(face, mesh.face_tris(face.id).reshape(-1, 3))
+        assert nodes.max() <= lin + 1e-9, (face.id, face.surface, nodes.max())
         d = distance_to_surface(face, mesh.face_tris(face.id).mean(axis=1))
         allowed = lin * MESHER_CHORD_FACTOR.get(face.surface, 1.0)
         assert d.max() <= allowed + 1e-9, (face.id, face.surface, d.max())

@@ -10,11 +10,12 @@ from build123d import export_step
 from .groundtruth import fingerprint, generate
 
 MANIFEST_VERSION = 0
-GRID_SIZES = {"smoke": 30, "standard": 180}
+GRID_SIZES = {"smoke": 40, "standard": 300}
 GRID_ORDER = ["smoke", "standard"]
 
 PLANAR_GRID_COUNTS = {"smoke": 20, "standard": 100}
 CURVED_GRID_COUNTS = {"smoke": 10, "standard": 80}
+CHAMFER_FILLET_GRID_COUNTS = {"smoke": 10, "standard": 120}
 
 
 def entry_id(family: str, seed: int) -> str:
@@ -82,6 +83,38 @@ def curved_entries(count: int = 80) -> list[dict[str, Any]]:
             }
         )
     return entries
+
+
+CHAMFER_FILLET_FAMILIES = (
+    "planar_chamfer",
+    "straight_fillet",
+    "circular_fillet",
+    "bore_chamfer",
+    "corner_fillet",
+)
+
+
+def chamfer_fillet_entries(count: int = 120) -> list[dict[str, Any]]:
+    entries = []
+    for i in range(count):
+        n = len(CHAMFER_FILLET_FAMILIES)
+        family, seed = CHAMFER_FILLET_FAMILIES[i % n], i // n
+        grids = [g for g in GRID_ORDER if i < CHAMFER_FILLET_GRID_COUNTS[g]]
+        entries.append(
+            {
+                "id": entry_id(family, seed),
+                "tier": "generated",
+                "family": family,
+                "seed": seed,
+                "strata": {"category": "chamfer_fillet"},
+                "grids": grids,
+            }
+        )
+    return entries
+
+
+def planned_entries() -> list[dict[str, Any]]:
+    return planar_entries() + curved_entries() + chamfer_fillet_entries()
 
 
 def pinned_fingerprint(shape) -> dict[str, Any]:

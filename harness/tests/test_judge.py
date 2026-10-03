@@ -10,7 +10,7 @@ from unmesh.ir import Ir, Plane
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.judge import calibration, judge, sample_ir, under_reports
-from unmesh_harness.labels import tessellate
+from unmesh_harness.labels import distance_to_surface, tessellate
 from unmesh_harness.oracle import build_oracle_ir
 
 from .cases import smoke_entries
@@ -29,17 +29,23 @@ def planar_only(mesh):
 def test_oracle_scores_its_own_input(entry):
     shape = generate(entry["family"], entry["seed"]).solid
     mesh = tessellate(shape, LIN, ANG)
+    fine = tessellate(shape, *FINE)
     ir = build_oracle_ir(mesh)
-    result = judge(ir, mesh, tessellate(shape, *FINE), samples_per_mm2=2.0, seed=1)
+    result = judge(ir, mesh, fine, samples_per_mm2=2.0, seed=1)
     if planar_only(mesh):
         assert result.input.max < 1e-6
-        trim = FINE[0]
+        assert result.truth.ir_to_mesh.max <= FINE[0] + 1e-9
+        assert result.truth.mesh_to_ir.max <= LIN + 1e-9
     else:
-        assert result.input.max <= LIN + 1e-9
-        # Oracle trims inherit the input mesh's edge discretization.
-        trim = LIN + FINE[0]
-    assert result.truth.ir_to_mesh.max <= trim + 1e-9
-    assert result.truth.mesh_to_ir.max <= LIN + 1e-9
+        sag = max(
+            distance_to_surface(f, mesh.face_tris(f.id).mean(axis=1)).max() for f in mesh.faces
+        )
+        fine_sag = max(
+            distance_to_surface(f, fine.face_tris(f.id).mean(axis=1)).max() for f in fine.faces
+        )
+        assert result.input.max <= sag + LIN + 1e-9
+        assert result.truth.ir_to_mesh.max <= fine_sag + FINE[0] + 1e-9
+        assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 
 
 @pytest.mark.parametrize(
