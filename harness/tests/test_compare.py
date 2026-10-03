@@ -112,6 +112,34 @@ def test_cell_only_in_b_is_listed_not_flagged():
     assert "ONLY-B" in format_comparison(comp)
 
 
+def test_dropped_seed_in_b_is_a_regression():
+    comp = run(seeds([1.0, 1.0, 1.0]), seeds([1.0, 1.0]))
+    assert [v.metric for v in comp.regressions] == ["seeds"]
+    assert not comp.improvements
+
+
+def test_extra_seed_in_b_is_fine():
+    comp = run(seeds([1.0, 1.0]), seeds([1.0, 1.0, 1.0]))
+    assert not comp.regressions and not comp.improvements
+
+
+def test_samples_missing_in_b_are_a_regression():
+    comp = run(
+        seeds([1.0, 1.0, 1.0], dev_input_max=0.0),
+        seeds([1.0, 1.0, 1.0], dev_input_max=None),
+    )
+    assert any(v.metric == "dev_input_max" and v.verdict == "REGRESSION" for v in comp.regressions)
+    assert "n/a" in format_comparison(comp)
+
+
+def test_samples_missing_in_a_are_skipped():
+    comp = run(
+        seeds([1.0, 1.0, 1.0], dev_input_max=None),
+        seeds([1.0, 1.0, 1.0], dev_input_max=0.0),
+    )
+    assert not comp.regressions
+
+
 def test_other_converters_are_filtered():
     comp = run(
         [record(converter="faceted", f1=0.0)],

@@ -110,10 +110,44 @@ def compare_groups(
                 CellVerdict(key, "missing", 1.0, 0.0, len(groups_a[key]), 0.0, 0, 0.0, "REGRESSION")
             )
             continue
+        rec_a = groups_a[key]
+        rec_b = groups_b[key]
+        seeds_a = {r.get("seed") for r in rec_a}
+        seeds_b = {r.get("seed") for r in rec_b}
+        if seeds_a - seeds_b:
+            out.verdicts.append(
+                CellVerdict(
+                    key,
+                    "seeds",
+                    float(len(seeds_a)),
+                    0.0,
+                    len(rec_a),
+                    float(len(seeds_b)),
+                    len(rec_b),
+                    0.0,
+                    "REGRESSION",
+                )
+            )
+            continue
         for metric in METRICS:
             sa = metric_samples(groups_a[key], metric.name)
             sb = metric_samples(groups_b[key], metric.name)
-            if not sa or not sb:
+            if not sa:
+                continue
+            if not sb:
+                out.verdicts.append(
+                    CellVerdict(
+                        key,
+                        metric.name,
+                        statistics.fmean(sa),
+                        statistics.pstdev(sa),
+                        len(sa),
+                        float("nan"),
+                        0,
+                        metric.floor,
+                        "REGRESSION",
+                    )
+                )
                 continue
             mean_a = statistics.fmean(sa)
             std_a = statistics.pstdev(sa)
@@ -185,6 +219,8 @@ def compare_files(path_a: Path, path_b: Path, converter: str = "unmesh") -> Comp
 
 
 def _show(value: float, metric: str) -> str:
+    if isinstance(value, float) and math.isnan(value):
+        return "n/a"
     if metric.startswith("dev_"):
         return f"{value * 1000:.2f}um"
     return f"{value:.4f}"
