@@ -160,7 +160,10 @@ mod tests {
         let verts: Vec<(u32, f64)> = (0..v.len() as u32).map(|i| (i, 1.0)).collect();
         let r = Region {
             faces: vec![0],
-            surface: Surface::Plane { normal: n, offset: 0.0 },
+            surface: Surface::Plane {
+                normal: n,
+                offset: 0.0,
+            },
             area: 0.05,
             width: 0.05,
             verts,

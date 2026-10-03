@@ -174,7 +174,14 @@ fn finish(
             (label2, regions) = fit_once(tol);
         }
     }
-    snap::snap_normals(&w.vc, &mut regions, tol, sigma, options.angular_snap_deg, w.diag);
+    snap::snap_normals(
+        &w.vc,
+        &mut regions,
+        tol,
+        sigma,
+        options.angular_snap_deg,
+        w.diag,
+    );
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
     let (finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);

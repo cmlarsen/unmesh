@@ -410,10 +410,7 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         next_id += 1;
     }
     for &r in &loose {
-        let eligible: Vec<bool> = label2
-            .iter()
-            .map(|&l| l == r)
-            .collect();
+        let eligible: Vec<bool> = label2.iter().map(|&l| l == r).collect();
         let (sub, n_sub) = segment::run(vc, faces, nbr, info, &eligible, tol, true);
         for (f, &l) in sub.iter().enumerate() {
             if l != NONE {
