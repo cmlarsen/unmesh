@@ -118,7 +118,7 @@ pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64, floor: f64) -> Noi
         Some((sigma, snap_sigma)) => NoiseEstimate { sigma, snap_sigma },
         None => NoiseEstimate {
             sigma: tol / NOISE_FACTOR,
-            snap_sigma: tol / NOISE_FACTOR,
+            snap_sigma: 0.0,
         },
     }
 }
