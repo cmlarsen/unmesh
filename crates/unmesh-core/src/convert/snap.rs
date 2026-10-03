@@ -148,12 +148,7 @@ fn pooled(stats: &[(f64, f64, f64, f64)]) -> f64 {
     (ss / dof).sqrt()
 }
 
-fn pool_noise(
-    v: &[V3],
-    regions: &[Region],
-    min_verts: usize,
-    floor: f64,
-) -> Option<(f64, f64)> {
+fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize, floor: f64) -> Option<(f64, f64)> {
     let all = region_stats(v, regions, 4);
     if all.is_empty() {
         return None;
@@ -352,12 +347,7 @@ mod tests {
         pool_case_nv(bases, areas, &vec![60; bases.len()], 1.0)
     }
 
-    fn pool_case_nv(
-        bases: &[f64],
-        areas: &[f64],
-        nvs: &[usize],
-        floor: f64,
-    ) -> NoiseEstimate {
+    fn pool_case_nv(bases: &[f64], areas: &[f64], nvs: &[usize], floor: f64) -> NoiseEstimate {
         let mut v = Vec::new();
         let mut regions = Vec::new();
         for (k, ((&b, &a), &nv)) in bases.iter().zip(areas).zip(nvs).enumerate() {
