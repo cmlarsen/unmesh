@@ -76,6 +76,60 @@ def _um(x: float | None) -> str:
     return "-" if x is None else f"{x * 1000:.2f}"
 
 
+def _micro(rows: list[dict]) -> tuple[int, int, int, float, float, float]:
+    faces = sum(int(r.get("faces", 0)) for r in rows)
+    regions = sum(int(r.get("regions", 0)) for r in rows)
+    matched = sum(int(r.get("matched", 0)) for r in rows)
+    recall = matched / faces if faces else 0.0
+    precision = matched / regions if regions else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return faces, regions, matched, precision, recall, f1
+
+
+def _strata_key(record: dict[str, Any]) -> str:
+    strata = record.get("strata")
+    if isinstance(strata, dict):
+        return str(strata.get("category", "?"))
+    return str(strata) if strata is not None else "?"
+
+
+def _breakdown(records: list[dict[str, Any]]) -> list[str]:
+    ok = [r for r in records if r.get("status") == "ok"]
+    if not ok:
+        return []
+    lines = []
+    for title, key in (("family", lambda r: str(r.get("family", "?"))), ("strata", _strata_key)):
+        groups: dict[tuple, list[dict]] = defaultdict(list)
+        for r in ok:
+            groups[(r["converter"], key(r))].append(r)
+        lines.append(f"by {title} (micro over ok cells):")
+        for (converter, group), rs in sorted(groups.items()):
+            _, _, _, precision, recall, f1 = _micro(rs)
+            lines.append(
+                f"{converter:<10} {group:<16} {len(rs):>5} cells  "
+                f"P {precision:>6.3f}  R {recall:>6.3f}  F1 {f1:>6.3f}"
+            )
+    typed: dict[tuple, dict[str, int]] = defaultdict(lambda: {"cells": 0, "matched": 0})
+    for r in ok:
+        for surface, bucket in (r.get("per_type") or {}).items():
+            g = typed[(r["converter"], surface)]
+            g["cells"] += 1
+            for k in ("faces", "regions", "matched"):
+                g[k] = g.get(k, 0) + int(bucket.get(k, 0))
+    if typed:
+        lines.append("by surface type (micro over ok cells):")
+        for (converter, surface), g in sorted(typed.items()):
+            faces, regions, matched = g.get("faces", 0), g.get("regions", 0), g["matched"]
+            recall = matched / faces if faces else 0.0
+            precision = matched / regions if regions else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+            lines.append(
+                f"{converter:<10} {surface:<16} {g['cells']:>5} cells  "
+                f"P {precision:>6.3f}  R {recall:>6.3f}  F1 {f1:>6.3f}"
+            )
+    return lines
+
+
 def summarize(records: list[dict[str, Any]]) -> str:
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in records:
@@ -105,6 +159,7 @@ def summarize(records: list[dict[str, Any]]) -> str:
             f"{np.mean(times) if times else float('nan'):>11.3f}  "
             f"{max(times) if times else float('nan'):>10.3f}"
         )
+    lines += _breakdown(records)
     return "\n".join(lines)
 
 

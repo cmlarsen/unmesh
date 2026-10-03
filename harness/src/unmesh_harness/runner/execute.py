@@ -69,7 +69,13 @@ def _score(
     started = time.perf_counter()
     ir_json, step_path, report_json = get_converter(task["converter"])(stl_path)
     seconds = time.perf_counter() - started
-    record: dict[str, Any] = {"seconds": seconds, "triangles": len(tris), "phases": phases}
+    record: dict[str, Any] = {
+        "seconds": seconds,
+        "triangles": len(tris),
+        "phases": phases,
+        "family": task["entry"]["family"],
+        "strata": task["entry"].get("strata", {}),
+    }
     phases["convert"] = seconds
     report = json.loads(report_json) if report_json else None
     if report is not None and not isinstance(report, dict):
