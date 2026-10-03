@@ -83,24 +83,14 @@ def check_part(shape, lin, ang, exact_volume=True):
 
 @pytest.mark.parametrize(("entry", "lin", "ang"), smoke_by_deflection())
 def test_smoke_parts_closed_manifold_and_on_surface(entry, lin, ang):
-    check_part(
-        generate(entry["family"], entry["seed"]).solid,
-        lin,
-        ang,
-        exact_volume=entry["strata"].get("category", "planar") == "planar",
-    )
+    check_part(generate(entry["family"], entry["seed"]).solid, lin, ang)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize(("lin", "ang"), DEFLECTION_SETTINGS)
 @pytest.mark.parametrize("entry", select(load_manifest(), "standard"), ids=lambda e: e["id"])
 def test_standard_parts_closed_manifold_and_on_surface(entry, lin, ang):
-    check_part(
-        generate(entry["family"], entry["seed"]).solid,
-        lin,
-        ang,
-        exact_volume=entry["strata"].get("category", "planar") == "planar",
-    )
+    check_part(generate(entry["family"], entry["seed"]).solid, lin, ang)
 
 
 PRIMITIVES = {
