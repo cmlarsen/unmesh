@@ -339,3 +339,72 @@ def test_new_standard_entries_pinned():
     entries = [e for e in select(load_manifest(), "standard") if e["id"] in ids]
     assert len(entries) == 30
     assert all(e["strata"] == {"category": "ambiguity"} for e in entries)
+
+
+def test_ambiguity_grid_definition():
+    from unmesh_harness.runner import load_grid
+
+    grid = load_grid("ambiguity")
+    assert grid.corpus_grid == "standard"
+    assert [(c["operator"], float(c["severity"])) for c in grid.cells] == [
+        ("identity", 0.0),
+        ("float32", 1.0),
+    ]
+    assert all("floors" not in c for c in grid.cells)
+    standard_ids = {
+        e["id"]
+        for e in select(load_manifest(), "standard")
+        if e["strata"].get("category") == "ambiguity"
+    }
+    assert {e["id"] for e in grid.entries} == standard_ids
+
+
+def sorted_rounded_triangles(tris):
+    rounded = np.round(np.asarray(tris, dtype=np.float64).reshape(-1, 3, 3), 6).tolist()
+    return sorted(tuple(sorted(map(tuple, tri))) for tri in rounded)
+
+
+def test_runner_prep_gives_pair_members_identical_triangles(tmp_path):
+    from unmesh_harness.labels import LabeledMesh
+    from unmesh_harness.runner import load_grid
+    from unmesh_harness.runner.execute import _cache_paths, prep_part
+
+    grid = load_grid("ambiguity")
+    params = {}
+    for entry in grid.entries:
+        p = generate(entry["family"], entry["seed"]).parameters
+        assert p.get("indistinguishable") is True, entry["id"]
+        assert p["pair_deflection"] and p["pair_preprocess"], entry["id"]
+        params[entry["id"]] = p
+    pairs: dict = {}
+    for entry in grid.entries:
+        key = frozenset({entry["id"], params[entry["id"]]["pair_id"]})
+        pairs.setdefault(key, []).append(entry["id"])
+    ordered = sorted(sorted(members) for members in pairs.values())
+    assert len(ordered) == 15
+    assert all(len(members) == 2 for members in ordered)
+
+    by_id = {e["id"]: e for e in grid.entries}
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for first, second in ordered:
+        for part in (first, second):
+            prep_part(
+                {
+                    "entry": by_id[part],
+                    "cache": str(cache),
+                    "need_truth": grid.need_truth,
+                    "input_deflection": grid.input_deflection,
+                    "truth_deflection": grid.truth_deflection,
+                }
+            )
+    for first, second in ordered:
+        a = LabeledMesh.load(_cache_paths(cache, first)[0])
+        b = LabeledMesh.load(_cache_paths(cache, second)[0])
+        assert sorted_rounded_triangles(a.tris) == sorted_rounded_triangles(b.tris), (
+            first,
+            second,
+        )
+        for mesh, part in ((a, first), (b, second)):
+            expected = [op for op, _ in params[part]["pair_preprocess"]]
+            assert [h["op"] for h in mesh.metadata.get("history", [])] == expected, part
