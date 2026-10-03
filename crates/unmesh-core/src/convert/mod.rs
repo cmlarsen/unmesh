@@ -1,90 +1,133 @@
 #![allow(clippy::needless_range_loop)]
 
+mod adjacency;
+mod dsu;
 mod emit;
+mod fit;
 mod linalg;
-mod planes;
 mod project;
 mod segment;
+mod snap;
+mod surface;
 mod topology;
+mod weld;
 
-use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 
 use crate::api::{ConvertError, ConvertOptions, ConvertOutput, ConvertWarning, Report};
-use crate::ir::{ShellRole, Tolerances};
+use crate::ir::Tolerances;
 use crate::mesh::{Point, TriangleSoup};
-use crate::weld::weld;
 
-use emit::{Asm, Final};
-use linalg::{V3, add, dot, norm, scale, sub};
-use planes::{Scratch, build_regions, estimate_noise, merge_coplanar, region_pairs, snap_normals};
-use project::{PlaneRef, project_vertex};
-use segment::{segment, tri_info};
-use topology::{CompKind, NONE, build, point_in_shell, signed_volume};
+use emit::Asm;
+use fit::{label_faces, region_pairs};
+use linalg::{V3, add};
+use project::Projected;
+use topology::NONE;
 
 const MIN_TOLERANCE: f64 = 1e-3;
 const NOISE_FACTOR: f64 = 5.0;
-
-pub(crate) struct CompMeta {
-    pub closed: bool,
-    pub role: ShellRole,
-    pub parent: Option<usize>,
-}
-
-fn warn(warnings: &mut Vec<ConvertWarning>, code: &str, message: String) {
-    warnings.push(ConvertWarning {
-        code: code.to_string(),
-        message,
-    });
-}
 
 pub fn convert_soup(
     soup: &TriangleSoup,
     options: &ConvertOptions,
 ) -> Result<ConvertOutput, ConvertError> {
-    if soup.is_empty() {
-        return Err(ConvertError::EmptyMesh);
-    }
-    let (mesh, src, wrep) =
-        weld(soup, options.vertex_merge).map_err(|e| ConvertError::InvalidInput(e.to_string()))?;
-    if mesh.faces.is_empty() {
-        return Err(ConvertError::EmptyMesh);
-    }
-    let mut warnings = Vec::new();
+    let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
+    let mut scratch = fit::Scratch::new(w.vc.len());
+    let mut fit_once = |tol: f64| {
+        fit::fit_regions(fit::FitArgs {
+            vc: &w.vc,
+            faces: &w.faces,
+            nbr: &shells.topo.nbr,
+            info: &info,
+            eligible: &shells.eligible,
+            tol,
+            snap_deg: options.angular_snap_deg,
+            scratch: &mut scratch,
+        })
+    };
+    finish(
+        &w,
+        &shells,
+        &info,
+        soup.len() as u32,
+        options,
+        tol,
+        auto_tol,
+        warnings,
+        &mut fit_once,
+    )
+}
 
-    let mut seen: FxHashMap<[u32; 3], ()> = FxHashMap::default();
-    let mut faces: Vec<[u32; 3]> = Vec::with_capacity(mesh.faces.len());
-    let mut fsrc: Vec<u32> = Vec::with_capacity(mesh.faces.len());
-    let mut duplicates = 0usize;
-    for (f, &s) in mesh.faces.iter().zip(&src) {
-        let mut key = *f;
-        key.sort_unstable();
-        if seen.insert(key, ()).is_some() {
-            duplicates += 1;
-            continue;
-        }
-        faces.push(*f);
-        fsrc.push(s);
+#[allow(dead_code)]
+pub(crate) fn convert_from_labels(
+    soup: &TriangleSoup,
+    options: &ConvertOptions,
+    source_labels: &[u32],
+) -> Result<ConvertOutput, ConvertError> {
+    if source_labels.len() != soup.len() {
+        return Err(ConvertError::InvalidInput(format!(
+            "label count {} does not match triangle count {}",
+            source_labels.len(),
+            soup.len()
+        )));
     }
-    let dropped = wrep.degenerate_dropped + duplicates;
-    if dropped > 0 {
-        warn(
-            &mut warnings,
-            "degenerate_triangles",
-            format!("{dropped} degenerate or duplicate triangles were dropped"),
-        );
-    }
+    let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
+    let face_labels: Vec<u32> = w
+        .fsrc
+        .iter()
+        .enumerate()
+        .map(|(f, &s)| {
+            if shells.eligible[f] {
+                source_labels[s as usize]
+            } else {
+                NONE
+            }
+        })
+        .collect();
+    let n_seg = face_labels
+        .iter()
+        .filter(|&&l| l != NONE)
+        .max()
+        .map(|m| *m as usize + 1)
+        .unwrap_or(0);
+    let mut scratch = fit::Scratch::new(w.vc.len());
+    let mut fit_once = |tol: f64| {
+        fit::run(fit::RunArgs {
+            vc: &w.vc,
+            faces: &w.faces,
+            nbr: &shells.topo.nbr,
+            info: &info,
+            label: &face_labels,
+            n_seg,
+            tol,
+            snap_deg: options.angular_snap_deg,
+            scratch: &mut scratch,
+        })
+    };
+    finish(
+        &w,
+        &shells,
+        &info,
+        soup.len() as u32,
+        options,
+        tol,
+        auto_tol,
+        warnings,
+        &mut fit_once,
+    )
+}
 
-    let (mut lo, mut hi) = (mesh.vertices[0], mesh.vertices[0]);
-    for p in &mesh.vertices {
-        for a in 0..3 {
-            lo[a] = lo[a].min(p[a]);
-            hi[a] = hi[a].max(p[a]);
-        }
-    }
-    let center: V3 = scale(add(lo, hi), 0.5);
-    let diag = norm(sub(hi, lo));
-    let mut orig: Vec<Point> = mesh.vertices.clone();
-    let mut vc: Vec<V3> = orig.iter().map(|p| sub(*p, center)).collect();
+type Prepared = (
+    weld::Welded,
+    topology::Shells,
+    Vec<segment::TriInfo>,
+    f64,
+    bool,
+    Vec<ConvertWarning>,
+);
+
+fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, ConvertError> {
+    let (mut w, mut warnings) = weld::run(soup, options.vertex_merge)?;
 
     let auto_tol = options.linear_tolerance.is_none();
     let tol = match options.linear_tolerance {
@@ -94,356 +137,71 @@ pub fn convert_soup(
                 "linear_tolerance must be finite and > 0".to_string(),
             ));
         }
-        None => (5e-4 * diag).max(MIN_TOLERANCE),
+        None => (5e-4 * w.diag).max(MIN_TOLERANCE),
     };
 
-    let mut topo = build(&mut faces);
-    if topo.repaired {
-        warn(
-            &mut warnings,
-            "repaired_winding",
-            "inconsistent triangle winding was repaired".to_string(),
-        );
-    }
+    let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
+    warnings.extend(shell_warnings);
 
-    let n_comps = topo.comps.len();
-    let volumes: Vec<f64> = topo
-        .comps
-        .iter()
-        .map(|c| {
-            if c.kind == CompKind::Closed {
-                signed_volume(&vc, &faces, &c.faces)
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    let mut metas: Vec<CompMeta> = Vec::with_capacity(n_comps);
-    let mut flip_comps = Vec::new();
-    let mut open_edges = 0usize;
-    let mut non_manifold = 0usize;
-    for (ci, comp) in topo.comps.iter().enumerate() {
-        match comp.kind {
-            CompKind::OpenEdges => open_edges += 1,
-            CompKind::NonManifold => non_manifold += 1,
-            CompKind::Closed => {}
-        }
-        if comp.kind != CompKind::Closed {
-            metas.push(CompMeta {
-                closed: false,
-                role: ShellRole::Outer,
-                parent: None,
-            });
-            continue;
-        }
-        if volumes[ci] >= 0.0 {
-            metas.push(CompMeta {
-                closed: true,
-                role: ShellRole::Outer,
-                parent: None,
-            });
-            continue;
-        }
-        let probe = {
-            let t = faces[comp.faces[0] as usize];
-            scale(
-                add(add(vc[t[0] as usize], vc[t[1] as usize]), vc[t[2] as usize]),
-                1.0 / 3.0,
-            )
-        };
-        let parent = (0..n_comps)
-            .filter(|&o| {
-                o != ci
-                    && topo.comps[o].kind == CompKind::Closed
-                    && volumes[o] > 0.0
-                    && point_in_shell(&vc, &faces, &topo.comps[o].faces, probe)
-            })
-            .min_by(|&a, &b| volumes[a].total_cmp(&volumes[b]));
-        match parent {
-            Some(p) => metas.push(CompMeta {
-                closed: true,
-                role: ShellRole::Cavity,
-                parent: Some(p),
-            }),
-            None => {
-                flip_comps.push(ci);
-                metas.push(CompMeta {
-                    closed: true,
-                    role: ShellRole::Outer,
-                    parent: None,
-                });
-            }
-        }
-    }
-    if open_edges > 0 {
-        warn(
-            &mut warnings,
-            "open_edges",
-            format!("{open_edges} shell(s) have open edges and are kept as facets"),
-        );
-    }
-    if non_manifold > 0 {
-        warn(
-            &mut warnings,
-            "non_manifold_edges",
-            format!("{non_manifold} shell(s) have non-manifold edges and are kept as facets"),
-        );
-    }
-    if !flip_comps.is_empty() {
-        for &ci in &flip_comps {
-            for &f in &topo.comps[ci].faces {
-                faces[f as usize].swap(1, 2);
-            }
-        }
-        warn(
-            &mut warnings,
-            "flipped_winding",
-            format!(
-                "{} shell(s) had inward-facing winding and were flipped",
-                flip_comps.len()
-            ),
-        );
-        topo = build(&mut faces);
-    }
+    let info = segment::tri_info(&w.vc, &w.faces);
+    Ok((w, shells, info, tol, auto_tol, warnings))
+}
 
-    let mut claimed: Vec<Option<usize>> = vec![None; vc.len()];
-    let mut dup: FxHashMap<(u32, usize), u32> = FxHashMap::default();
-    for (ci, comp) in topo.comps.iter().enumerate() {
-        for &f in &comp.faces {
-            for slot in faces[f as usize].iter_mut() {
-                let v = *slot;
-                match claimed[v as usize] {
-                    None => claimed[v as usize] = Some(ci),
-                    Some(c) if c == ci => {}
-                    Some(_) => {
-                        let id = *dup.entry((v, ci)).or_insert_with(|| {
-                            vc.push(vc[v as usize]);
-                            orig.push(orig[v as usize]);
-                            (vc.len() - 1) as u32
-                        });
-                        *slot = id;
-                    }
-                }
-            }
-        }
-    }
-    if !dup.is_empty() {
-        topo = build(&mut faces);
-    }
-
-    let nf = faces.len();
-    let comp_of: Vec<u32> = {
-        let mut v = vec![0u32; nf];
-        for (ci, c) in topo.comps.iter().enumerate() {
-            for &f in &c.faces {
-                v[f as usize] = ci as u32;
-            }
-        }
-        v
-    };
-    let eligible: Vec<bool> = comp_of
-        .iter()
-        .map(|&c| topo.comps[c as usize].kind == CompKind::Closed)
-        .collect();
-
-    let info = tri_info(&vc, &faces);
-    let mut scratch = Scratch::new(vc.len());
-    let mut stage = |tol: f64| -> (Vec<u32>, Vec<planes::Region>) {
-        let (label, n_seg) = segment(&vc, &faces, &topo.nbr, &info, &eligible, tol);
-        let regions0 = build_regions(&vc, &faces, &info, &label, n_seg, tol, &mut scratch);
-        let pairs0 = region_pairs(&topo.nbr, &label);
-        let root = merge_coplanar(&vc, &regions0, &pairs0, tol, options.angular_snap_deg);
-        let mut compact = vec![NONE; n_seg];
-        let mut n_merged = 0u32;
-        for r in 0..n_seg {
-            if root[r] as usize == r {
-                compact[r] = n_merged;
-                n_merged += 1;
-            }
-        }
-        let label2: Vec<u32> = label
-            .iter()
-            .map(|&l| {
-                if l == NONE {
-                    NONE
-                } else {
-                    compact[root[l as usize] as usize]
-                }
-            })
-            .collect();
-        let regions = build_regions(
-            &vc,
-            &faces,
-            &info,
-            &label2,
-            n_merged as usize,
-            tol,
-            &mut scratch,
-        );
-        (label2, regions)
-    };
-    let (mut label2, mut regions) = stage(tol);
-    let mut tol = tol;
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    w: &weld::Welded,
+    shells: &topology::Shells,
+    info: &[segment::TriInfo],
+    source_triangles: u32,
+    options: &ConvertOptions,
+    mut tol: f64,
+    auto_tol: bool,
+    mut warnings: Vec<ConvertWarning>,
+    fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
+) -> Result<ConvertOutput, ConvertError> {
+    let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
     if auto_tol {
-        sigma = estimate_noise(&vc, &regions);
+        sigma = snap::estimate_noise(&w.vc, &regions);
         let derived = (NOISE_FACTOR * sigma).max(MIN_TOLERANCE);
         if derived < tol {
             tol = derived;
-            (label2, regions) = stage(tol);
+            (label2, regions) = fit_once(tol);
         }
     }
-    snap_normals(&vc, &mut regions, tol, sigma, options.angular_snap_deg);
+    snap::snap_normals(&w.vc, &mut regions, tol, sigma, options.angular_snap_deg);
 
-    let pairs = region_pairs(&topo.nbr, &label2);
-    let is_plane: Vec<bool> = regions
-        .iter()
-        .map(|r| r.area > 0.0 && r.max <= tol)
-        .collect();
-    let mut fdsu: Vec<u32> = (0..regions.len() as u32).collect();
-    fn find(d: &mut [u32], mut x: u32) -> u32 {
-        while d[x as usize] != x {
-            d[x as usize] = d[d[x as usize] as usize];
-            x = d[x as usize];
-        }
-        x
-    }
-    for &(a, b) in &pairs {
-        if !is_plane[a as usize] && !is_plane[b as usize] {
-            let (ra, rb) = (find(&mut fdsu, a), find(&mut fdsu, b));
-            if ra != rb {
-                fdsu[ra.max(rb) as usize] = ra.min(rb);
-            }
-        }
-    }
-    let mut finals: Vec<Final> = Vec::new();
-    let mut group_of: FxHashMap<u32, usize> = FxHashMap::default();
-    for (ri, r) in regions.iter().enumerate() {
-        if r.faces.is_empty() {
-            continue;
-        }
-        if is_plane[ri] {
-            finals.push(Final {
-                faces: r.faces.clone(),
-                plane: Some((r.n, r.d)),
-                rms: r.rms,
-                max: r.max,
-                comp: comp_of[r.faces[0] as usize] as usize,
-            });
-        } else {
-            let g = find(&mut fdsu, ri as u32);
-            let idx = *group_of.entry(g).or_insert_with(|| {
-                finals.push(Final {
-                    faces: Vec::new(),
-                    plane: None,
-                    rms: 0.0,
-                    max: 0.0,
-                    comp: comp_of[r.faces[0] as usize] as usize,
-                });
-                finals.len() - 1
-            });
-            finals[idx].faces.extend_from_slice(&r.faces);
-        }
-    }
-    for (ci, c) in topo.comps.iter().enumerate() {
-        if c.kind != CompKind::Closed {
-            finals.push(Final {
-                faces: c.faces.clone(),
-                plane: None,
-                rms: 0.0,
-                max: 0.0,
-                comp: ci,
-            });
-        }
-    }
-    for fr in finals.iter_mut() {
-        fr.faces.sort_unstable();
-    }
-    finals.sort_by_key(|f| f.faces[0]);
+    let pairs = region_pairs(&shells.topo.nbr, &label2);
+    let (finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
 
-    let mut flabel = vec![NONE; nf];
-    for (i, fr) in finals.iter().enumerate() {
-        for &f in &fr.faces {
-            flabel[f as usize] = i as u32;
-        }
-    }
-
-    let mut vr: Vec<u64> = Vec::with_capacity(nf * 3);
-    for (f, t) in faces.iter().enumerate() {
-        for &v in t {
-            vr.push(((v as u64) << 32) | flabel[f] as u64);
-        }
-    }
-    vr.sort_unstable();
-    vr.dedup();
-
-    let areas: Vec<f64> = finals
-        .iter()
-        .map(|fr| fr.faces.iter().map(|&f| info[f as usize].area).sum())
-        .collect();
-    let mut pv = vc.clone();
-    let mut dev_sum2 = 0.0;
-    let mut dev_max: f64 = 0.0;
-    let mut dev_count = 0usize;
-    let mut i = 0;
-    while i < vr.len() {
-        let v = (vr[i] >> 32) as usize;
-        let mut j = i;
-        let mut planes: Vec<PlaneRef> = Vec::new();
-        let mut plane_idx: Vec<usize> = Vec::new();
-        while j < vr.len() && (vr[j] >> 32) as usize == v {
-            let r = (vr[j] & 0xffff_ffff) as usize;
-            if let Some((n, d)) = finals[r].plane {
-                planes.push(PlaneRef {
-                    n,
-                    d,
-                    weight: areas[r],
-                });
-                plane_idx.push(r);
-            }
-            j += 1;
-        }
-        if !planes.is_empty() {
-            let x = project_vertex(vc[v], &planes, tol);
-            pv[v] = x;
-            let disp = norm(sub(x, vc[v]));
-            let off = planes
-                .iter()
-                .map(|p| (dot(p.n, x) - p.d).abs())
-                .fold(0.0, f64::max);
-            let dev = disp + off;
-            dev_max = dev_max.max(dev);
-            dev_sum2 += dev * dev;
-            dev_count += 1;
-        }
-        i = j;
-    }
-    for fr in &finals {
-        dev_max = dev_max.max(if fr.plane.is_some() { fr.max } else { 0.0 });
-    }
-    let slack = 8.0 * f64::EPSILON * (diag + norm(center));
-    let report_dev = if dev_count == 0 { 0.0 } else { dev_max + slack };
-    let report_rms = if dev_count == 0 {
-        0.0
-    } else {
-        (dev_sum2 / dev_count as f64).sqrt()
-    };
+    let Projected {
+        positions: pv,
+        report_dev,
+        report_rms,
+        areas,
+    } = project::run(project::ProjectArgs {
+        vc: &w.vc,
+        finals: &finals,
+        flabel: &flabel,
+        faces: &w.faces,
+        info,
+        tol,
+        diag: w.diag,
+        center: w.center,
+    });
 
     let total_area: f64 = info.iter().map(|t| t.area).sum();
     let plane_area: f64 = finals
         .iter()
         .zip(&areas)
-        .filter(|(f, _)| f.plane.is_some())
+        .filter(|(f, _)| f.surface.is_analytic())
         .map(|(_, a)| a)
         .sum();
-    let mut region_counts = std::collections::BTreeMap::new();
+    let mut region_counts = BTreeMap::new();
     for fr in &finals {
-        let key = if fr.plane.is_some() {
-            "plane"
-        } else {
-            "facets"
-        };
-        *region_counts.entry(key.to_string()).or_insert(0u32) += 1;
+        *region_counts
+            .entry(fr.surface.name().to_string())
+            .or_insert(0u32) += 1;
     }
 
     let tolerances = Tolerances {
@@ -456,24 +214,24 @@ pub fn convert_soup(
         pv.iter()
             .enumerate()
             .map(|(i, p)| {
-                if *p == vc[i] {
-                    orig[i]
+                if *p == w.vc[i] {
+                    w.orig[i]
                 } else {
-                    add(*p, center)
+                    add(*p, w.center)
                 }
             })
             .collect()
     };
     let asm = Asm {
         tolerances,
-        source_triangles: soup.len() as u32,
-        center,
-        source_vertices: wrep.unique_vertices as u32,
-        faces: &faces,
-        fsrc: &fsrc,
-        nbr: &topo.nbr,
-        metas: &metas,
-        orig: &orig,
+        source_triangles,
+        center: w.center,
+        source_vertices: w.unique_vertices,
+        faces: &w.faces,
+        fsrc: &w.fsrc,
+        nbr: &shells.topo.nbr,
+        metas: &shells.metas,
+        orig: &w.orig,
     };
     let out_pos = positions(&pv);
     let result = emit::assemble(&asm, &finals, &flabel, &out_pos);
@@ -490,36 +248,31 @@ pub fn convert_soup(
             },
         ),
         Err(errors) => {
-            warn(
-                &mut warnings,
-                "fallback_facets",
-                format!(
+            warnings.push(ConvertWarning {
+                code: "fallback_facets".to_string(),
+                message: format!(
                     "analytic assembly failed validation ({}); every shell is kept as facets",
                     errors.join("; ")
                 ),
-            );
-            let fb: Vec<Final> = topo
+            });
+            let fb: Vec<fit::Final> = shells
+                .topo
                 .comps
                 .iter()
                 .enumerate()
-                .map(|(ci, c)| Final {
+                .map(|(ci, c)| fit::Final {
                     faces: c.faces.clone(),
-                    plane: None,
+                    surface: surface::Surface::Facets,
                     rms: 0.0,
                     max: 0.0,
                     comp: ci,
                 })
                 .collect();
-            let mut fl = vec![NONE; nf];
-            for (i, fr) in fb.iter().enumerate() {
-                for &f in &fr.faces {
-                    fl[f as usize] = i as u32;
-                }
-            }
-            let orig_pos = positions(&vc);
+            let fl = label_faces(&fb, w.faces.len());
+            let orig_pos = positions(&w.vc);
             let ir = emit::assemble(&asm, &fb, &fl, &orig_pos)
                 .map_err(|e| ConvertError::InvalidInput(e.join("; ")))?;
-            let mut counts = std::collections::BTreeMap::new();
+            let mut counts = BTreeMap::new();
             counts.insert("facets".to_string(), fb.len() as u32);
             (ir, 0.0, 0.0, counts, 0.0)
         }
@@ -539,8 +292,11 @@ pub fn convert_soup(
 
 #[cfg(test)]
 mod tests {
+    use rustc_hash::FxHashMap;
+
+    use super::linalg::{dot, scale, sub};
     use super::*;
-    use crate::ir::{Kind, Surface, VertexRole};
+    use crate::ir::{Kind, ShellRole, Surface, VertexRole};
 
     pub(super) fn grid_box(lo: V3, hi: V3, div: usize, inward: bool) -> Vec<[V3; 3]> {
         let mut tris = Vec::new();
@@ -684,6 +440,123 @@ mod tests {
         assert_eq!(out.ir.regions.len(), 12);
         assert_eq!(out.ir.vertices.len(), 16);
         assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+    }
+
+    #[test]
+    fn stray_reverse_duplicate_heals_to_six_planes() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let t = tris[0];
+        tris.push([t[0], t[2], t[1]]);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.regions.len(), 6, "{:?}", out.report.warnings);
+        assert_eq!(ir.shells.len(), 1);
+        assert!(ir.shells[0].closed);
+        assert!(ir.regions.iter().all(|r| !r.surface.is_facets()));
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "repaired_winding")
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "degenerate_triangles")
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn two_stray_reverse_duplicates_heal_to_six_planes() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let (a, b) = (tris[0], tris[5]);
+        tris.push([a[0], a[2], a[1]]);
+        tris.push([b[0], b[2], b[1]]);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.regions.len(), 6, "{:?}", out.report.warnings);
+        assert_eq!(ir.shells.len(), 1);
+        assert!(ir.shells[0].closed);
+        assert!(ir.regions.iter().all(|r| !r.surface.is_facets()));
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "repaired_winding")
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn face_touching_boxes_keep_opposite_winding_duplicates() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        tris.extend(grid_box([10.0, 0.0, 0.0], [20.0, 10.0, 10.0], 1, false));
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        let mut covered: Vec<u32> = ir
+            .regions
+            .iter()
+            .flat_map(|r| r.triangles.iter().copied())
+            .collect();
+        covered.sort_unstable();
+        assert_eq!(covered, (0..24).collect::<Vec<_>>());
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "degenerate_triangles")
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "non_manifold_edges")
+        );
+        assert_eq!(ir.shells.len(), 1);
+        assert!(!ir.shells[0].closed);
+        assert_eq!(ir.regions.len(), 1);
+        assert!(ir.regions[0].surface.is_facets());
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn edge_touching_boxes_are_one_non_manifold_shell() {
+        let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
+        tris.extend(grid_box([10.0, 10.0, 0.0], [20.0, 20.0, 10.0], 1, false));
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 1);
+        assert!(!ir.shells[0].closed);
+        assert_eq!(ir.regions.len(), 1);
+        assert!(ir.regions[0].surface.is_facets());
+        let mut covered: Vec<u32> = ir
+            .regions
+            .iter()
+            .flat_map(|r| r.triangles.iter().copied())
+            .collect();
+        covered.sort_unstable();
+        assert_eq!(covered, (0..24).collect::<Vec<_>>());
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "non_manifold_edges")
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn oracle_labels_reproduce_segmented_box() {
+        let soup = TriangleSoup {
+            triangles: grid_box([0.0; 3], [10.0, 20.0, 30.0], 1, false),
+        };
+        let labels: Vec<u32> = (0..12).map(|i| i / 2).collect();
+        let a = convert_soup(&soup, &ConvertOptions::default()).unwrap();
+        let b = convert_from_labels(&soup, &ConvertOptions::default(), &labels).unwrap();
+        assert_eq!(a.ir, b.ir);
+        assert_eq!(a.report, b.report);
     }
 
     #[test]

@@ -1,4 +1,8 @@
-use super::linalg::{V3, cross, dot, sub};
+use super::dsu::Dsu;
+use super::linalg::{V3, add, cross, dot, scale, sub};
+use crate::api::ConvertWarning;
+use crate::ir::ShellRole;
+use crate::mesh::Point;
 
 pub const NONE: u32 = u32::MAX;
 
@@ -21,28 +25,183 @@ pub struct Topology {
     pub repaired: bool,
 }
 
-struct Dsu(Vec<u32>);
+pub struct CompMeta {
+    pub closed: bool,
+    pub role: ShellRole,
+    pub parent: Option<usize>,
+}
 
-impl Dsu {
-    fn new(n: usize) -> Self {
-        Dsu((0..n as u32).collect())
+pub struct Shells {
+    pub topo: Topology,
+    pub metas: Vec<CompMeta>,
+    pub comp_of: Vec<u32>,
+    pub eligible: Vec<bool>,
+}
+
+pub fn prepare(
+    faces: &mut [[u32; 3]],
+    vc: &mut Vec<V3>,
+    orig: &mut Vec<Point>,
+) -> (Shells, Vec<ConvertWarning>) {
+    use rustc_hash::FxHashMap;
+
+    let mut warnings = Vec::new();
+    let mut topo = build(faces);
+    if topo.repaired {
+        warnings.push(ConvertWarning {
+            code: "repaired_winding".to_string(),
+            message: "inconsistent triangle winding was repaired".to_string(),
+        });
     }
 
-    fn find(&mut self, mut x: u32) -> u32 {
-        while self.0[x as usize] != x {
-            let p = self.0[x as usize];
-            self.0[x as usize] = self.0[p as usize];
-            x = self.0[x as usize];
+    let n_comps = topo.comps.len();
+    let volumes: Vec<f64> = topo
+        .comps
+        .iter()
+        .map(|c| {
+            if c.kind == CompKind::Closed {
+                signed_volume(vc, faces, &c.faces)
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let mut metas: Vec<CompMeta> = Vec::with_capacity(n_comps);
+    let mut flip_comps = Vec::new();
+    let mut open_edges = 0usize;
+    let mut non_manifold = 0usize;
+    for (ci, comp) in topo.comps.iter().enumerate() {
+        match comp.kind {
+            CompKind::OpenEdges => open_edges += 1,
+            CompKind::NonManifold => non_manifold += 1,
+            CompKind::Closed => {}
         }
-        x
-    }
-
-    fn union(&mut self, a: u32, b: u32) {
-        let (a, b) = (self.find(a), self.find(b));
-        if a != b {
-            self.0[a.max(b) as usize] = a.min(b);
+        if comp.kind != CompKind::Closed {
+            metas.push(CompMeta {
+                closed: false,
+                role: ShellRole::Outer,
+                parent: None,
+            });
+            continue;
+        }
+        if volumes[ci] >= 0.0 {
+            metas.push(CompMeta {
+                closed: true,
+                role: ShellRole::Outer,
+                parent: None,
+            });
+            continue;
+        }
+        let probe = {
+            let t = faces[comp.faces[0] as usize];
+            scale(
+                add(add(vc[t[0] as usize], vc[t[1] as usize]), vc[t[2] as usize]),
+                1.0 / 3.0,
+            )
+        };
+        let parent = (0..n_comps)
+            .filter(|&o| {
+                o != ci
+                    && topo.comps[o].kind == CompKind::Closed
+                    && volumes[o] > 0.0
+                    && point_in_shell(vc, faces, &topo.comps[o].faces, probe)
+            })
+            .min_by(|&a, &b| volumes[a].total_cmp(&volumes[b]));
+        match parent {
+            Some(p) => metas.push(CompMeta {
+                closed: true,
+                role: ShellRole::Cavity,
+                parent: Some(p),
+            }),
+            None => {
+                flip_comps.push(ci);
+                metas.push(CompMeta {
+                    closed: true,
+                    role: ShellRole::Outer,
+                    parent: None,
+                });
+            }
         }
     }
+    if open_edges > 0 {
+        warnings.push(ConvertWarning {
+            code: "open_edges".to_string(),
+            message: format!("{open_edges} shell(s) have open edges and are kept as facets"),
+        });
+    }
+    if non_manifold > 0 {
+        warnings.push(ConvertWarning {
+            code: "non_manifold_edges".to_string(),
+            message: format!(
+                "{non_manifold} shell(s) have non-manifold edges and are kept as facets"
+            ),
+        });
+    }
+    if !flip_comps.is_empty() {
+        for &ci in &flip_comps {
+            for &f in &topo.comps[ci].faces {
+                faces[f as usize].swap(1, 2);
+            }
+        }
+        warnings.push(ConvertWarning {
+            code: "flipped_winding".to_string(),
+            message: format!(
+                "{} shell(s) had inward-facing winding and were flipped",
+                flip_comps.len()
+            ),
+        });
+        topo = build(faces);
+    }
+
+    let mut claimed: Vec<Option<usize>> = vec![None; vc.len()];
+    let mut dup: FxHashMap<(u32, usize), u32> = FxHashMap::default();
+    for (ci, comp) in topo.comps.iter().enumerate() {
+        for &f in &comp.faces {
+            for slot in faces[f as usize].iter_mut() {
+                let v = *slot;
+                match claimed[v as usize] {
+                    None => claimed[v as usize] = Some(ci),
+                    Some(c) if c == ci => {}
+                    Some(_) => {
+                        let id = *dup.entry((v, ci)).or_insert_with(|| {
+                            vc.push(vc[v as usize]);
+                            orig.push(orig[v as usize]);
+                            (vc.len() - 1) as u32
+                        });
+                        *slot = id;
+                    }
+                }
+            }
+        }
+    }
+    if !dup.is_empty() {
+        topo = build(faces);
+    }
+
+    let nf = faces.len();
+    let comp_of: Vec<u32> = {
+        let mut v = vec![0u32; nf];
+        for (ci, c) in topo.comps.iter().enumerate() {
+            for &f in &c.faces {
+                v[f as usize] = ci as u32;
+            }
+        }
+        v
+    };
+    let eligible: Vec<bool> = comp_of
+        .iter()
+        .map(|&c| topo.comps[c as usize].kind == CompKind::Closed)
+        .collect();
+
+    (
+        Shells {
+            topo,
+            metas,
+            comp_of,
+            eligible,
+        },
+        warnings,
+    )
 }
 
 struct Raw {
