@@ -25,7 +25,12 @@ use project::Projected;
 use snap::NOISE_FACTOR;
 use topology::NONE;
 
-const MIN_TOLERANCE: f64 = 1e-3;
+const INITIAL_TOL_REL: f64 = 5e-4;
+const MIN_TOL_REL: f64 = 2e-5;
+
+fn floor(diag: f64) -> f64 {
+    MIN_TOL_REL * diag
+}
 
 pub fn convert_soup(
     soup: &TriangleSoup,
@@ -137,7 +142,7 @@ fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, Co
                 "linear_tolerance must be finite and > 0".to_string(),
             ));
         }
-        None => (5e-4 * w.diag).max(MIN_TOLERANCE),
+        None => (INITIAL_TOL_REL * w.diag).max(floor(w.diag)),
     };
 
     let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
@@ -163,13 +168,13 @@ fn finish(
     let mut sigma = tol / NOISE_FACTOR;
     if auto_tol {
         sigma = snap::estimate_noise(&w.vc, &regions, tol);
-        let derived = (NOISE_FACTOR * sigma).max(MIN_TOLERANCE);
+        let derived = (NOISE_FACTOR * sigma).max(floor(w.diag));
         if derived < tol {
             tol = derived;
             (label2, regions) = fit_once(tol);
         }
     }
-    snap::snap_normals(&w.vc, &mut regions, tol, sigma, options.angular_snap_deg);
+    snap::snap_normals(&w.vc, &mut regions, tol, sigma, options.angular_snap_deg, w.diag);
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
     let (finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);

@@ -33,7 +33,7 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter estimates the vertex noise of its planar regions and uses five times that, between a floor of 1e-3 and 5e-4 of the bounding-box diagonal. Becomes `ir.tolerances.linear`. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter estimates the vertex noise of its planar regions and uses five times that, between a floor of 2e-5 of the bounding-box diagonal and 5e-4 of the diagonal. Becomes `ir.tolerances.linear`. |
 | `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
@@ -50,7 +50,8 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
-A clean mesh therefore gets the 1e-3 floor and a noisy one a tolerance that follows its noise, so snapping
+A clean mesh therefore gets the floor (2e-5 of the bounding-box diagonal, so the
+tolerance scales with the part's units) and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite

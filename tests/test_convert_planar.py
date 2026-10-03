@@ -187,6 +187,31 @@ def test_clean_plate_with_bore_gets_micron_auto_tolerance():
     assert ir.tolerances.linear <= 2e-3
 
 
+def scaled_mesh(part, factor):
+    import copy
+
+    out = copy.deepcopy(part)
+    out.tris = part.tris * factor
+    for face in out.faces:
+        assert face.surface == "plane"
+        face.params["origin"] = (np.array(face.params["origin"]) * factor).tolist()
+    for adj in out.adjacency:
+        adj.points = (np.array(adj.points) * factor).tolist()
+    return out
+
+
+def test_scaled_planar_parts_reach_unscaled_f1(parts):
+    from unmesh_harness.metrics.recovery import score_recovery
+
+    for part in parts:
+        base = score_recovery(part, part.face_id, unmesh.convert(part.tris)[0])["f1"]
+        assert base == 1.0
+        for factor in (1000.0, 0.001):
+            scaled = scaled_mesh(part, factor)
+            ir, _ = unmesh.convert(scaled.tris)
+            assert score_recovery(scaled, scaled.face_id, ir)["f1"] == base
+
+
 @pytest.mark.benchmark
 def test_million_triangle_planar_mesh_converts_fast(capsys):
     soup = grid_box(289)
