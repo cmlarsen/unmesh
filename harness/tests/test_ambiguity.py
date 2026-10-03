@@ -94,7 +94,7 @@ def test_pair_one_vertex_sets_match_at_pair_deflection():
         va = vertex_set(tessellate(a.solid, lin, ang))
         vb = vertex_set(tessellate(b.solid, lin, ang))
         assert len(va) == len(vb) == 2 * a.parameters["n"], seed
-        assert_vertex_sets_match(va, vb), seed
+        assert_vertex_sets_match(va, vb)
         assert math.isclose(ang, 4 * math.pi / a.parameters["n"], rel_tol=1e-6)
 
 
@@ -171,7 +171,8 @@ def test_pair_two_chamfer_vertices_are_subset_of_fillet():
 
 
 @pytest.mark.xfail(
-    strict=False, reason="OCCT floor: 90-degree fillet tessellates with min 3 segments"
+    strict=True,
+    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
 )
 def test_pair_two_vertex_sets_match_at_pair_deflection():
     for seed in range(8):
@@ -248,7 +249,8 @@ def test_pair_three_cut_points_match_fillet_tangents():
 
 
 @pytest.mark.xfail(
-    strict=False, reason="OCCT floor: 90-degree fillet tessellates with min 3 segments"
+    strict=True,
+    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
 )
 def test_pair_three_vertex_sets_match_at_pair_deflection():
     for seed in range(8):

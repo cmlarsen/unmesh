@@ -31,7 +31,7 @@ def _prism_params(rng):
 
 def _ngon_deflection(n: int, radius: float) -> tuple[float, float]:
     sagitta = radius * (1 - math.cos(math.pi / n))
-    return sagitta * 2 + 1e-6, 4 * math.pi / n * (1 + 1e-9)
+    return sagitta * 3, 4 * math.pi / n * 1.02
 
 
 def _gon_points(n: int, radius: float) -> list[list[float]]:
@@ -51,6 +51,7 @@ def ngon_prism(rng):
         "radius": radius,
         "height": height,
         "ambiguity": "ngon_vs_cylinder",
+        "indistinguishable": True,
         "truth": "polygon",
         "pair_family": "coarse_cylinder_prism",
         "pair_deflection": [lin, ang],
@@ -78,6 +79,7 @@ def coarse_cylinder_prism(rng):
         "radius": radius,
         "height": height,
         "ambiguity": "ngon_vs_cylinder",
+        "indistinguishable": True,
         "truth": "cylinder",
         "pair_family": "ngon_prism",
         "pair_deflection": [lin, ang],
@@ -139,6 +141,7 @@ def one_segment_fillet(rng):
         "box": [length, width, height],
         "radius": r,
         "ambiguity": "fillet1_vs_chamfer",
+        "indistinguishable": False,
         "truth": "fillet",
         "pair_family": "chamfer_same_chord",
         "pair_deflection": [lin, ang],
@@ -171,6 +174,7 @@ def chamfer_same_chord(rng):
         "box": [length, width, height],
         "chamfer": c,
         "ambiguity": "fillet1_vs_chamfer",
+        "indistinguishable": False,
         "truth": "chamfer",
         "pair_family": "one_segment_fillet",
         "pair_deflection": [lin, ang],
@@ -204,6 +208,7 @@ def two_segment_fillet(rng):
         "box": [length, width, height],
         "radius": r,
         "ambiguity": "fillet2_vs_two_planes",
+        "indistinguishable": False,
         "truth": "fillet",
         "pair_family": "two_planes",
         "pair_deflection": [lin, ang],
@@ -234,6 +239,7 @@ def two_planes(rng):
         "box": [length, width, height],
         "radius": r,
         "ambiguity": "fillet2_vs_two_planes",
+        "indistinguishable": False,
         "truth": "two_planes",
         "pair_family": "two_segment_fillet",
         "pair_deflection": [lin, ang],
