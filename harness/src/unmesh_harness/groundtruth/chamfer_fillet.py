@@ -41,6 +41,8 @@ def planar_chamfer(rng):
             solid = candidate
             break
         c = _r(c / 2)
+    else:
+        raise RuntimeError("planar_chamfer: no valid build after 8 attempts")
     features = [{"type": "top_chamfer", "length": c, "edges": 4, "axis": [0, 0, 1]}]
     return solid, {"box": [length, width, height], "chamfer": c}, features
 
@@ -63,6 +65,8 @@ def straight_fillet(rng):
             solid = candidate
             break
         r = _r(r / 2)
+    else:
+        raise RuntimeError("straight_fillet: no valid build after 8 attempts")
     features = [{"type": "vertical_fillet", "radius": r, "edges": 4, "axis": [0, 0, 1]}]
     return solid, {"box": [length, width, height], "radius": r}, features
 
@@ -84,6 +88,8 @@ def circular_fillet(rng):
             solid = candidate
             break
         r = _r(r / 2)
+    else:
+        raise RuntimeError("circular_fillet: no valid build after 8 attempts")
     features = [{"type": "top_edge_fillet", "radius": r, "edges": 1, "axis": [0, 0, 1]}]
     return solid, {"disc": [radius, height], "fillet": r}, features
 
@@ -115,6 +121,8 @@ def bore_chamfer(rng):
                 solid = candidate
                 break
             c = _r(c / 2)
+        else:
+            raise RuntimeError("bore_chamfer: no valid build after 8 attempts")
         features = [
             {"type": "bore_chamfer", "bore": bore, "length": c, "edges": 1, "axis": [0, 0, 1]}
         ]
@@ -141,6 +149,8 @@ def bore_chamfer(rng):
                 solid = candidate
                 break
             c = _r(c / 2)
+        else:
+            raise RuntimeError("bore_chamfer: no valid build after 8 attempts")
         features = [{"type": "disc_edge_chamfer", "length": c, "edges": 1, "axis": [0, 0, 1]}]
         params = {"variant": "disc", "disc": [radius, height], "chamfer": c}
     return solid, params, features
@@ -164,6 +174,8 @@ def corner_fillet(rng):
             solid = candidate
             break
         r = _r(r / 2)
+    else:
+        raise RuntimeError("corner_fillet: no valid build after 8 attempts")
     tags = {}
     for i, face in enumerate(solid.faces()):
         if BRepAdaptor_Surface(face.wrapped).GetType() == GeomAbs_Sphere:
