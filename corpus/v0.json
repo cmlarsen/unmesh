@@ -7844,6 +7844,792 @@
           40.121
         ]
       }
+    },
+    {
+      "id": "ngon_prism-0000",
+      "tier": "generated",
+      "family": "ngon_prism",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5934.941450614,
+        "face_count": 30,
+        "bbox_min": [
+          -18.094,
+          -18.094,
+          0.0
+        ],
+        "bbox_max": [
+          18.094,
+          18.094,
+          5.819
+        ]
+      }
+    },
+    {
+      "id": "coarse_cylinder_prism-0000",
+      "tier": "generated",
+      "family": "coarse_cylinder_prism",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 5985.04474845,
+        "face_count": 3,
+        "bbox_min": [
+          -18.094,
+          -18.094,
+          0.0
+        ],
+        "bbox_max": [
+          18.094,
+          18.094,
+          5.819
+        ]
+      }
+    },
+    {
+      "id": "one_segment_fillet-0000",
+      "tier": "generated",
+      "family": "one_segment_fillet",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36799.263259606,
+        "face_count": 7,
+        "bbox_min": [
+          -39.109,
+          -21.7445,
+          0.0
+        ],
+        "bbox_max": [
+          39.109,
+          21.7445,
+          10.819
+        ]
+      }
+    },
+    {
+      "id": "chamfer_same_chord-0000",
+      "tier": "generated",
+      "family": "chamfer_same_chord",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36795.417636806,
+        "face_count": 7,
+        "bbox_min": [
+          -39.109,
+          -21.7445,
+          0.0
+        ],
+        "bbox_max": [
+          39.109,
+          21.7445,
+          10.819
+        ]
+      }
+    },
+    {
+      "id": "two_segment_fillet-0000",
+      "tier": "generated",
+      "family": "two_segment_fillet",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36799.263259606,
+        "face_count": 7,
+        "bbox_min": [
+          -39.109,
+          -21.7445,
+          0.0
+        ],
+        "bbox_max": [
+          39.109,
+          21.7445,
+          10.819
+        ]
+      }
+    },
+    {
+      "id": "two_planes-0000",
+      "tier": "generated",
+      "family": "two_planes",
+      "seed": 0,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "smoke",
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36798.208315451,
+        "face_count": 8,
+        "bbox_min": [
+          -39.109,
+          -21.7445,
+          0.0
+        ],
+        "bbox_max": [
+          39.109,
+          21.7445,
+          10.819
+        ]
+      }
+    },
+    {
+      "id": "ngon_prism-0001",
+      "tier": "generated",
+      "family": "ngon_prism",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 35993.408285363,
+        "face_count": 20,
+        "bbox_min": [
+          -38.514,
+          -37.928886,
+          0.0
+        ],
+        "bbox_max": [
+          38.514,
+          37.928886,
+          7.883
+        ]
+      }
+    },
+    {
+      "id": "coarse_cylinder_prism-0001",
+      "tier": "generated",
+      "family": "coarse_cylinder_prism",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 36734.88219061,
+        "face_count": 3,
+        "bbox_min": [
+          -38.514,
+          -38.514,
+          0.0
+        ],
+        "bbox_max": [
+          38.514,
+          38.514,
+          7.883
+        ]
+      }
+    },
+    {
+      "id": "one_segment_fillet-0001",
+      "tier": "generated",
+      "family": "one_segment_fillet",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70457.697772395,
+        "face_count": 7,
+        "bbox_min": [
+          -35.3545,
+          -38.7615,
+          0.0
+        ],
+        "bbox_max": [
+          35.3545,
+          38.7615,
+          12.883
+        ]
+      }
+    },
+    {
+      "id": "chamfer_same_chord-0001",
+      "tier": "generated",
+      "family": "chamfer_same_chord",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70243.029144619,
+        "face_count": 7,
+        "bbox_min": [
+          -35.3545,
+          -38.7615,
+          0.0
+        ],
+        "bbox_max": [
+          35.3545,
+          38.7615,
+          12.883
+        ]
+      }
+    },
+    {
+      "id": "two_segment_fillet-0001",
+      "tier": "generated",
+      "family": "two_segment_fillet",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70457.697772395,
+        "face_count": 7,
+        "bbox_min": [
+          -35.3545,
+          -38.7615,
+          0.0
+        ],
+        "bbox_max": [
+          35.3545,
+          38.7615,
+          12.883
+        ]
+      }
+    },
+    {
+      "id": "two_planes-0001",
+      "tier": "generated",
+      "family": "two_planes",
+      "seed": 1,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 70398.809153821,
+        "face_count": 8,
+        "bbox_min": [
+          -35.3545,
+          -38.7615,
+          0.0
+        ],
+        "bbox_max": [
+          35.3545,
+          38.7615,
+          12.883
+        ]
+      }
+    },
+    {
+      "id": "ngon_prism-0002",
+      "tier": "generated",
+      "family": "ngon_prism",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 23824.299595915,
+        "face_count": 30,
+        "bbox_min": [
+          -18.955,
+          -18.955,
+          0.0
+        ],
+        "bbox_max": [
+          18.955,
+          18.955,
+          21.285
+        ]
+      }
+    },
+    {
+      "id": "coarse_cylinder_prism-0002",
+      "tier": "generated",
+      "family": "coarse_cylinder_prism",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 24025.426428978,
+        "face_count": 3,
+        "bbox_min": [
+          -18.955,
+          -18.955,
+          0.0
+        ],
+        "bbox_max": [
+          18.955,
+          18.955,
+          21.285
+        ]
+      }
+    },
+    {
+      "id": "one_segment_fillet-0002",
+      "tier": "generated",
+      "family": "one_segment_fillet",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65754.777274668,
+        "face_count": 7,
+        "bbox_min": [
+          -27.8485,
+          -22.4625,
+          0.0
+        ],
+        "bbox_max": [
+          27.8485,
+          22.4625,
+          26.285
+        ]
+      }
+    },
+    {
+      "id": "chamfer_same_chord-0002",
+      "tier": "generated",
+      "family": "chamfer_same_chord",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65734.526843142,
+        "face_count": 7,
+        "bbox_min": [
+          -27.8485,
+          -22.4625,
+          0.0
+        ],
+        "bbox_max": [
+          27.8485,
+          22.4625,
+          26.285
+        ]
+      }
+    },
+    {
+      "id": "two_segment_fillet-0002",
+      "tier": "generated",
+      "family": "two_segment_fillet",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65754.777274668,
+        "face_count": 7,
+        "bbox_min": [
+          -27.8485,
+          -22.4625,
+          0.0
+        ],
+        "bbox_max": [
+          27.8485,
+          22.4625,
+          26.285
+        ]
+      }
+    },
+    {
+      "id": "two_planes-0002",
+      "tier": "generated",
+      "family": "two_planes",
+      "seed": 2,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 65749.222108315,
+        "face_count": 8,
+        "bbox_min": [
+          -27.8485,
+          -22.4625,
+          0.0
+        ],
+        "bbox_max": [
+          27.8485,
+          22.4625,
+          26.285
+        ]
+      }
+    },
+    {
+      "id": "ngon_prism-0003",
+      "tier": "generated",
+      "family": "ngon_prism",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 19149.363377115,
+        "face_count": 29,
+        "bbox_min": [
+          -16.988349,
+          -17.075063,
+          0.0
+        ],
+        "bbox_max": [
+          17.104,
+          17.075063,
+          21.025
+        ]
+      }
+    },
+    {
+      "id": "coarse_cylinder_prism-0003",
+      "tier": "generated",
+      "family": "coarse_cylinder_prism",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 19323.29806071,
+        "face_count": 3,
+        "bbox_min": [
+          -17.104,
+          -17.104,
+          0.0
+        ],
+        "bbox_max": [
+          17.104,
+          17.104,
+          21.025
+        ]
+      }
+    },
+    {
+      "id": "one_segment_fillet-0003",
+      "tier": "generated",
+      "family": "one_segment_fillet",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49008.55440124,
+        "face_count": 7,
+        "bbox_min": [
+          -22.5695,
+          -20.9205,
+          0.0
+        ],
+        "bbox_max": [
+          22.5695,
+          20.9205,
+          26.025
+        ]
+      }
+    },
+    {
+      "id": "chamfer_same_chord-0003",
+      "tier": "generated",
+      "family": "chamfer_same_chord",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48817.254826163,
+        "face_count": 7,
+        "bbox_min": [
+          -22.5695,
+          -20.9205,
+          0.0
+        ],
+        "bbox_max": [
+          22.5695,
+          20.9205,
+          26.025
+        ]
+      }
+    },
+    {
+      "id": "two_segment_fillet-0003",
+      "tier": "generated",
+      "family": "two_segment_fillet",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49008.55440124,
+        "face_count": 7,
+        "bbox_min": [
+          -22.5695,
+          -20.9205,
+          0.0
+        ],
+        "bbox_max": [
+          22.5695,
+          20.9205,
+          26.025
+        ]
+      }
+    },
+    {
+      "id": "two_planes-0003",
+      "tier": "generated",
+      "family": "two_planes",
+      "seed": 3,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48956.076459648,
+        "face_count": 8,
+        "bbox_min": [
+          -22.5695,
+          -20.9205,
+          0.0
+        ],
+        "bbox_max": [
+          22.5695,
+          20.9205,
+          26.025
+        ]
+      }
+    },
+    {
+      "id": "ngon_prism-0004",
+      "tier": "generated",
+      "family": "ngon_prism",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 48954.247076465,
+        "face_count": 27,
+        "bbox_min": [
+          -25.140187,
+          -25.289997,
+          0.0
+        ],
+        "bbox_max": [
+          25.34,
+          25.289997,
+          24.525
+        ]
+      }
+    },
+    {
+      "id": "coarse_cylinder_prism-0004",
+      "tier": "generated",
+      "family": "coarse_cylinder_prism",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 49473.44010832,
+        "face_count": 3,
+        "bbox_min": [
+          -25.34,
+          -25.34,
+          0.0
+        ],
+        "bbox_max": [
+          25.34,
+          25.34,
+          24.525
+        ]
+      }
+    },
+    {
+      "id": "one_segment_fillet-0004",
+      "tier": "generated",
+      "family": "one_segment_fillet",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 158437.19370545,
+        "face_count": 7,
+        "bbox_min": [
+          -48.2915,
+          -27.783,
+          0.0
+        ],
+        "bbox_max": [
+          48.2915,
+          27.783,
+          29.525
+        ]
+      }
+    },
+    {
+      "id": "chamfer_same_chord-0004",
+      "tier": "generated",
+      "family": "chamfer_same_chord",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 158416.52922,
+        "face_count": 7,
+        "bbox_min": [
+          -48.2915,
+          -27.783,
+          0.0
+        ],
+        "bbox_max": [
+          48.2915,
+          27.783,
+          29.525
+        ]
+      }
+    },
+    {
+      "id": "two_segment_fillet-0004",
+      "tier": "generated",
+      "family": "two_segment_fillet",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 158437.19370545,
+        "face_count": 7,
+        "bbox_min": [
+          -48.2915,
+          -27.783,
+          0.0
+        ],
+        "bbox_max": [
+          48.2915,
+          27.783,
+          29.525
+        ]
+      }
+    },
+    {
+      "id": "two_planes-0004",
+      "tier": "generated",
+      "family": "two_planes",
+      "seed": 4,
+      "strata": {
+        "category": "ambiguity"
+      },
+      "grids": [
+        "standard"
+      ],
+      "fingerprint": {
+        "volume": 158431.524954435,
+        "face_count": 8,
+        "bbox_min": [
+          -48.2915,
+          -27.783,
+          0.0
+        ],
+        "bbox_max": [
+          48.2915,
+          27.783,
+          29.525
+        ]
+      }
     }
   ]
 }
