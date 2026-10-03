@@ -19,6 +19,7 @@ pub struct Welded {
     pub orig: Vec<Point>,
     pub center: V3,
     pub diag: f64,
+    pub max_abs: f64,
     pub unique_vertices: u32,
     pub merge_dev: f64,
 }
@@ -152,6 +153,12 @@ pub fn run(
     }
     let center: V3 = scale(add(lo, hi), 0.5);
     let diag = norm(sub(hi, lo));
+    let max_abs = mesh
+        .vertices
+        .iter()
+        .flatten()
+        .map(|x| x.abs())
+        .fold(0.0, f64::max);
     let orig: Vec<Point> = mesh.vertices.clone();
     let vc: Vec<V3> = orig.iter().map(|p| sub(*p, center)).collect();
 
@@ -163,6 +170,7 @@ pub fn run(
             orig,
             center,
             diag,
+            max_abs,
             unique_vertices: wrep.unique_vertices as u32,
             merge_dev: wrep.max_merge,
         },
