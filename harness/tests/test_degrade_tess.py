@@ -13,7 +13,7 @@ from unmesh_harness.labels import LabeledMesh, distance_to_surface, tessellate
 
 from .test_labels import closed_manifold_problems
 
-TESS_OPS = ("coarsen", "retriangulate", "nonuniform_chords")
+TESS_OPS = ("coarsen", "retriangulate", "nonuniform_chords", "slivers", "t_junctions")
 SLOW_SEED = 11
 
 
@@ -304,3 +304,47 @@ def test_nonuniform_chords_fixes_cad_corners(cyl):
     assert out.vertices == cyl.vertices
     assert [a.points[0] for a in out.adjacency] == [a.points[0] for a in cyl.adjacency]
     assert [a.points[-1] for a in out.adjacency] == [a.points[-1] for a in cyl.adjacency]
+
+
+def aspect_ratios(tris: np.ndarray) -> np.ndarray:
+    a = np.linalg.norm(tris[:, 1] - tris[:, 0], axis=1)
+    b = np.linalg.norm(tris[:, 2] - tris[:, 1], axis=1)
+    c = np.linalg.norm(tris[:, 0] - tris[:, 2], axis=1)
+    s = (a + b + c) / 2
+    area = np.sqrt(np.maximum(s * (s - a) * (s - b) * (s - c), 1e-30))
+    return np.maximum(a, np.maximum(b, c)) ** 2 / (2 * area)
+
+
+def test_slivers_stay_watertight_and_labelled(cyl, drilled):
+    for mesh in (cyl, drilled):
+        assert closed_manifold_problems(mesh.tris)[0] == []
+        for severity in (0.5, 1.0):
+            out = degrade.apply("slivers", mesh, severity, 5)
+            assert closed_manifold_problems(out.tris)[0] == [], severity
+            assert_tess_labels_aligned(mesh, out)
+            params = out.metadata["history"][-1]["params"]
+            assert params["edges_split"] > 0
+            assert params["triangles_after"] > params["triangles_before"]
+
+
+def test_slivers_raise_aspect_ratio(cyl):
+    before = aspect_ratios(cyl.tris).max()
+    mid = degrade.apply("slivers", cyl, 0.5, 3)
+    high = degrade.apply("slivers", cyl, 1.0, 3)
+    assert aspect_ratios(mid.tris).max() > before
+    assert aspect_ratios(high.tris).max() > aspect_ratios(mid.tris).max()
+    assert (aspect_ratios(high.tris) > 100).sum() >= 1
+
+
+def test_t_junctions_break_watertight_by_design_but_keep_labels(cyl, drilled):
+    for mesh in (cyl, drilled):
+        assert closed_manifold_problems(mesh.tris)[0] == []
+        for severity in (0.5, 1.0):
+            out = degrade.apply("t_junctions", mesh, severity, 5)
+            assert closed_manifold_problems(out.tris)[0] != [], severity
+            assert_tess_labels_aligned(mesh, out)
+            assert set(out.face_id.tolist()) == set(mesh.face_id.tolist())
+            params = out.metadata["history"][-1]["params"]
+            assert params["splits"] == params["target_splits"] >= 1
+            assert len(out.tris) == len(mesh.tris) + params["splits"]
+            assert OPERATORS["t_junctions"].preserves_watertight is False
