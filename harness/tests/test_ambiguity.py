@@ -8,6 +8,7 @@ from unmesh_harness.groundtruth import families, generate, validity_problems
 from unmesh_harness.labels import tessellate
 
 PAIR_ONE = ("ngon_prism", "coarse_cylinder_prism")
+PAIR_TWO = ("one_segment_fillet", "chamfer_same_chord")
 
 
 def surface_counts(solid):
@@ -93,3 +94,89 @@ def test_pair_one_vertex_sets_match_at_pair_deflection():
         assert len(va) == len(vb) == 2 * a.parameters["n"], seed
         assert_vertex_sets_match(va, vb), seed
         assert math.isclose(ang, 4 * math.pi / a.parameters["n"], rel_tol=1e-6)
+
+
+def test_pair_two_families_registered():
+    assert set(PAIR_TWO) <= set(families())
+
+
+def test_pair_two_metadata_links_and_labels():
+    for seed in range(8):
+        f = generate("one_segment_fillet", seed)
+        c = generate("chamfer_same_chord", seed)
+        assert f.parameters["ambiguity"] == c.parameters["ambiguity"] == "fillet1_vs_chamfer"
+        assert f.parameters["truth"] == "fillet"
+        assert c.parameters["truth"] == "chamfer"
+        assert f.parameters["pair_id"] == f"chamfer_same_chord-{seed:04d}"
+        assert c.parameters["pair_id"] == f"one_segment_fillet-{seed:04d}"
+        assert f.parameters["box"] == c.parameters["box"]
+        assert f.parameters["radius"] == c.parameters["chamfer"]
+        assert f.parameters["pair_deflection"] == c.parameters["pair_deflection"]
+
+
+def test_pair_two_surface_types():
+    for seed in range(8):
+        assert surface_counts(generate("one_segment_fillet", seed).solid) == {
+            "GeomAbs_Plane": 6,
+            "GeomAbs_Cylinder": 1,
+        }
+        assert surface_counts(generate("chamfer_same_chord", seed).solid) == {"GeomAbs_Plane": 7}
+
+
+def test_pair_two_valid_deterministic_and_closed_form_volume():
+    from .volumes import expected_volume
+
+    for seed in range(32):
+        for family in PAIR_TWO:
+            gt = generate(family, seed)
+            assert validity_problems(gt.solid) == [], (family, seed)
+            again = generate(family, seed)
+            assert again.solid.volume == pytest.approx(gt.solid.volume, rel=1e-9)
+            assert again.parameters == gt.parameters
+            assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9), (family, seed)
+
+
+def _face_points(mesh, surface, normal=None):
+    for face in mesh.faces:
+        if face.surface != surface:
+            continue
+        if normal is not None and not np.allclose(
+            sorted(np.abs(face.params["normal"])), sorted(np.abs(normal)), atol=1e-6
+        ):
+            continue
+        return np.unique(np.round(mesh.face_tris(face.id).reshape(-1, 3), 6), axis=0)
+    raise AssertionError(f"no {surface} face found")
+
+
+def test_pair_two_fillet_floor_is_three_segments():
+    for seed in range(8):
+        gt = generate("one_segment_fillet", seed)
+        lin, ang = gt.parameters["pair_deflection"]
+        pts = _face_points(tessellate(gt.solid, lin, ang), "cylinder")
+        assert len({(x, y) for x, y, _ in pts.tolist()}) == 4, seed
+
+
+def test_pair_two_chamfer_vertices_are_subset_of_fillet():
+    for seed in range(8):
+        f = generate("one_segment_fillet", seed)
+        c = generate("chamfer_same_chord", seed)
+        lin, ang = f.parameters["pair_deflection"]
+        vf = vertex_set(tessellate(f.solid, lin, ang))
+        vc = vertex_set(tessellate(c.solid, lin, ang))
+        assert len(vf) == 14 and len(vc) == 10, seed
+        d = np.linalg.norm(vc[:, None, :] - vf[None, :, :], axis=2)
+        assert (d.min(axis=1) <= 1e-6).all(), seed
+
+
+@pytest.mark.xfail(
+    strict=False, reason="OCCT floor: 90-degree fillet tessellates with min 3 segments"
+)
+def test_pair_two_vertex_sets_match_at_pair_deflection():
+    for seed in range(8):
+        f = generate("one_segment_fillet", seed)
+        c = generate("chamfer_same_chord", seed)
+        lin, ang = f.parameters["pair_deflection"]
+        assert_vertex_sets_match(
+            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(tessellate(c.solid, lin, ang)),
+        )

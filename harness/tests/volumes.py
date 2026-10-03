@@ -122,4 +122,12 @@ def expected_volume(gt):
         return n / 2 * radius**2 * math.sin(2 * math.pi / n) * height
     if f == "coarse_cylinder_prism":
         return math.pi * p["radius"] ** 2 * p["height"]
+    if f == "one_segment_fillet":
+        length, width, height = p["box"]
+        r = p["radius"]
+        return length * width * height - (1 - math.pi / 4) * r * r * height
+    if f == "chamfer_same_chord":
+        length, width, height = p["box"]
+        c = p["chamfer"]
+        return length * width * height - c * c / 2 * height
     raise KeyError(f)

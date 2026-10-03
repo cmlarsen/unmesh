@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 
-from build123d import Cylinder, Pos, RegularPolygon, Shape, extrude
+from build123d import Axis, Box, Cylinder, Pos, RegularPolygon, Shape, chamfer, extrude, fillet
 
-from .core import register
+from .core import register, validity_problems
 
 
 def _r(x: float) -> float:
@@ -80,4 +80,89 @@ def coarse_cylinder_prism(rng):
             "axis": [0, 0, 1],
         }
     ]
+    return solid, params, features
+
+
+def _box(length: float, width: float, height: float) -> Shape:
+    return Pos(0, 0, height / 2) * Box(length, width, height)
+
+
+def _ok(solid: Shape, faces: int) -> bool:
+    return validity_problems(solid) == [] and len(solid.faces()) == faces
+
+
+def _corner_box_params(rng):
+    length = _r(rng.uniform(40, 100))
+    width = _r(rng.uniform(30, 80))
+    height = _r(rng.uniform(10, 30))
+    r = _r(rng.uniform(1, 8))
+    return length, width, height, min(r, _r(0.2 * min(length, width)))
+
+
+def _corner_edge(solid: Shape):
+    return max(solid.edges().filter_by(Axis.Z), key=lambda e: e.center().X + e.center().Y)
+
+
+def _fillet1_deflection(r: float) -> tuple[float, float]:
+    return r * (1 - math.cos(math.pi / 4)) * 2 + 1e-9, math.pi * (1 + 1e-9)
+
+
+@register("one_segment_fillet")
+def one_segment_fillet(rng):
+    length, width, height, r = _corner_box_params(rng)
+    solid = _box(length, width, height)
+    for _ in range(8):
+        try:
+            candidate = fillet([_corner_edge(solid)], radius=r)
+        except Exception:
+            r = _r(r / 2)
+            continue
+        if _ok(candidate, 7):
+            solid = candidate
+            break
+        r = _r(r / 2)
+    else:
+        raise RuntimeError("one_segment_fillet: no valid build after 8 attempts")
+    lin, ang = _fillet1_deflection(r)
+    params = {
+        "box": [length, width, height],
+        "radius": r,
+        "ambiguity": "fillet1_vs_chamfer",
+        "truth": "fillet",
+        "pair_family": "chamfer_same_chord",
+        "pair_deflection": [lin, ang],
+    }
+    features = [{"type": "vertical_fillet", "radius": r, "edges": 1, "axis": [0, 0, 1]}]
+    return solid, params, features
+
+
+@register("chamfer_same_chord")
+def chamfer_same_chord(rng):
+    length, width, height, r = _corner_box_params(rng)
+    c = r
+    solid = _box(length, width, height)
+    for _ in range(8):
+        try:
+            candidate = chamfer([_corner_edge(solid)], length=c)
+        except Exception:
+            c = _r(c / 2)
+            r = _r(r / 2)
+            continue
+        if _ok(candidate, 7):
+            solid = candidate
+            break
+        c = _r(c / 2)
+        r = _r(r / 2)
+    else:
+        raise RuntimeError("chamfer_same_chord: no valid build after 8 attempts")
+    lin, ang = _fillet1_deflection(r)
+    params = {
+        "box": [length, width, height],
+        "chamfer": c,
+        "ambiguity": "fillet1_vs_chamfer",
+        "truth": "chamfer",
+        "pair_family": "one_segment_fillet",
+        "pair_deflection": [lin, ang],
+    }
+    features = [{"type": "vertical_chamfer", "length": c, "edges": 1, "axis": [0, 0, 1]}]
     return solid, params, features
