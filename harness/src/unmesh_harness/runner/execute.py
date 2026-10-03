@@ -165,6 +165,7 @@ def _score(
         record["validity"] = score_validity(
             step_path,
             write=write,
+            fallback=record["fallback"],
             expected_solids=outer or 1,
             expected_shells=len(clean.shells) or 1,
         )

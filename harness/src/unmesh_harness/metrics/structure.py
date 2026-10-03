@@ -23,13 +23,15 @@ def score_validity(
     expected_solids: int = 1,
     expected_shells: int = 1,
     tolerance_bound: float | None = None,
+    fallback: bool | None = None,
 ) -> dict[str, Any]:
     from ..groundtruth import validity_problems
 
     if tolerance_bound is None:
         tolerance_bound = _default_tolerance_bound()
     write = write or {}
-    fallback = write.get("fallback") is not None
+    if fallback is None:
+        fallback = write.get("fallback") is not None
     missing: dict[str, Any] = {
         "solids": None,
         "shells": None,

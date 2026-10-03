@@ -74,6 +74,7 @@ def test_validity_reports_fallback_without_failing(tmp_path):
     assert result["fallback"] is True
     assert result["valid"] is True
     assert score_validity(out, write={"fallback": None})["fallback"] is False
+    assert score_validity(out, write={"fallback": None}, fallback=True)["fallback"] is True
 
 
 def test_validity_through_bore_counts_one_solid(tmp_path):
