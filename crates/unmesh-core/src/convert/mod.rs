@@ -167,9 +167,13 @@ fn finish(
 ) -> Result<ConvertOutput, ConvertError> {
     let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
+    let mut snap_sigma = sigma;
     if auto_tol {
-        sigma = snap::estimate_noise(&w.vc, &regions, tol);
-        let derived = (NOISE_FACTOR * sigma).max(floor(w.diag, w.max_abs));
+        let fl = floor(w.diag, w.max_abs);
+        let est = snap::estimate_noise(&w.vc, &regions, tol, fl);
+        sigma = est.sigma;
+        snap_sigma = est.snap_sigma;
+        let derived = (NOISE_FACTOR * sigma).max(fl);
         if derived < tol {
             tol = derived;
             (label2, regions) = fit_once(tol);
@@ -179,7 +183,7 @@ fn finish(
         &w.vc,
         &mut regions,
         tol,
-        sigma,
+        snap_sigma,
         options.angular_snap_deg,
         w.diag,
         w.max_abs,
