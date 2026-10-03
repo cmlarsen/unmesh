@@ -17,6 +17,7 @@ from .cases import MESHER_CHORD_FACTOR, smoke_entries
 
 LIN, ANG = 0.01, 0.2
 FINE = (0.001, 0.1)
+RIM_EPS = 1e-6
 
 SMOKE = select(load_manifest(), "smoke")
 
@@ -25,13 +26,77 @@ def planar_only(mesh):
     return all(f.surface == "plane" for f in mesh.faces)
 
 
-def curved_bounded_faces(mesh):
-    bounded = set()
-    for adj in mesh.adjacency:
-        if adj.curve != "line":
-            bounded.add(adj.face_a)
-            bounded.add(adj.face_b)
-    return bounded
+def _polyline_straight(points, closed, tol=1e-7):
+    if len(points) < 3:
+        return True
+    p = np.asarray(points, dtype=np.float64)
+    tip = p[len(p) // 2] if closed else p[-1]
+    edge = tip - p[0]
+    denom = float(edge @ edge)
+    if denom == 0.0:
+        return bool(np.allclose(p, p[0], atol=tol))
+    t = np.clip((p - p[0]) @ edge / denom, 0.0, 1.0)
+    return bool(np.linalg.norm(p - (p[0] + t[:, None] * edge), axis=1).max() <= tol)
+
+
+def _curved_rim(ir):
+    stype = {r.id: r.surface.type for r in ir.regions}
+    rim = {r.id: [] for r in ir.regions}
+    for adj in ir.adjacencies:
+        a, b = adj.regions
+        for boundary in adj.boundaries:
+            pts = np.asarray(boundary.points, dtype=np.float64)
+            if not len(pts):
+                continue
+            straight = _polyline_straight(pts, boundary.closed)
+            if stype[b] != "plane" or (stype[a] == "plane" and not straight):
+                rim[a].append((pts, boundary.closed))
+            if stype[a] != "plane" or (stype[b] == "plane" and not straight):
+                rim[b].append((pts, boundary.closed))
+    return rim
+
+
+def _rim_distance(pts, polylines):
+    best = np.full(len(pts), np.inf)
+    for line, closed in polylines:
+        ring = np.vstack([line, line[:1]]) if closed else line
+        start, stop = ring[:-1], ring[1:]
+        step = stop - start
+        denom = np.einsum("ij,ij->i", step, step)
+        denom[denom == 0.0] = 1.0
+        for i in range(len(start)):
+            rel = pts - start[i]
+            t = np.clip(rel @ step[i] / denom[i], 0.0, 1.0)
+            np.minimum(best, np.linalg.norm(rel - t[:, None] * step[i], axis=1), out=best)
+    return best
+
+
+def _assert_band_limited_truth(ir, mesh, fine, result):
+    # An oracle region's footprint follows the input mesh polygon, whose chords sit up
+    # to LIN inside a curved boundary edge while the fine truth mesh follows it within
+    # FINE, so samples within LIN of a curved boundary polyline legitimately measure up
+    # to LIN + FINE against the fine truth (through_bore-0000 top annulus: 0.00499).
+    # Every other sample must meet the ordinary fine-mesh bound, so a shifted plane or
+    # a grown bore radius cannot hide behind the rim allowance.
+    rim = _curved_rim(ir)
+    pts, owner = sample_ir(ir, mesh, samples_per_mm2=2.0, seed=1)
+    dist = np.asarray(_core.mesh_distances(fine.tris, np.ascontiguousarray(pts)))
+    cap = 0.0
+    for region in ir.regions:
+        mask = owner == region.id
+        cell = dist[mask]
+        assert cell.size
+        inside = _rim_distance(pts[mask], rim[region.id]) <= LIN + RIM_EPS
+        rim_bound = LIN + FINE[0]
+        plain_bound = FINE[0] * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
+        if inside.any():
+            assert cell[inside].max() <= rim_bound + 1e-9
+            cap = max(cap, rim_bound)
+        if (~inside).any():
+            assert cell[~inside].max() <= plain_bound + 1e-9
+            cap = max(cap, plain_bound)
+    assert result.truth.ir_to_mesh.max <= cap + 1e-9
+    assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 
 
 @pytest.mark.parametrize("entry", smoke_entries(curved_slow=True))
@@ -49,24 +114,83 @@ def test_oracle_scores_its_own_input(entry):
         for region in ir.regions:
             bound = LIN * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
             assert result.region_max[region.id] <= bound + 1e-9
-        # An oracle region's footprint follows the input mesh polygon, whose chords sit up
-        # to LIN inside a curved boundary edge while the fine truth mesh follows it within
-        # FINE, so rim samples of a curved-bounded region legitimately measure up to
-        # LIN + FINE against the fine truth (through_bore-0000 top annulus: 0.00499).
-        bounded = curved_bounded_faces(mesh)
-        pts, owner = sample_ir(ir, mesh, samples_per_mm2=2.0, seed=1)
-        dist = np.asarray(_core.mesh_distances(fine.tris, np.ascontiguousarray(pts)))
-        fine_bound = 0.0
-        for region in ir.regions:
-            if region.id in bounded:
-                region_fine = LIN + FINE[0]
-            else:
-                region_fine = FINE[0] * MESHER_CHORD_FACTOR.get(region.surface.type, 1.0)
-            fine_bound = max(fine_bound, region_fine)
-            cell = dist[owner == region.id]
-            assert cell.size and cell.max() <= region_fine + 1e-9
-        assert result.truth.ir_to_mesh.max <= fine_bound + 1e-9
-        assert result.truth.mesh_to_ir.max <= LIN + 1e-9
+        _assert_band_limited_truth(ir, mesh, fine, result)
+
+
+def _drilled_box():
+    shape = Box(10, 10, 10) - Cylinder(2, 20)
+    mesh = tessellate(shape, LIN, ANG)
+    return build_oracle_ir(mesh), mesh, tessellate(shape, *FINE)
+
+
+def _neighbors(ir, rid):
+    out = set()
+    for adj in ir.adjacencies:
+        if rid in adj.regions:
+            out.update(adj.regions)
+    out.discard(rid)
+    return out
+
+
+def _bore_neighbor_plane(ir):
+    stype = {r.id: r.surface.type for r in ir.regions}
+    return next(
+        r.id
+        for r in ir.regions
+        if r.surface.type == "plane" and any(stype[n] != "plane" for n in _neighbors(ir, r.id))
+    )
+
+
+def _straight_edged_plane(ir):
+    stype = {r.id: r.surface.type for r in ir.regions}
+    return next(
+        r.id
+        for r in ir.regions
+        if r.surface.type == "plane" and all(stype[n] == "plane" for n in _neighbors(ir, r.id))
+    )
+
+
+def _shifted_plane(ir, rid, d):
+    regions = list(ir.regions)
+    idx = next(i for i, r in enumerate(regions) if r.id == rid)
+    plane = regions[idx].surface
+    origin = tuple(np.array(plane.origin) + d * np.array(plane.normal))
+    regions[idx] = replace(regions[idx], surface=Plane(origin, plane.normal))
+    return replace(ir, regions=regions)
+
+
+def _judge_truth(ir, mesh, fine):
+    return judge(ir, mesh, fine, samples_per_mm2=2.0, seed=1)
+
+
+def test_oracle_truth_is_band_limited_on_drilled_box():
+    ir, mesh, fine = _drilled_box()
+    _assert_band_limited_truth(ir, mesh, fine, _judge_truth(ir, mesh, fine))
+
+
+def test_shifted_bore_neighbor_plane_fails():
+    ir, mesh, fine = _drilled_box()
+    bad = _shifted_plane(ir, _bore_neighbor_plane(ir), 0.003)
+    with pytest.raises(AssertionError):
+        _assert_band_limited_truth(bad, mesh, fine, _judge_truth(bad, mesh, fine))
+
+
+def test_grown_bore_radius_fails():
+    ir, mesh, fine = _drilled_box()
+    regions = list(ir.regions)
+    idx = next(i for i, r in enumerate(regions) if r.surface.type == "cylinder")
+    surface = regions[idx].surface
+    regions[idx] = replace(regions[idx], surface=replace(surface, radius=surface.radius + 0.003))
+    bad = replace(ir, regions=regions)
+    with pytest.raises(AssertionError):
+        _assert_band_limited_truth(bad, mesh, fine, _judge_truth(bad, mesh, fine))
+
+
+def test_shifted_straight_edged_plane_fails():
+    ir, mesh, fine = _drilled_box()
+    bad = _shifted_plane(ir, _straight_edged_plane(ir), 0.003)
+    with pytest.raises(AssertionError):
+        _assert_band_limited_truth(bad, mesh, fine, _judge_truth(bad, mesh, fine))
 
 
 @pytest.mark.parametrize(
