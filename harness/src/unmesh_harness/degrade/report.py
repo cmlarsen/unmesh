@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +57,50 @@ def curved_meshes() -> list[LabeledMesh]:
     return [tessellate(fillet(Box(20, 20, 20).edges(), 3), 0.05, 0.3)]
 
 
+def tess_meshes() -> list[tuple[str, LabeledMesh]]:
+    from build123d import Cylinder
+
+    cylinder = tessellate(Cylinder(5, 20), 0.05, 0.3)
+    ngon = generate("ngon_prism", 3)
+    lin, ang = ngon.parameters["pair_deflection"]
+    ngon_mesh = tessellate(ngon.solid, lin, ang)
+    fillet_gt = generate("one_segment_fillet", 0)
+    flin, fang = DEFLECTION_SETTINGS[0]
+    return [
+        ("cylinder", cylinder),
+        ("ngon", ngon_mesh),
+        ("fillet", tessellate(fillet_gt.solid, flin, fang)),
+    ]
+
+
+def tess_stats(mesh: LabeledMesh) -> dict[str, float]:
+    import unmesh
+
+    edges = set()
+    for tri in mesh.tris:
+        for i in range(3):
+            a, b = tuple(tri[i]), tuple(tri[(i + 1) % 3])
+            edges.add((min(a, b), max(a, b)))
+    chords = np.array([math.dist(a, b) for a, b in edges])
+    a = np.linalg.norm(mesh.tris[:, 1] - mesh.tris[:, 0], axis=1)
+    b = np.linalg.norm(mesh.tris[:, 2] - mesh.tris[:, 1], axis=1)
+    c = np.linalg.norm(mesh.tris[:, 0] - mesh.tris[:, 2], axis=1)
+    s = (a + b + c) / 2
+    area = np.sqrt(np.maximum(s * (s - a) * (s - b) * (s - c), 1e-30))
+    aspect = np.maximum(a, np.maximum(b, c)) ** 2 / (2 * area)
+    _, idx, *_ = unmesh.weld(mesh.tris, 0.0)
+    valence = np.array(sorted(Counter(idx.ravel().tolist()).values()), dtype=float)
+    return {
+        "tris": len(mesh.tris),
+        "chord_mean": float(chords.mean()),
+        "chord_std": float(chords.std()),
+        "aspect_mean": float(aspect.mean()),
+        "aspect_p99": float(np.percentile(aspect, 99)),
+        "valence_mean": float(valence.mean()),
+        "valence_max": float(valence.max()),
+    }
+
+
 def run_chain(mesh: LabeledMesh, chain: Chain, severity: float) -> LabeledMesh:
     for name, fixed in chain:
         mesh = apply(name, mesh, severity if fixed is None else fixed, SEED)
@@ -63,25 +109,27 @@ def run_chain(mesh: LabeledMesh, chain: Chain, severity: float) -> LabeledMesh:
 
 def stats(meshes: list[LabeledMesh], chain: Chain, severity: float) -> dict[str, float | bool]:
     sq, peak, closed, valid, grown = [], 0.0, True, True, []
+    counts_change = OPERATORS[chain[-1][0]].family == "tessellation"
     for mesh in meshes:
         out = run_chain(mesh, chain, severity)
         back = to_original_points(out, out.tris.reshape(-1, 3)).reshape(-1, 3, 3)
         if np.linalg.det(to_original(out)[:3, :3]) < 0:
             back = back[:, [0, 2, 1]]
-        refined = len(out.tris) != len(mesh.tris)
-        if refined:
-            base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
-            d = np.linalg.norm(back - base.tris, axis=2).ravel()
-        else:
-            d = np.linalg.norm(back - mesh.tris, axis=2).ravel()
+        if not counts_change:
+            refined = len(out.tris) != len(mesh.tris)
+            if refined:
+                base = run_chain(mesh, tuple(c for c in chain if c[0] == "refine"), severity)
+                d = np.linalg.norm(back - base.tris, axis=2).ravel()
+            else:
+                d = np.linalg.norm(back - mesh.tris, axis=2).ravel()
+            sq.append(d**2)
+            peak = max(peak, float(d.max()))
         grown.append(len(out.tris) / len(mesh.tris))
-        sq.append(d**2)
-        peak = max(peak, float(d.max()))
         closed &= _closed(out)
         valid &= _ir_valid(out)
     return {
-        "rms_um": 1000.0 * float(np.sqrt(np.concatenate(sq).mean())),
-        "max_um": 1000.0 * peak,
+        "rms_um": None if counts_change else 1000.0 * float(np.sqrt(np.concatenate(sq).mean())),
+        "max_um": None if counts_change else 1000.0 * peak,
         "closed": closed,
         "ir_valid": valid,
         "tris_ratio": float(np.mean(grown)),
@@ -131,6 +179,20 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.",
         "- The random stream is `numpy.random.default_rng(seed)`; vertices are visited in "
         "`np.unique` order, so output is bit-identical across processes.",
+        "- `coarsen` collapses shortest edges first into the surviving endpoint (CAD vertices "
+        "never merge, the link condition keeps the mesh a closed manifold, no face loses its "
+        "last triangle), so surviving curved nodes stay exactly on the analytic surface.",
+        "- `retriangulate` reuses boundary vertices bit-exactly and only touches planar faces "
+        "without interior vertices; curved faces are skipped.",
+        "- `nonuniform_chords` moves only vertices on one or two faces along the surface or the "
+        "shared edge, reprojects them onto the incident analytic surfaces, and leaves CAD "
+        "corners fixed.",
+        "- `slivers` splits edges on both sides at once (conforming, watertight) and never "
+        "splits edges of degenerate input triangles; `t_junctions` splits one side only and so "
+        "is not watertight by design, while face ids and polylines stay aligned in both.",
+        "- `fillet_rows` rebuilds cylinder fillet strips on the exact analytic arc and "
+        "re-triangulates the affected planar neighbours; anything else is recorded as skipped "
+        "and left untouched.",
         "",
         "## Severity scale",
         "",
@@ -153,20 +215,22 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "",
         f"Seed {SEED}. Displacement is measured in the original frame, per triangle corner, "
         "against the undegraded mesh (against the refined mesh for chains that start with "
-        "`refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). "
+        "`refine`; `-` for the tessellation family, whose triangle counts or corner "
+        "correspondences change - see Tessellation statistics below). "
         "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
         "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
         "only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and "
-        "sweeps the noise severity.",
+        "sweeps the noise severity. `refine -> noise_off_plane` covers only meshes with at "
+        "least one planar face.",
         "",
         "| parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |",
         "|---|---|---|---|---|---|---|---|",
     ]
     sets = [
-        (f"smoke ({len(meshes)})", meshes, DEFLECTION_SETTINGS[0]),
+        ("smoke", meshes, DEFLECTION_SETTINGS[0]),
         ("filleted box", curved, (0.05, 0.3)),
     ]
-    for label, group, _ in sets:
+    for base, group, _ in sets:
         for name, op in OPERATORS.items():
             rows: list[tuple[str, Chain]] = [(f"`{name}`", ((name, None),))]
             if name == "noise_off_plane":
@@ -174,16 +238,53 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                     ("`refine -> noise_off_plane`", (("refine", REFINE_FOR_SHEET), (name, None)))
                 ]
             for row_label, chain in rows:
+                use = [
+                    m
+                    for m in group
+                    if name != "noise_off_plane" or any(f.surface == "plane" for f in m.faces)
+                ]
+                label = f"smoke ({len(use)})" if base == "smoke" else base
                 for severity in (0.0, 1.0) if op.binary else SEVERITIES:
-                    s = stats(group, chain, severity)
+                    s = stats(use, chain, severity)
                     ratio = s["tris_ratio"]
-                    only_refine = name == "refine"
-                    rms = "-" if only_refine else f"{s['rms_um']:.3f}"
-                    peak = "-" if only_refine else f"{s['max_um']:.3f}"
+                    tess = op.family == "tessellation"
+                    rms = "-" if tess else f"{s['rms_um']:.3f}"
+                    peak = "-" if tess else f"{s['max_um']:.3f}"
                     lines.append(
                         f"| {label} | {row_label} | {severity} | {rms} | {peak} | {ratio:.1f} | "
                         f"{'yes' if s['closed'] else 'no'} | {'yes' if s['ir_valid'] else 'no'} |"
                     )
+    lines += [
+        "",
+        "## Tessellation statistics",
+        "",
+        f"Seed {SEED}. Chord length is over unique mesh edges; aspect ratio is Lmax^2 / (2A) "
+        "per triangle (1.15 for equilateral); valence is the incident-triangle count per "
+        "welded vertex. Baseline rows (`-` operator) are the undegraded OCCT meshes. Every "
+        "variant shifts at least one of these distributions against OCCT's default.",
+        "",
+        "| mesh | operator | severity | tris | chord mean (mm) | chord std | aspect mean | "
+        "aspect p99 | valence mean | valence max |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for label, mesh in tess_meshes():
+        t = tess_stats(mesh)
+        lines.append(
+            f"| {label} | `-` | - | {t['tris']} | {t['chord_mean']:.4f} | {t['chord_std']:.4f} | "
+            f"{t['aspect_mean']:.3f} | {t['aspect_p99']:.3f} | {t['valence_mean']:.3f} | "
+            f"{t['valence_max']:.0f} |"
+        )
+        for name, op in OPERATORS.items():
+            if op.family != "tessellation" or name == "refine":
+                continue
+            for severity in (0.5, 1.0):
+                out = apply(name, mesh, severity, SEED)
+                t = tess_stats(out)
+                lines.append(
+                    f"| {label} | `{name}` | {severity} | {t['tris']} | "
+                    f"{t['chord_mean']:.4f} | {t['chord_std']:.4f} | {t['aspect_mean']:.3f} | "
+                    f"{t['aspect_p99']:.3f} | {t['valence_mean']:.3f} | {t['valence_max']:.0f} |"
+                )
     return "\n".join(lines) + "\n"
 
 

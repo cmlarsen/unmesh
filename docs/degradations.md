@@ -12,11 +12,23 @@ Rules every operator follows:
 - Truth edges and vertices: `adjacency[*].points` and `vertices` move with the mesh so the oracle IR of a degraded mesh stays self-consistent. The clean positions are kept unchanged in `metadata["truth"]` (`vertices`, `edge_points`, captured from the mesh as first passed to `apply`, in that mesh's frame) and no operator touches them; `to_original` maps degraded coordinates into that frame.
 - `refine` (tessellation family) bisects every edge longer than the target, with one midpoint per edge shared by both sides, so the mesh stays conforming and watertight. Midpoints on edges of non-planar faces are solved onto the analytic surface(s) of the incident faces (Gauss-Newton on the surfaces' implicit functions), and edge polylines gain the new boundary nodes. Planar faces have no interior vertices straight out of OCCT, so `noise_off_plane` raises `ValueError` unless the mesh was refined first.
 - The random stream is `numpy.random.default_rng(seed)`; vertices are visited in `np.unique` order, so output is bit-identical across processes.
+- `coarsen` collapses shortest edges first into the surviving endpoint (CAD vertices never merge, the link condition keeps the mesh a closed manifold, no face loses its last triangle), so surviving curved nodes stay exactly on the analytic surface.
+- `retriangulate` reuses boundary vertices bit-exactly and only touches planar faces without interior vertices; curved faces are skipped.
+- `nonuniform_chords` moves only vertices on one or two faces along the surface or the shared edge, reprojects them onto the incident analytic surfaces, and leaves CAD corners fixed.
+- `slivers` splits edges on both sides at once (conforming, watertight) and never splits edges of degenerate input triangles; `t_junctions` splits one side only and so is not watertight by design, while face ids and polylines stay aligned in both.
+- `fillet_rows` rebuilds cylinder fillet strips on the exact analytic arc and re-triangulates the affected planar neighbours; anything else is recorded as skipped and left untouched.
 
 ## Severity scale
 
 | operator | family | severity 0 | severity 1 |
 |---|---|---|---|
+| `refine` | tessellation | identity | edges bisected until none exceeds a target of bbox diagonal / 10 at severity 0+, / 31.6 at 0.5, / 100 at 1 (log-interpolated); midpoints on curved faces are projected onto the analytic surface |
+| `nonuniform_chords` | tessellation | identity | vertices on one or two faces moved along the surface (within a face, or along the shared edge for two-face vertices) by up to severity * 45% of the local chord length, then reprojected onto the incident analytic surfaces; chord spacing becomes non-uniform while every node stays on-surface; CAD corners and 3+ face vertices stay fixed |
+| `coarsen` | tessellation | identity | shortest edges collapsed until none is shorter than h = diagonal * 0.01 * 10**severity (diagonal / 100 at severity 0+, / 31.6 at 0.5, / 10 at 1); the surviving endpoint keeps its coordinates, so curved nodes stay on the analytic surface and cylinders become N-gon prisms |
+| `slivers` | tessellation | identity | a fraction 0.3 * severity of edges is split at an off-centre point (half-length offset 0.45 * severity toward a random endpoint, so 5% from the endpoint at severity 1) on both sides at once; the mesh stays conforming and watertight while sliver triangles appear |
+| `t_junctions` | tessellation | identity | up to 10% * severity of edges gain a hanging midpoint on one side only; the neighbour keeps its original edge, so the mesh is non-conforming and not watertight by design, while face ids and polylines stay aligned |
+| `retriangulate` | tessellation | identity | planar faces re-triangulated from their boundary loops by ear clipping biased toward a fan (severity up to 1/3), a strip (up to 2/3) or a Delaunay-like choice (above); boundary vertices are untouched, curved faces and faces with interior vertices are skipped |
+| `fillet_rows` | tessellation | identity | cylinder fillet strips whose cross edges meet only planar faces re-tessellated with exactly 3, 2 or 1 segments across their width (severity up to 1/3, 2/3, above), using the fillet's tangent-line endpoints as nodes; affected planar neighbours are re-triangulated |
 | `noise_isotropic` | noise | identity | every distinct vertex moved by an independent vector drawn uniformly from a ball of radius A = severity * 50 um (50 um at severity 1) |
 | `noise_normal` | noise | identity | every distinct vertex moved along its area-weighted vertex normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um |
 | `noise_off_plane` | noise | identity | vertices interior to a single planar face (every incident triangle on that face) moved along its normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um; refine first, since planar faces have no interior vertices otherwise |
@@ -26,44 +38,82 @@ Rules every operator follows:
 | `truncated_digits` | precision | identity | coordinates written with 3 significant digits (9 digits at severity 0+, 6 at 0.5) |
 | `inch_round_trip` | precision | identity | mm converted to inches, written with 3 decimals (25 um grid), converted back (7 decimals at severity 0+, 5 at 0.5) |
 | `far_translation` | precision | identity | part translated up to 1e6 mm (1 km) along a random direction, rounded to float32 there (ulp 62 um), translated back exactly |
-| `refine` | tessellation | identity | edges bisected until none exceeds a target of bbox diagonal / 10 at severity 0+, / 31.6 at 0.5, / 100 at 1 (log-interpolated); midpoints on curved faces are projected onto the analytic surface |
 
 Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along their direction. Every noise history entry records `amplitude_mm`, `distribution` and the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
 
 ## Displacement sheet
 
-Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for `refine` alone, whose new vertices have no clean counterpart). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity.
+Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation family, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. `refine -> noise_off_plane` covers only meshes with at least one planar face.
 
 | parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
 |---|---|---|---|---|---|---|---|
-| smoke (20) | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `noise_isotropic` | 0.5 | 19.422 | 24.941 | 1.0 | yes | yes |
-| smoke (20) | `noise_isotropic` | 1.0 | 38.844 | 49.882 | 1.0 | yes | yes |
-| smoke (20) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `noise_normal` | 0.5 | 13.317 | 24.874 | 1.0 | yes | yes |
-| smoke (20) | `noise_normal` | 1.0 | 26.634 | 49.748 | 1.0 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 110.7 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 0.5 | 13.400 | 24.997 | 110.7 | yes | yes |
-| smoke (20) | `refine -> noise_off_plane` | 1.0 | 26.801 | 49.994 | 110.7 | yes | yes |
-| smoke (20) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `float32` | 1.0 | 0.001 | 0.004 | 1.0 | yes | yes |
-| smoke (20) | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `truncated_digits` | 0.5 | 0.020 | 0.067 | 1.0 | yes | yes |
-| smoke (20) | `truncated_digits` | 1.0 | 38.868 | 69.304 | 1.0 | yes | yes |
-| smoke (20) | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `inch_round_trip` | 0.5 | 0.119 | 0.194 | 1.0 | yes | yes |
-| smoke (20) | `inch_round_trip` | 1.0 | 12.033 | 20.862 | 1.0 | yes | yes |
-| smoke (20) | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (20) | `far_translation` | 0.5 | 13.207 | 21.747 | 1.0 | yes | yes |
-| smoke (20) | `far_translation` | 1.0 | 26.027 | 43.385 | 1.0 | yes | yes |
-| smoke (20) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (20) | `refine` | 0.5 | - | - | 246.4 | yes | yes |
-| smoke (20) | `refine` | 1.0 | - | - | 2776.1 | yes | yes |
+| smoke (46) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `refine` | 0.5 | - | - | 167.7 | yes | yes |
+| smoke (46) | `refine` | 1.0 | - | - | 1973.8 | yes | yes |
+| smoke (46) | `nonuniform_chords` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `nonuniform_chords` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (46) | `nonuniform_chords` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `coarsen` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `coarsen` | 0.5 | - | - | 0.7 | yes | yes |
+| smoke (46) | `coarsen` | 1.0 | - | - | 0.6 | yes | yes |
+| smoke (46) | `slivers` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `slivers` | 0.5 | - | - | 1.3 | yes | yes |
+| smoke (46) | `slivers` | 1.0 | - | - | 1.8 | yes | yes |
+| smoke (46) | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
+| smoke (46) | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
+| smoke (46) | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (46) | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `fillet_rows` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `fillet_rows` | 0.5 | - | - | 0.9 | yes | yes |
+| smoke (46) | `fillet_rows` | 1.0 | - | - | 0.9 | yes | yes |
+| smoke (46) | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `noise_isotropic` | 0.5 | 19.294 | 24.999 | 1.0 | yes | yes |
+| smoke (46) | `noise_isotropic` | 1.0 | 38.587 | 49.999 | 1.0 | yes | yes |
+| smoke (46) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `noise_normal` | 0.5 | 14.198 | 24.983 | 1.0 | yes | yes |
+| smoke (46) | `noise_normal` | 1.0 | 28.397 | 49.965 | 1.0 | yes | yes |
+| smoke (45) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 90.4 | yes | yes |
+| smoke (45) | `refine -> noise_off_plane` | 0.5 | 12.486 | 24.997 | 90.4 | yes | yes |
+| smoke (45) | `refine -> noise_off_plane` | 1.0 | 24.971 | 49.994 | 90.4 | yes | yes |
+| smoke (46) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `float32` | 1.0 | 0.001 | 0.004 | 1.0 | yes | yes |
+| smoke (46) | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `truncated_digits` | 0.5 | 0.037 | 0.077 | 1.0 | yes | yes |
+| smoke (46) | `truncated_digits` | 1.0 | 41.961 | 80.530 | 1.0 | yes | yes |
+| smoke (46) | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `inch_round_trip` | 0.5 | 0.123 | 0.211 | 1.0 | yes | yes |
+| smoke (46) | `inch_round_trip` | 1.0 | 12.390 | 21.333 | 1.0 | yes | yes |
+| smoke (46) | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `far_translation` | 0.5 | 12.867 | 22.141 | 1.0 | yes | yes |
+| smoke (46) | `far_translation` | 1.0 | 26.049 | 43.983 | 1.0 | yes | yes |
+| filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `refine` | 0.5 | - | - | 20.7 | yes | yes |
+| filleted box | `refine` | 1.0 | - | - | 224.8 | yes | yes |
+| filleted box | `nonuniform_chords` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `nonuniform_chords` | 0.5 | - | - | 1.0 | yes | yes |
+| filleted box | `nonuniform_chords` | 1.0 | - | - | 1.0 | yes | yes |
+| filleted box | `coarsen` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `coarsen` | 0.5 | - | - | 0.1 | yes | yes |
+| filleted box | `coarsen` | 1.0 | - | - | 0.0 | yes | yes |
+| filleted box | `slivers` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `slivers` | 0.5 | - | - | 1.4 | yes | yes |
+| filleted box | `slivers` | 1.0 | - | - | 1.9 | yes | yes |
+| filleted box | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
+| filleted box | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
+| filleted box | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
+| filleted box | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
+| filleted box | `fillet_rows` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `fillet_rows` | 0.5 | - | - | 1.0 | yes | yes |
+| filleted box | `fillet_rows` | 1.0 | - | - | 1.0 | yes | yes |
 | filleted box | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `noise_isotropic` | 0.5 | 19.298 | 24.981 | 1.0 | yes | yes |
 | filleted box | `noise_isotropic` | 1.0 | 38.596 | 49.962 | 1.0 | yes | yes |
@@ -89,6 +139,49 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
 | filleted box | `far_translation` | 0.5 | 14.641 | 21.493 | 1.0 | yes | yes |
 | filleted box | `far_translation` | 1.0 | 27.426 | 42.182 | 1.0 | yes | yes |
-| filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `refine` | 0.5 | - | - | 20.7 | yes | yes |
-| filleted box | `refine` | 1.0 | - | - | 224.8 | yes | yes |
+
+## Tessellation statistics
+
+Seed 20260101. Chord length is over unique mesh edges; aspect ratio is Lmax^2 / (2A) per triangle (1.15 for equilateral); valence is the incident-triangle count per welded vertex. Baseline rows (`-` operator) are the undegraded OCCT meshes. Every variant shifts at least one of these distributions against OCCT's default.
+
+| mesh | operator | severity | tris | chord mean (mm) | chord std | aspect mean | aspect p99 | valence mean | valence max |
+|---|---|---|---|---|---|---|---|---|---|
+| cylinder | `-` | - | 164 | 8.4014 | 8.6476 | 22.304 | 26.800 | 5.857 | 10 |
+| cylinder | `nonuniform_chords` | 0.5 | 164 | 8.3959 | 8.6511 | 23.094 | 40.150 | 5.857 | 10 |
+| cylinder | `nonuniform_chords` | 1.0 | 164 | 8.3906 | 8.6564 | 26.504 | 80.257 | 5.857 | 10 |
+| cylinder | `coarsen` | 0.5 | 56 | 9.9762 | 7.8859 | 8.623 | 13.494 | 5.600 | 9 |
+| cylinder | `coarsen` | 1.0 | 24 | 11.5044 | 7.3188 | 4.901 | 6.933 | 5.143 | 8 |
+| cylinder | `slivers` | 0.5 | 224 | 7.5778 | 8.0016 | 30.284 | 97.490 | 5.895 | 12 |
+| cylinder | `slivers` | 1.0 | 306 | 6.3714 | 7.9929 | 102.994 | 537.182 | 5.923 | 13 |
+| cylinder | `t_junctions` | 0.5 | 176 | 7.9599 | 8.3193 | 23.623 | 53.601 | 5.500 | 10 |
+| cylinder | `t_junctions` | 1.0 | 189 | 7.5467 | 8.1804 | 25.087 | 53.601 | 5.202 | 12 |
+| cylinder | `retriangulate` | 0.5 | 164 | 9.2475 | 8.2716 | 21.270 | 26.800 | 5.857 | 7 |
+| cylinder | `retriangulate` | 1.0 | 164 | 8.4907 | 8.5650 | 22.086 | 26.800 | 5.857 | 14 |
+| cylinder | `fillet_rows` | 0.5 | 164 | 8.4014 | 8.6476 | 22.304 | 26.800 | 5.857 | 10 |
+| cylinder | `fillet_rows` | 1.0 | 164 | 8.4014 | 8.6476 | 22.304 | 26.800 | 5.857 | 10 |
+| ngon | `-` | - | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `nonuniform_chords` | 0.5 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `nonuniform_chords` | 1.0 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `coarsen` | 0.5 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `coarsen` | 1.0 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `slivers` | 0.5 | 138 | 12.2700 | 8.8490 | 11.851 | 62.222 | 5.831 | 13 |
+| ngon | `slivers` | 1.0 | 180 | 11.6206 | 9.6585 | 49.961 | 418.290 | 5.870 | 13 |
+| ngon | `t_junctions` | 0.5 | 112 | 12.9961 | 9.0322 | 9.098 | 24.860 | 5.419 | 11 |
+| ngon | `t_junctions` | 1.0 | 120 | 12.5717 | 8.7254 | 9.478 | 32.574 | 5.143 | 12 |
+| ngon | `retriangulate` | 0.5 | 104 | 16.1449 | 10.1329 | 7.861 | 17.111 | 5.778 | 7 |
+| ngon | `retriangulate` | 1.0 | 104 | 14.5554 | 9.1251 | 8.199 | 17.111 | 5.778 | 11 |
+| ngon | `fillet_rows` | 0.5 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| ngon | `fillet_rows` | 1.0 | 104 | 13.6483 | 9.1375 | 8.493 | 17.111 | 5.778 | 11 |
+| fillet | `-` | - | 40 | 20.0012 | 27.4740 | 22.481 | 43.316 | 5.455 | 11 |
+| fillet | `nonuniform_chords` | 0.5 | 40 | 20.0010 | 27.4742 | 23.240 | 63.637 | 5.455 | 11 |
+| fillet | `nonuniform_chords` | 1.0 | 40 | 20.0009 | 27.4744 | 26.747 | 120.401 | 5.455 | 11 |
+| fillet | `coarsen` | 0.5 | 16 | 44.1652 | 29.6297 | 9.342 | 40.021 | 4.800 | 6 |
+| fillet | `coarsen` | 1.0 | 16 | 44.1652 | 29.6297 | 9.342 | 40.021 | 4.800 | 6 |
+| fillet | `slivers` | 0.5 | 48 | 17.2017 | 25.8279 | 30.789 | 157.555 | 5.538 | 11 |
+| fillet | `slivers` | 1.0 | 66 | 17.1411 | 26.4562 | 111.260 | 866.312 | 5.657 | 12 |
+| fillet | `t_junctions` | 0.5 | 43 | 19.1322 | 26.5701 | 22.623 | 43.316 | 5.160 | 11 |
+| fillet | `t_junctions` | 1.0 | 46 | 19.4964 | 25.4423 | 22.926 | 67.039 | 4.929 | 11 |
+| fillet | `retriangulate` | 0.5 | 40 | 22.8959 | 28.7163 | 46.758 | 442.990 | 5.455 | 7 |
+| fillet | `retriangulate` | 1.0 | 40 | 20.0047 | 27.4717 | 22.488 | 43.316 | 5.455 | 9 |
+| fillet | `fillet_rows` | 0.5 | 20 | 36.1658 | 31.0273 | 9.806 | 40.021 | 5.000 | 8 |
+| fillet | `fillet_rows` | 1.0 | 16 | 44.1652 | 29.6297 | 9.342 | 40.021 | 4.800 | 7 |
