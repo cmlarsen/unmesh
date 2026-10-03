@@ -1,4 +1,4 @@
-use super::linalg::V3;
+use super::linalg::{V3, dot};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Surface {
@@ -18,13 +18,27 @@ impl Surface {
         }
     }
 
-    pub fn constraint(&self, weight: f64) -> Option<Constraint> {
+    pub fn distance(&self, p: V3) -> f64 {
+        match *self {
+            Surface::Plane { normal, offset } => dot(normal, p) - offset,
+            Surface::Facets => 0.0,
+        }
+    }
+
+    pub fn linearize(&self, _p: V3, weight: f64) -> Option<Constraint> {
         match *self {
             Surface::Plane { normal, offset } => Some(Constraint {
                 normal,
                 offset,
                 weight,
             }),
+            Surface::Facets => None,
+        }
+    }
+
+    pub fn normal_at(&self, _p: V3) -> Option<V3> {
+        match *self {
+            Surface::Plane { normal, .. } => Some(normal),
             Surface::Facets => None,
         }
     }

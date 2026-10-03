@@ -1,9 +1,10 @@
 use super::fit::Final;
 use super::linalg::{M3, V3, add, dot, norm, outer_add, scale, sub, sym_eigen};
 use super::segment::TriInfo;
-use super::surface::Constraint;
+use super::surface::{Constraint, Surface};
 
 const EIGEN_FLOOR: f64 = 5e-4;
+const GAUSS_NEWTON_STEPS: usize = 3;
 
 fn solve(x0: V3, constraints: &[&Constraint]) -> V3 {
     let mut m: M3 = [[0.0; 3]; 3];
@@ -23,16 +24,51 @@ fn solve(x0: V3, constraints: &[&Constraint]) -> V3 {
     x
 }
 
-pub fn project_vertex(x0: V3, constraints: &[Constraint], tol: f64) -> V3 {
-    if constraints.is_empty() {
+pub fn project_vertex(x0: V3, surfaces: &[(&Surface, f64)], tol: f64) -> V3 {
+    let mut sel: Vec<(&Surface, f64)> = surfaces
+        .iter()
+        .copied()
+        .filter(|(s, _)| s.is_analytic())
+        .collect();
+    if sel.is_empty() {
         return x0;
     }
+    sel.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut x = x0;
+    let mut kept = sel.len();
+    for step in 0..GAUSS_NEWTON_STEPS {
+        let mut cs: Vec<Constraint> = Vec::with_capacity(kept);
+        for (s, w) in &sel[..kept] {
+            if let Some(c) = s.linearize(x, *w) {
+                cs.push(c);
+            }
+        }
+        if cs.is_empty() {
+            return x0;
+        }
+        if step == 0 {
+            let (x_new, k) = solve_dropping(x, &cs, tol);
+            kept = k;
+            x = x_new;
+        } else {
+            let refs: Vec<&Constraint> = cs.iter().collect();
+            let x_new = solve(x, &refs);
+            if norm(sub(x_new, x)) <= 1e-6 * tol {
+                break;
+            }
+            x = x_new;
+        }
+    }
+    x
+}
+
+fn solve_dropping(x0: V3, constraints: &[Constraint], tol: f64) -> (V3, usize) {
     let mut set: Vec<&Constraint> = constraints.iter().collect();
     set.sort_by(|a, b| b.weight.total_cmp(&a.weight));
     loop {
         let x = solve(x0, &set);
         if set.len() == 1 || norm(sub(x, x0)) <= 5.0 * tol {
-            return x;
+            return (x, set.len());
         }
         set.pop();
     }
@@ -89,21 +125,20 @@ pub fn run(args: ProjectArgs<'_>) -> Projected {
     while i < vr.len() {
         let v = (vr[i] >> 32) as usize;
         let mut j = i;
-        let mut constraints: Vec<Constraint> = Vec::new();
+        let mut surfaces: Vec<(&Surface, f64)> = Vec::new();
         while j < vr.len() && (vr[j] >> 32) as usize == v {
             let r = (vr[j] & 0xffff_ffff) as usize;
-            if let Some(c) = finals[r].surface.constraint(areas[r]) {
-                constraints.push(c);
-            }
+            surfaces.push((&finals[r].surface, areas[r]));
             j += 1;
         }
-        if !constraints.is_empty() {
-            let x = project_vertex(vc[v], &constraints, tol);
+        if surfaces.iter().any(|(s, _)| s.is_analytic()) {
+            let x = project_vertex(vc[v], &surfaces, tol);
             pv[v] = x;
             let disp = norm(sub(x, vc[v]));
-            let off = constraints
+            let off = surfaces
                 .iter()
-                .map(|p| (dot(p.normal, x) - p.offset).abs())
+                .filter(|(s, _)| s.is_analytic())
+                .map(|(s, _)| s.distance(x).abs())
                 .fold(0.0, f64::max);
             let dev = disp + off;
             dev_max = dev_max.max(dev);
