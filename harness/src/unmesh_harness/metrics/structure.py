@@ -269,3 +269,28 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
         "topology_match": topology_match,
         "uncovered_triangles": int(len(tris) - len(owned_region)),
     }
+
+
+def score_structure(ir, truth_faces: int, tris: np.ndarray) -> dict[str, Any]:
+    tris = np.asarray(tris, dtype=np.float64)
+    n = len(tris)
+    areas = (
+        np.linalg.norm(np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]), axis=1) / 2
+        if n
+        else np.zeros(0)
+    )
+    total = float(areas.sum())
+    analytic = sum(1 for r in ir.regions if r.surface.type != "facets")
+    owned = {t for r in ir.regions if r.surface.type != "facets" for t in r.triangles}
+    owned = {t for t in owned if 0 <= t < n}
+    analytic_area = float(areas[sorted(owned)].sum()) if owned else 0.0
+    return {
+        "truth_faces": int(truth_faces),
+        "output_faces": int(len(ir.regions)),
+        "analytic_regions": int(analytic),
+        "faceted_regions": int(len(ir.regions) - analytic),
+        "total_area_mm2": total,
+        "analytic_area_mm2": analytic_area,
+        "analytic_area_fraction": analytic_area / total if total > 0 else 0.0,
+        "face_count_ratio": len(ir.regions) / truth_faces if truth_faces > 0 else 0.0,
+    }

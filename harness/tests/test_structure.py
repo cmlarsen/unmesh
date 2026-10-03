@@ -8,8 +8,9 @@ from unmesh.ir import Adjacency, Region, validate
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import tessellate
-from unmesh_harness.metrics.structure import score_topology, score_validity
+from unmesh_harness.metrics.structure import score_structure, score_topology, score_validity
 from unmesh_harness.oracle import build_oracle_ir
+from unmesh_harness.runner.converters import faceted_ir
 
 LIN, ANG = 0.01, 0.2
 
@@ -219,4 +220,37 @@ def test_merged_regions_are_caught_by_face_count():
     assert result["truth_faces"] == 3
     assert result["output_faces"] == 2
     assert result["faces_match"] is False
+    json.dumps(result)
+
+
+def test_structure_oracle_is_fully_analytic():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    result = score_structure(build_oracle_ir(mesh), len(mesh.faces), mesh.tris)
+    assert result["analytic_area_fraction"] == pytest.approx(1.0)
+    assert result["face_count_ratio"] == pytest.approx(1.0)
+    assert result["faceted_regions"] == 0
+    assert result["analytic_area_mm2"] == pytest.approx(result["total_area_mm2"])
+    json.dumps(result)
+
+
+def test_structure_faceted_is_fully_faceted():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    result = score_structure(faceted_ir(mesh.tris), len(mesh.faces), mesh.tris)
+    assert result["analytic_area_fraction"] == 0.0
+    assert result["face_count_ratio"] == pytest.approx(1 / 6)
+    assert result["analytic_regions"] == 0
+    json.dumps(result)
+
+
+def test_structure_dropped_bore_loses_area_and_faces():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    full = score_structure(ir, len(mesh.faces), mesh.tris)
+    assert full["analytic_area_fraction"] == pytest.approx(1.0)
+    bore = next(r.id for r in ir.regions if r.surface.type == "cylinder")
+    dropped = _drop_region(ir, bore)
+    result = score_structure(dropped, len(mesh.faces), mesh.tris)
+    assert result["face_count_ratio"] == pytest.approx(6 / 7)
+    assert 0.0 < result["analytic_area_fraction"] < 1.0
+    assert result["analytic_area_mm2"] < full["analytic_area_mm2"]
     json.dumps(result)
