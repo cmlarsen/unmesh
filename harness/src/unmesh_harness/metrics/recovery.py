@@ -308,6 +308,36 @@ def match_faces(clean: LabeledMesh, face_id: np.ndarray, ir: Ir) -> tuple[list[d
     return matches, owner
 
 
+def _masked_faces(clean: LabeledMesh) -> set[int]:
+    tags = clean.metadata.get("face_tags") if isinstance(clean.metadata, dict) else None
+    if not isinstance(tags, dict):
+        return set()
+    masked = set()
+    for key, value in tags.items():
+        if value != "corner_blend":
+            continue
+        try:
+            fid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= fid < len(clean.faces):
+            masked.add(fid)
+    return masked
+
+
+def _masked_regions(face_id: np.ndarray, masked: set[int], ir: Ir) -> set[int]:
+    if not masked:
+        return set()
+    owners = np.asarray(face_id)
+    out = set()
+    for region in ir.regions:
+        tris = np.asarray(region.triangles, dtype=np.int64)
+        tris = tris[(tris >= 0) & (tris < len(owners))]
+        if len(tris) and bool(np.isin(owners[tris], list(masked)).all()):
+            out.add(region.id)
+    return out
+
+
 def _prf(matched: int, faces: int, regions: int) -> tuple[float, float, float]:
     recall = matched / faces if faces else 0.0
     precision = matched / regions if regions else 0.0
@@ -500,16 +530,21 @@ def score_recovery(
     frame = _frame(to_original)
     face_id = np.asarray(face_id)
     matches, owner = match_faces(clean, face_id, ir)
+    masked = _masked_faces(clean)
+    masked_regions = _masked_regions(face_id, masked, ir)
     matched_regions: set[int] = set()
     matched = unsupported = 0
     faces_detail = []
     error_values: dict[str, list[float]] = {}
     per_type: dict[str, dict[str, Any]] = {}
     for face, match in zip(clean.faces, matches, strict=True):
-        bucket = per_type.setdefault(
-            face.surface, {"faces": 0, "regions": 0, "matched": 0, "matched_regions": set()}
-        )
-        bucket["faces"] += 1
+        if face.id in masked:
+            bucket = None
+        else:
+            bucket = per_type.setdefault(
+                face.surface, {"faces": 0, "regions": 0, "matched": 0, "matched_regions": set()}
+            )
+            bucket["faces"] += 1
         detail: dict[str, Any] = {
             "face": face.id,
             "type": face.surface,
@@ -522,7 +557,8 @@ def score_recovery(
             faces_detail.append(detail)
             continue
         if face.surface not in ANALYTIC_TYPES:
-            unsupported += 1
+            if face.id not in masked:
+                unsupported += 1
             faces_detail.append(detail)
             continue
         surface = ir.regions[match["region"]].surface
@@ -536,23 +572,31 @@ def score_recovery(
             getattr(surface, "orientation", None),
         )
         detail["errors"] = {k: float(v) for k, v in errors.items()}
-        if ok:
+        if ok and face.id not in masked:
             matched += 1
+            assert bucket is not None
             bucket["matched"] += 1
             bucket["matched_regions"].add(match["region"])
             matched_regions.add(match["region"])
             detail["recovered"] = True
             for k, v in errors.items():
                 error_values.setdefault(f"{face.surface}.{k}", []).append(float(v))
+        elif ok:
+            detail["recovered"] = True
         faces_detail.append(detail)
     for region in ir.regions:
+        if region.id in masked_regions:
+            continue
         if region.surface.type in per_type:
             per_type[region.surface.type]["regions"] += 1
-    faces = len(clean.faces)
-    precision, recall, f1 = _prf_regions(matched, len(matched_regions), faces, len(ir.regions))
+    faces = len(clean.faces) - len(masked)
+    regions = len(ir.regions) - len(masked_regions)
+    precision, recall, f1 = _prf_regions(matched, len(matched_regions), faces, regions)
     recovered_region = {d["face"]: d["region"] for d in faces_detail if d["recovered"]}
     by_type = {}
     for surface, bucket in per_type.items():
+        if bucket["faces"] == 0:
+            continue
         p, r, f = _prf_regions(
             bucket["matched"], len(bucket["matched_regions"]), bucket["faces"], bucket["regions"]
         )
@@ -564,14 +608,16 @@ def score_recovery(
             "recall": r,
             "f1": f,
         }
+    masked_faces = [d for d in faces_detail if d["face"] in masked]
     out: dict[str, Any] = {
         "faces": faces,
-        "regions": len(ir.regions),
+        "regions": regions,
         "matched": matched,
         "precision": precision,
         "recall": recall,
         "f1": f1,
         "unsupported_faces": unsupported,
+        "masked_faces": masked_faces,
         "per_type": by_type,
         "segmentation": _segmentation(clean, face_id, ir, owner),
         "parameter_errors": {

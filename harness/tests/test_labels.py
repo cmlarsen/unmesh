@@ -16,9 +16,7 @@ from unmesh_harness.labels import (
     tessellate,
 )
 
-from .cases import smoke_by_deflection
-
-MESHER_CHORD_FACTOR = {"cone": 3.0, "sphere": 2.5, "torus": 4.0}
+from .cases import MESHER_CHORD_FACTOR, smoke_by_deflection
 
 
 def closed_manifold_problems(tris):
@@ -59,7 +57,7 @@ def check_part(shape, lin, ang, exact_volume=True):
         assert vol == pytest.approx(shape.volume, rel=1e-9)
     elif exact_volume:
         area = sum(f.area for f in shape.faces())
-        assert vol == pytest.approx(shape.volume, rel=lin * area / shape.volume)
+        assert vol == pytest.approx(shape.volume, rel=min(0.02, lin * area / shape.volume))
     else:
         assert vol == pytest.approx(shape.volume, rel=0.02)
     assert len(mesh.faces) == len(shape.faces())
@@ -83,24 +81,14 @@ def check_part(shape, lin, ang, exact_volume=True):
 
 @pytest.mark.parametrize(("entry", "lin", "ang"), smoke_by_deflection())
 def test_smoke_parts_closed_manifold_and_on_surface(entry, lin, ang):
-    check_part(
-        generate(entry["family"], entry["seed"]).solid,
-        lin,
-        ang,
-        exact_volume=entry["strata"].get("category", "planar") == "planar",
-    )
+    check_part(generate(entry["family"], entry["seed"]).solid, lin, ang)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize(("lin", "ang"), DEFLECTION_SETTINGS)
 @pytest.mark.parametrize("entry", select(load_manifest(), "standard"), ids=lambda e: e["id"])
 def test_standard_parts_closed_manifold_and_on_surface(entry, lin, ang):
-    check_part(
-        generate(entry["family"], entry["seed"]).solid,
-        lin,
-        ang,
-        exact_volume=entry["strata"].get("category", "planar") == "planar",
-    )
+    check_part(generate(entry["family"], entry["seed"]).solid, lin, ang)
 
 
 PRIMITIVES = {

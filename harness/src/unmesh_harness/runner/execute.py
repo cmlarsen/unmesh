@@ -31,6 +31,8 @@ def prep_part(task: dict[str, Any]) -> dict[str, Any]:
     labeled_path, truth_path = _cache_paths(Path(task["cache"]), entry["id"])
     gt = generate(entry["family"], entry["seed"])
     labeled = tessellate(gt.solid, *task["input_deflection"])
+    if gt.face_tags is not None:
+        labeled.metadata["face_tags"] = dict(gt.face_tags)
     if task["need_truth"]:
         truth = tessellate(gt.solid, *task["truth_deflection"])
         np.save(truth_path, truth.tris)

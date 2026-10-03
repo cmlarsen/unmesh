@@ -248,10 +248,15 @@ def test_largest_smoke_part_convert_time(parts, capsys):
     assert seconds < 1
 
 
-def test_curved_smoke_parts_cover_every_nondegenerate_triangle():
-    for entry in select(load_manifest(), "smoke"):
-        if entry["strata"].get("category", "planar") == "planar":
-            continue
+def test_nonplanar_smoke_parts_cover_every_nondegenerate_triangle():
+    entries = [
+        e
+        for e in select(load_manifest(), "smoke")
+        if e["strata"].get("category", "planar") != "planar"
+    ]
+    assert {e["strata"]["category"] for e in entries} >= {"curved", "chamfer_fillet", "ambiguity"}
+    seen = []
+    for entry in entries:
         part = tessellate(generate(entry["family"], entry["seed"]).solid, 0.05, 0.5)
         ir, _ = unmesh.convert(part.tris)
         ir.validate()
@@ -259,3 +264,5 @@ def test_curved_smoke_parts_cover_every_nondegenerate_triangle():
         area = np.linalg.norm(np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]), axis=1)
         covered = {t for r in ir.regions for t in r.triangles}
         assert {int(i) for i in np.flatnonzero(area > 0)} <= covered, entry["id"]
+        seen.append(entry["id"])
+    assert sorted(seen) == sorted(e["id"] for e in entries)
