@@ -33,8 +33,8 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise over the quiet population below the largest decade-plus residual gap (falling back to every supported region when that population holds under half the area), and refits at five times that noise, floored at 1e-6 of the diagonal plus 5e-7 of the largest absolute coordinate. Becomes `ir.tolerances.linear`. |
-| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise over the quiet population below the largest decade-plus residual gap (falling back to every supported region only when no region's residual is within a few times the floor), and refits at five times that noise, floored at the larger of 1e-6 of the diagonal and 5e-7 of the largest absolute coordinate. Becomes `ir.tolerances.linear`. |
+| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region, where σ is the quiet-pool noise; when the estimator falls back to every supported region there is no widening. |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
 
@@ -50,9 +50,11 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
-A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the
+A clean all-planar mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the
 tolerance scales with the part's units) and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
+On a mesh whose area is mostly curvature with no near-exact population, the estimator falls back to
+pooling every supported region, so the tolerance follows the curvature instead of the floor.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions

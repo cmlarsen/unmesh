@@ -7,6 +7,12 @@ pub const NOISE_FACTOR: f64 = 5.0;
 const ANCHOR_MIN_VERTS: usize = 50;
 const POOL_WINDOW_MIN_AREA_FRAC: f64 = 0.5;
 const POOL_GAP_RATIO: f64 = 10.0;
+const NEAR_EXACT_FLOOR_RATIO: f64 = 4.0;
+
+pub struct NoiseEstimate {
+    pub sigma: f64,
+    pub snap_sigma: f64,
+}
 
 pub fn snap_normals(
     v: &[V3],
@@ -105,10 +111,16 @@ pub fn snap_normals(
     }
 }
 
-pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
-    pool_noise(v, regions, ANCHOR_MIN_VERTS)
-        .or_else(|| pool_noise(v, regions, 4))
-        .unwrap_or(tol / NOISE_FACTOR)
+pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64, floor: f64) -> NoiseEstimate {
+    let pooled = pool_noise(v, regions, ANCHOR_MIN_VERTS, floor)
+        .or_else(|| pool_noise(v, regions, 4, floor));
+    match pooled {
+        Some((sigma, snap_sigma)) => NoiseEstimate { sigma, snap_sigma },
+        None => NoiseEstimate {
+            sigma: tol / NOISE_FACTOR,
+            snap_sigma: tol / NOISE_FACTOR,
+        },
+    }
 }
 
 fn region_stats(v: &[V3], regions: &[Region], min_verts: usize) -> Vec<(f64, f64, f64, f64)> {
@@ -136,7 +148,12 @@ fn pooled(stats: &[(f64, f64, f64, f64)]) -> f64 {
     (ss / dof).sqrt()
 }
 
-fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize) -> Option<f64> {
+fn pool_noise(
+    v: &[V3],
+    regions: &[Region],
+    min_verts: usize,
+    floor: f64,
+) -> Option<(f64, f64)> {
     let all = region_stats(v, regions, 4);
     if all.is_empty() {
         return None;
@@ -160,13 +177,16 @@ fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize) -> Option<f64> {
             cut = i + 1;
         }
     }
+    let quiet = pooled(&sup[..cut]);
     let kept_area: f64 = sup[..cut].iter().map(|x| x.3).sum();
     let supported: f64 = all.iter().map(|x| x.3).sum();
     if kept_area >= POOL_WINDOW_MIN_AREA_FRAC * supported {
-        Some(pooled(&sup[..cut]))
-    } else {
-        Some(pooled(&all))
+        return Some((quiet, quiet));
     }
+    if all[0].0 <= NEAR_EXACT_FLOOR_RATIO * floor {
+        return Some((quiet, quiet));
+    }
+    Some((pooled(&all), 0.0))
 }
 
 #[cfg(test)]
@@ -274,10 +294,10 @@ mod tests {
             let noise = 0.005 + (seed as f64) * 0.005 / 11.0;
             let (v, r) = noisy_wall_top(seed, noise);
             let regions = vec![r];
-            let sigma = estimate_noise(&v, &regions, 0.05);
+            let est = estimate_noise(&v, &regions, 0.05, 1e-9);
             let mut regions = regions;
-            let tol = 5.0 * sigma;
-            snap_normals(&v, &mut regions, tol, sigma, 0.5, 50.0, 50.0);
+            let tol = 5.0 * est.sigma;
+            snap_normals(&v, &mut regions, tol, est.snap_sigma, 0.5, 50.0, 50.0);
             if regions[0].surface.as_plane().unwrap().0 == [0.0, 0.0, 1.0] {
                 snapped += 1;
             }
@@ -328,12 +348,21 @@ mod tests {
         }
     }
 
-    fn pool_case(bases: &[f64], areas: &[f64]) -> f64 {
+    fn pool_case(bases: &[f64], areas: &[f64]) -> NoiseEstimate {
+        pool_case_nv(bases, areas, &vec![60; bases.len()], 1.0)
+    }
+
+    fn pool_case_nv(
+        bases: &[f64],
+        areas: &[f64],
+        nvs: &[usize],
+        floor: f64,
+    ) -> NoiseEstimate {
         let mut v = Vec::new();
         let mut regions = Vec::new();
-        for (k, (&b, &a)) in bases.iter().zip(areas).enumerate() {
+        for (k, ((&b, &a), &nv)) in bases.iter().zip(areas).zip(nvs).enumerate() {
             let mut verts = Vec::new();
-            for i in 0..60 {
+            for i in 0..nv {
                 let z = b * (1.0 + 0.01 * ((i % 7) as f64 - 3.0));
                 v.push([i as f64 * 0.01, k as f64, z]);
                 verts.push((v.len() as u32 - 1, 1.0));
@@ -351,30 +380,44 @@ mod tests {
                 max: 0.0,
             });
         }
-        estimate_noise(&v, &regions, 1.0)
+        estimate_noise(&v, &regions, 1.0, floor)
     }
 
     #[test]
     fn pool_uses_quiet_population_below_a_decade_gap() {
-        let sigma = pool_case(&[1e-9, 2e-9, 1.5e-9, 1.0], &[1.0, 1.0, 1.0, 1.0]);
-        assert!(sigma < 1e-7, "sigma={sigma}");
+        let est = pool_case(&[1e-9, 2e-9, 1.5e-9, 1.0], &[1.0, 1.0, 1.0, 1.0]);
+        assert!(est.sigma < 1e-7, "sigma={}", est.sigma);
     }
 
     #[test]
     fn pool_keeps_a_gapless_continuum_whole() {
-        let sigma = pool_case(&[0.001, 0.003, 0.01, 0.03], &[1.0, 1.0, 1.0, 1.0]);
-        assert!(sigma > 0.012, "sigma={sigma}");
+        let est = pool_case(&[0.001, 0.003, 0.01, 0.03], &[1.0, 1.0, 1.0, 1.0]);
+        assert!(est.sigma > 0.012, "sigma={}", est.sigma);
     }
 
     #[test]
     fn pool_ignores_a_chance_tiny_sliver() {
-        let sigma = pool_case(&[1e-12, 0.005, 0.006, 0.007], &[0.01, 1.0, 1.0, 1.0]);
-        assert!((0.004..0.008).contains(&sigma), "sigma={sigma}");
+        let est = pool_case(&[1e-12, 0.005, 0.006, 0.007], &[0.01, 1.0, 1.0, 1.0]);
+        assert!((0.004..0.008).contains(&est.sigma), "sigma={}", est.sigma);
     }
 
     #[test]
     fn pool_falls_back_to_all_when_quiet_set_is_small() {
-        let sigma = pool_case(&[1e-9, 1.0], &[1.0, 3.0]);
-        assert!(sigma > 0.1, "sigma={sigma}");
+        let est = pool_case(&[1e-9, 1.0], &[1.0, 3.0]);
+        assert!(est.sigma > 0.1, "sigma={}", est.sigma);
+    }
+
+    #[test]
+    fn pool_keeps_small_quiet_set_when_near_exact_exists() {
+        let est = pool_case_nv(&[1e-9, 1.0, 1.2], &[1.0, 10.0, 10.0], &[60, 30, 30], 1e-3);
+        assert!(est.sigma < 1e-7, "sigma={}", est.sigma);
+        assert_eq!(est.sigma, est.snap_sigma);
+    }
+
+    #[test]
+    fn pool_falls_back_without_widening_when_nothing_near_exact() {
+        let est = pool_case_nv(&[0.5, 1.0, 1.2], &[1.0, 10.0, 10.0], &[60, 30, 30], 1e-3);
+        assert!(est.sigma > 0.1, "sigma={}", est.sigma);
+        assert_eq!(est.snap_sigma, 0.0);
     }
 }
