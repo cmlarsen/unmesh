@@ -12,6 +12,8 @@ FLOOR_F1 = 0.01
 FLOOR_DEV_MM = 0.001
 FLOOR_RATE = 0.0
 
+RATE_NOISELESS = ("valid", "fallback", "under_report")
+
 
 @dataclass(frozen=True)
 class Metric:
@@ -66,6 +68,36 @@ def cell_key(record: dict[str, Any]) -> tuple:
 
 def _fmt_severity(sev: float) -> str:
     return f"{sev:g}"
+
+
+def _rate_bad(record: dict[str, Any], name: str) -> bool:
+    ok = record.get("status") == "ok"
+    if name == "valid":
+        return not (ok and record.get("valid") is True)
+    if name == "fallback":
+        return record.get("fallback") is True or not ok
+    if name == "under_report":
+        return not (ok and record.get("under_report") is False)
+    raise ValueError(f"not a rate metric: {name!r}")
+
+
+def _rate_verdict(
+    key: tuple, name: str, rec_a: list[dict[str, Any]], rec_b: list[dict[str, Any]]
+) -> CellVerdict | None:
+    by_a = {r.get("seed"): r for r in rec_a}
+    by_b = {r.get("seed"): r for r in rec_b}
+    shared = [s for s in by_a if s in by_b]
+    bad_a = {s: _rate_bad(by_a[s], name) for s in shared}
+    bad_b = {s: _rate_bad(by_b[s], name) for s in shared}
+    if any(not bad_a[s] and bad_b[s] for s in shared):
+        verdict = "REGRESSION"
+    elif any(bad_a[s] and not bad_b[s] for s in shared):
+        verdict = "IMPROVEMENT"
+    else:
+        return None
+    mean_a = sum(1 for s in shared if bad_a[s]) / len(shared)
+    mean_b = sum(1 for s in shared if bad_b[s]) / len(shared)
+    return CellVerdict(key, name, mean_a, 0.0, len(shared), mean_b, len(shared), 0.0, verdict)
 
 
 @dataclass
@@ -130,6 +162,13 @@ def compare_groups(
             )
             continue
         for metric in METRICS:
+            if metric.name in RATE_NOISELESS:
+                verdict = _rate_verdict(key, metric.name, rec_a, rec_b)
+                if verdict is None:
+                    out.unchanged += 1
+                else:
+                    out.verdicts.append(verdict)
+                continue
             sa = metric_samples(groups_a[key], metric.name)
             sb = metric_samples(groups_b[key], metric.name)
             if not sa:

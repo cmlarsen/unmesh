@@ -140,6 +140,34 @@ def test_samples_missing_in_a_are_skipped():
     assert not comp.regressions
 
 
+def test_noisy_rate_transition_is_a_regression():
+    a = seeds([1.0, 1.0, 1.0], under_report=False)[:2] + [record(seed=2, under_report=True)]
+    comp = run(a, seeds([1.0, 1.0, 1.0], under_report=True))
+    (v,) = [v for v in comp.regressions if v.metric == "under_report"]
+    assert v.threshold == 0.0
+    assert not comp.improvements
+
+
+def test_partial_validity_loss_is_a_regression():
+    a = seeds([1.0, 1.0, 1.0])[:2] + [record(seed=2, valid=False)]
+    comp = run(a, seeds([1.0, 1.0, 1.0], valid=False))
+    assert any(v.metric == "valid" and v.verdict == "REGRESSION" for v in comp.regressions)
+
+
+def test_rate_recovery_is_an_improvement():
+    a = seeds([1.0, 1.0, 1.0], valid=False)
+    comp = run(a, seeds([1.0, 1.0, 1.0]))
+    assert not comp.regressions
+    assert any(v.metric == "valid" and v.verdict == "IMPROVEMENT" for v in comp.improvements)
+
+
+def test_steady_rate_is_unchanged():
+    a = seeds([1.0, 1.0, 1.0])[:2] + [record(seed=2, valid=False)]
+    b = seeds([1.0, 1.0, 1.0])[:2] + [record(seed=2, valid=False)]
+    comp = run(a, b)
+    assert not comp.regressions and not comp.improvements
+
+
 def test_other_converters_are_filtered():
     comp = run(
         [record(converter="faceted", f1=0.0)],
