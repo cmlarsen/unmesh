@@ -8,17 +8,24 @@ use super::topology::{CompKind, NONE, Topology};
 
 const RESPLIT_MIN_DIHEDRAL_DEG: f64 = 15.0;
 
-fn has_crease(nbr: &[[u32; 3]], info: &[TriInfo], label: &[u32], region: u32) -> bool {
+fn has_crease(
+    nbr: &[[u32; 3]],
+    info: &[TriInfo],
+    label: &[u32],
+    region: u32,
+    faces: &[u32],
+) -> bool {
     let limit = RESPLIT_MIN_DIHEDRAL_DEG.to_radians().cos();
-    for (f, nb) in nbr.iter().enumerate() {
-        if label[f] != region || info[f].area <= 0.0 {
+    for &f in faces {
+        let nb = &nbr[f as usize];
+        if info[f as usize].area <= 0.0 {
             continue;
         }
         for &g in nb {
             if g == NONE || label[g as usize] != region || info[g as usize].area <= 0.0 {
                 continue;
             }
-            if dot(info[f].normal, info[g as usize].normal) < limit {
+            if dot(info[f as usize].normal, info[g as usize].normal) < limit {
                 return true;
             }
         }
@@ -370,17 +377,14 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         scratch,
     } = args;
     let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, false);
-    run(RunArgs {
-        vc,
-        faces,
-        nbr,
-        info,
-        label: &label,
-        n_seg,
-        tol,
-        snap_deg,
-        scratch,
-    })
+    let (label2, regions) =
+        merge_and_rebuild(vc, faces, info, nbr, &label, n_seg, tol, snap_deg, scratch);
+    match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol) {
+        Some((combined, n_all)) => merge_and_rebuild(
+            vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
+        ),
+        None => (label2, regions),
+    }
 }
 
 pub struct RunArgs<'a> {
@@ -407,8 +411,18 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         snap_deg,
         scratch,
     } = args;
-    let (label2, regions) =
-        merge_and_rebuild(vc, faces, info, nbr, label, n_seg, tol, snap_deg, scratch);
+    merge_and_rebuild(vc, faces, info, nbr, label, n_seg, tol, snap_deg, scratch)
+}
+
+pub fn resplit_loose(
+    vc: &[V3],
+    faces: &[[u32; 3]],
+    nbr: &[[u32; 3]],
+    info: &[TriInfo],
+    label: &[u32],
+    regions: &[Region],
+    tol: f64,
+) -> Option<(Vec<u32>, usize)> {
     let loose: Vec<u32> = regions
         .iter()
         .enumerate()
@@ -416,11 +430,11 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         .map(|(i, _)| i as u32)
         .collect();
     if loose.is_empty() {
-        return (label2, regions);
+        return None;
     }
     let mut combined = vec![NONE; faces.len()];
     let mut next_id = 0u32;
-    for r in &regions {
+    for r in regions {
         if r.area > 0.0 && r.max > tol {
             continue;
         }
@@ -429,28 +443,32 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         }
         next_id += 1;
     }
+    let mut creased = vec![false; regions.len()];
     for &r in &loose {
-        if !has_crease(nbr, info, &label2, r) {
-            for &f in &regions[r as usize].faces {
+        let rf = &regions[r as usize].faces;
+        creased[r as usize] = has_crease(nbr, info, label, r, rf);
+        if !creased[r as usize] {
+            for &f in rf {
                 combined[f as usize] = next_id;
             }
             next_id += 1;
-            continue;
         }
-        let eligible: Vec<bool> = label2.iter().map(|&l| l == r).collect();
-        let (sub, n_sub) = segment::run(vc, faces, nbr, info, &eligible, tol, true);
-        for (f, &l) in sub.iter().enumerate() {
-            if l != NONE {
-                combined[f] = next_id + l;
-            }
-        }
-        next_id += n_sub as u32;
     }
-    let n_all = next_id as usize;
-    let (label2, regions) = merge_and_rebuild(
-        vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
-    );
-    (label2, regions)
+    if !creased.iter().any(|&c| c) {
+        return None;
+    }
+    let eligible: Vec<bool> = label
+        .iter()
+        .map(|&l| l != NONE && creased[l as usize])
+        .collect();
+    let (sub, n_sub) = segment::run_fenced(vc, faces, nbr, info, &eligible, Some(label), tol, true);
+    for (f, &l) in sub.iter().enumerate() {
+        if l != NONE {
+            combined[f] = next_id + l;
+        }
+    }
+    next_id += n_sub as u32;
+    Some((combined, next_id as usize))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -564,4 +582,72 @@ pub fn label_faces(finals: &[Final], n_faces: usize) -> Vec<u32> {
         }
     }
     flabel
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::segment::tri_info;
+    use super::*;
+
+    fn hinge(tilt_deg: f64, base: u32) -> (Vec<V3>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
+        let t = tilt_deg.to_radians().tan();
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 3.0, 3.0 * t],
+            [3.0, 0.0, 3.0 * t],
+        ];
+        let b = base as usize;
+        let f = vec![
+            [b as u32, b as u32 + 1, b as u32 + 2],
+            [b as u32 + 3, b as u32 + 5, b as u32 + 4],
+        ];
+        let nbr = vec![[1, NONE, NONE], [0, NONE, NONE]];
+        (v, f, nbr)
+    }
+
+    #[test]
+    fn union_resplit_splits_every_creased_loose_region() {
+        let (v0, f0, n0) = hinge(20.0, 0);
+        let (v1, f1, n1) = hinge(20.0, 6);
+        let mut v = v0;
+        v.extend(v1);
+        let mut f = f0;
+        f.extend(f1);
+        let mut nbr = n0;
+        let off2 = nbr.len() as u32;
+        nbr.extend(
+            n1.into_iter()
+                .map(|t| t.map(|g| if g == NONE { NONE } else { g + off2 })),
+        );
+        let info = tri_info(&v, &f);
+        let label = vec![0, 0, 1, 1];
+        let mut scratch = Scratch::new(v.len());
+        let regions = build_regions(&v, &f, &info, &label, 2, 0.03, &mut scratch);
+        assert!(regions.iter().all(|r| r.max > 0.03));
+        let (combined, n_all) = resplit_loose(&v, &f, &nbr, &info, &label, &regions, 0.03).unwrap();
+        assert_eq!(n_all, 4);
+        let (label2, regions) = merge_and_rebuild(
+            &v,
+            &f,
+            &info,
+            &nbr,
+            &combined,
+            n_all,
+            0.03,
+            0.5,
+            &mut scratch,
+        );
+        let mut distinct = label2.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 4);
+        assert_eq!(regions.len(), 4);
+        assert!(regions.iter().all(|r| r.max <= 0.03));
+        for (fi, &l) in label2.iter().enumerate() {
+            assert!(regions[l as usize].faces.contains(&(fi as u32)));
+        }
+    }
 }
