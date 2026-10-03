@@ -313,7 +313,9 @@ def _masked_faces(clean: LabeledMesh) -> set[int]:
     if not isinstance(tags, dict):
         return set()
     masked = set()
-    for key in tags:
+    for key, value in tags.items():
+        if value != "corner_blend":
+            continue
         try:
             fid = int(key)
         except (TypeError, ValueError):

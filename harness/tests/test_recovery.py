@@ -543,3 +543,11 @@ def test_unmasked_mesh_reports_no_masked_faces():
     result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
     assert result["masked_faces"] == []
     assert (result["faces"], result["matched"], result["f1"]) == (6, 6, 1.0)
+
+
+def test_other_tag_values_do_not_mask_faces():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    mesh.metadata["face_tags"] = {0: "anything_else"}
+    result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
+    assert result["masked_faces"] == []
+    assert (result["faces"], result["matched"], result["f1"]) == (6, 6, 1.0)
