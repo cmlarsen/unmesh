@@ -19,10 +19,9 @@ use crate::ir::Tolerances;
 use crate::mesh::{Point, TriangleSoup};
 
 use emit::Asm;
-use fit::region_pairs;
+use fit::{label_faces, region_pairs};
 use linalg::{V3, add};
 use project::Projected;
-use topology::NONE;
 
 const MIN_TOLERANCE: f64 = 1e-3;
 const NOISE_FACTOR: f64 = 5.0;
@@ -170,12 +169,7 @@ pub fn convert_soup(
                     comp: ci,
                 })
                 .collect();
-            let mut fl = vec![NONE; w.faces.len()];
-            for (i, fr) in fb.iter().enumerate() {
-                for &f in &fr.faces {
-                    fl[f as usize] = i as u32;
-                }
-            }
+            let fl = label_faces(&fb, w.faces.len());
             let orig_pos = positions(&w.vc);
             let ir = emit::assemble(&asm, &fb, &fl, &orig_pos)
                 .map_err(|e| ConvertError::InvalidInput(e.join("; ")))?;

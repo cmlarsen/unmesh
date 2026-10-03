@@ -175,9 +175,7 @@ pub fn build(
                         continue;
                     }
                     for &f2 in &vfaces[head as usize] {
-                        if flabel[f2 as usize] != region
-                            || !faces[f2 as usize].contains(&x)
-                        {
+                        if flabel[f2 as usize] != region || !faces[f2 as usize].contains(&x) {
                             continue;
                         }
                         if seen.insert(f2) {

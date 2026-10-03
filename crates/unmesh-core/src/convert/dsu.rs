@@ -20,4 +20,8 @@ impl Dsu {
             self.0[a.max(b) as usize] = a.min(b);
         }
     }
+
+    pub fn union_into(&mut self, child_root: u32, parent_root: u32) {
+        self.0[child_root as usize] = parent_root;
+    }
 }

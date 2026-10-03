@@ -78,10 +78,7 @@ pub fn run(
         }
         for k in 0..3 {
             let (u, v) = (f[k], f[(k + 1) % 3]);
-            edges.push((
-                ((u.min(v) as u64) << 32) | u.max(v) as u64,
-                i as u32,
-            ));
+            edges.push((((u.min(v) as u64) << 32) | u.max(v) as u64, i as u32));
         }
     }
     edges.sort_unstable();

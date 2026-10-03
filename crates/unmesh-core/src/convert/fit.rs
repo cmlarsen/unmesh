@@ -1,5 +1,6 @@
 use rustc_hash::FxHashMap;
 
+use super::dsu::Dsu;
 use super::linalg::{V3, dot, scale, sub, sym_eigen, unit};
 use super::segment::{TriInfo, segment};
 use super::surface::Surface;
@@ -192,19 +193,6 @@ pub fn build_regions(
         .collect()
 }
 
-struct Dsu(Vec<u32>);
-
-impl Dsu {
-    fn find(&mut self, mut x: u32) -> u32 {
-        while self.0[x as usize] != x {
-            let p = self.0[x as usize];
-            self.0[x as usize] = self.0[p as usize];
-            x = self.0[x as usize];
-        }
-        x
-    }
-}
-
 pub fn region_pairs(f_nbr: &[[u32; 3]], label: &[u32]) -> Vec<(u32, u32)> {
     let mut pairs = Vec::new();
     for (fi, nb) in f_nbr.iter().enumerate() {
@@ -267,7 +255,7 @@ pub fn merge_coplanar(
     snap_deg: f64,
 ) -> Vec<u32> {
     let n = regions.len();
-    let mut dsu = Dsu((0..n as u32).collect());
+    let mut dsu = Dsu::new(n);
     let mut comps: Vec<Comp> = regions
         .iter()
         .map(|r| {
@@ -313,7 +301,7 @@ pub fn merge_coplanar(
                 continue;
             }
             let area = cbig.area + csmall.area;
-            dsu.0[small as usize] = big;
+            dsu.union_into(small, big);
             comps[big as usize] = Comp {
                 verts,
                 n: nn,
@@ -397,20 +385,10 @@ pub fn finalize(
         .iter()
         .map(|r| r.area > 0.0 && r.max <= tol)
         .collect();
-    let mut fdsu: Vec<u32> = (0..regions.len() as u32).collect();
-    fn find(d: &mut [u32], mut x: u32) -> u32 {
-        while d[x as usize] != x {
-            d[x as usize] = d[d[x as usize] as usize];
-            x = d[x as usize];
-        }
-        x
-    }
+    let mut fdsu = Dsu::new(regions.len());
     for &(a, b) in pairs {
         if !is_analytic[a as usize] && !is_analytic[b as usize] {
-            let (ra, rb) = (find(&mut fdsu, a), find(&mut fdsu, b));
-            if ra != rb {
-                fdsu[ra.max(rb) as usize] = ra.min(rb);
-            }
+            fdsu.union(a, b);
         }
     }
     let mut finals: Vec<Final> = Vec::new();
@@ -431,7 +409,7 @@ pub fn finalize(
                 comp: comp_of[r.faces[0] as usize] as usize,
             });
         } else {
-            let g = find(&mut fdsu, ri as u32);
+            let g = fdsu.find(ri as u32);
             let idx = *group_of.entry(g).or_insert_with(|| {
                 finals.push(Final {
                     faces: Vec::new(),
@@ -461,11 +439,16 @@ pub fn finalize(
     }
     finals.sort_by_key(|f| f.faces[0]);
 
-    let mut flabel = vec![NONE; comp_of.len()];
+    let flabel = label_faces(&finals, comp_of.len());
+    (finals, flabel)
+}
+
+pub fn label_faces(finals: &[Final], n_faces: usize) -> Vec<u32> {
+    let mut flabel = vec![NONE; n_faces];
     for (i, fr) in finals.iter().enumerate() {
         for &f in &fr.faces {
             flabel[f as usize] = i as u32;
         }
     }
-    (finals, flabel)
+    flabel
 }
