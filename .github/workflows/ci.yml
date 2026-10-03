@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/smoke/cache
-          key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py') }}
+          key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py', 'harness/src/unmesh_harness/runner/execute.py', 'harness/src/unmesh_harness/degrade/__init__.py', 'harness/src/unmesh_harness/degrade/fillets.py', 'harness/src/unmesh_harness/degrade/retriangulate.py') }}
       - name: Smoke grid
         env:
           UV_LOCKED: "1"

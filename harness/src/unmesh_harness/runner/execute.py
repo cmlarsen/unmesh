@@ -18,21 +18,53 @@ import numpy as np
 
 _PARTS: dict[str, tuple[Any, np.ndarray]] = {}
 
+PAIR_PREPROCESS_SEED = 0
+PAIR_SNAP_DECIMALS = 9
+
+
+def canonicalise_pair_mesh(mesh):
+    mesh.tris = np.round(mesh.tris.astype(np.float64), PAIR_SNAP_DECIMALS) + 0.0
+    if mesh.vertices:
+        mesh.vertices = (
+            np.round(np.array(mesh.vertices, dtype=np.float64), PAIR_SNAP_DECIMALS) + 0.0
+        ).tolist()
+    for adj in mesh.adjacency:
+        adj.points = (
+            np.round(np.array(adj.points, dtype=np.float64), PAIR_SNAP_DECIMALS) + 0.0
+        ).tolist()
+    tris = mesh.tris.reshape(-1, 3, 3)
+    keys = [
+        min(tuple(t[[i, (i + 1) % 3, (i + 2) % 3]].reshape(-1)) for i in range(3)) for t in tris
+    ]
+    order = sorted(range(len(tris)), key=keys.__getitem__)
+    mesh.tris = tris[order]
+    mesh.face_id = mesh.face_id[np.array(order, dtype=np.int64)]
+    return mesh
+
 
 def _cache_paths(cache: Path, part: str) -> tuple[Path, Path]:
     return cache / f"{part}.labeled.npz", cache / f"{part}.truth.npy"
 
 
 def prep_part(task: dict[str, Any]) -> dict[str, Any]:
+    from ..degrade import apply_pair_preprocess
     from ..groundtruth import generate
     from ..labels import tessellate
 
     entry = task["entry"]
     labeled_path, truth_path = _cache_paths(Path(task["cache"]), entry["id"])
     gt = generate(entry["family"], entry["seed"])
-    labeled = tessellate(gt.solid, *task["input_deflection"])
+    pair_deflection = gt.parameters.get("pair_deflection")
+    if pair_deflection is not None:
+        labeled = tessellate(gt.solid, float(pair_deflection[0]), float(pair_deflection[1]))
+    else:
+        labeled = tessellate(gt.solid, *task["input_deflection"])
     if gt.face_tags is not None:
         labeled.metadata["face_tags"] = dict(gt.face_tags)
+    pair_preprocess = gt.parameters.get("pair_preprocess") or []
+    if pair_preprocess:
+        labeled = apply_pair_preprocess(labeled, pair_preprocess, PAIR_PREPROCESS_SEED)
+        labeled = canonicalise_pair_mesh(labeled)
     if task["need_truth"]:
         truth = tessellate(gt.solid, *task["truth_deflection"])
         np.save(truth_path, truth.tris)

@@ -1,3 +1,4 @@
+import json
 import math
 
 import numpy as np
@@ -339,3 +340,133 @@ def test_new_standard_entries_pinned():
     entries = [e for e in select(load_manifest(), "standard") if e["id"] in ids]
     assert len(entries) == 30
     assert all(e["strata"] == {"category": "ambiguity"} for e in entries)
+
+
+def test_ambiguity_grid_definition():
+    from unmesh_harness.runner import load_grid
+
+    grid = load_grid("ambiguity")
+    assert grid.corpus_grid == "standard"
+    assert [(c["operator"], float(c["severity"])) for c in grid.cells] == [
+        ("identity", 0.0),
+        ("float32", 1.0),
+    ]
+    assert all("floors" not in c for c in grid.cells)
+    standard_ids = {
+        e["id"]
+        for e in select(load_manifest(), "standard")
+        if e["strata"].get("category") == "ambiguity"
+    }
+    assert {e["id"] for e in grid.entries} == standard_ids
+
+
+def indistinguishable_pairs(grid):
+    params = {}
+    for entry in grid.entries:
+        p = generate(entry["family"], entry["seed"]).parameters
+        assert p.get("indistinguishable") is True, entry["id"]
+        assert p["pair_deflection"] and p["pair_preprocess"], entry["id"]
+        params[entry["id"]] = p
+    pairs: dict = {}
+    for entry in grid.entries:
+        key = frozenset({entry["id"], params[entry["id"]]["pair_id"]})
+        pairs.setdefault(key, []).append(entry["id"])
+    ordered = sorted(sorted(members) for members in pairs.values())
+    assert len(ordered) == 15
+    assert all(len(members) == 2 for members in ordered)
+    return ordered, params
+
+
+@pytest.fixture(scope="module")
+def prepared_pairs(tmp_path_factory):
+    from unmesh_harness.runner import load_grid
+    from unmesh_harness.runner.execute import prep_part
+
+    grid = load_grid("ambiguity")
+    by_id = {e["id"]: e for e in grid.entries}
+    ordered, params = indistinguishable_pairs(grid)
+    cache = tmp_path_factory.mktemp("pair-cache") / "cache"
+    cache.mkdir()
+    for first, second in ordered:
+        for part in (first, second):
+            prep_part(
+                {
+                    "entry": by_id[part],
+                    "cache": str(cache),
+                    "need_truth": grid.need_truth,
+                    "input_deflection": grid.input_deflection,
+                    "truth_deflection": grid.truth_deflection,
+                }
+            )
+    return grid, by_id, ordered, params, cache
+
+
+def assert_tris_bit_exact(a, b, context):
+    assert a.tris.shape == b.tris.shape, context
+    assert a.tris.tobytes() == b.tris.tobytes(), context
+
+
+def test_runner_prep_gives_pair_members_identical_triangles(prepared_pairs):
+    from unmesh_harness.labels import LabeledMesh
+    from unmesh_harness.runner.execute import _cache_paths
+
+    _, _, ordered, params, cache = prepared_pairs
+    for first, second in ordered:
+        a = LabeledMesh.load(_cache_paths(cache, first)[0])
+        b = LabeledMesh.load(_cache_paths(cache, second)[0])
+        assert_tris_bit_exact(a, b, (first, second))
+        for mesh, part in ((a, first), (b, second)):
+            expected = [op for op, _ in params[part]["pair_preprocess"]]
+            assert [h["op"] for h in mesh.metadata.get("history", [])] == expected, part
+
+
+PAIR_SEEDED_ROWS = [("noise_isotropic", 0.5), ("duplicate_facets", 0.5)]
+PAIR_SEEDED_SEEDS = [0, 1234]
+
+
+def test_runner_prep_pairs_stay_bit_exact_under_seeded_rows(prepared_pairs):
+    from unmesh_harness.labels import LabeledMesh
+    from unmesh_harness.runner.execute import _cache_paths
+
+    _, _, ordered, _, cache = prepared_pairs
+    for first, second in ordered:
+        a = LabeledMesh.load(_cache_paths(cache, first)[0])
+        b = LabeledMesh.load(_cache_paths(cache, second)[0])
+        assert_tris_bit_exact(a, b, (first, second))
+        for op, severity in PAIR_SEEDED_ROWS:
+            for seed in PAIR_SEEDED_SEEDS:
+                da = apply_degradation(op, a, severity, seed)
+                db = apply_degradation(op, b, severity, seed)
+                assert_tris_bit_exact(da, db, (first, second, op, severity, seed))
+                if op == "duplicate_facets":
+                    assert len(da.tris) > len(a.tris), (first, second, seed)
+                else:
+                    assert not np.array_equal(da.tris, a.tris), (first, second, seed)
+
+
+def test_ambiguity_grid_rejects_face_label_rows(tmp_path, monkeypatch):
+    from unmesh_harness.runner import grid as grid_module
+    from unmesh_harness.runner import load_grid
+
+    assert {
+        "coarsen",
+        "nonuniform_chords",
+        "slivers",
+        "refine",
+        "retriangulate",
+    } <= grid_module.FACE_LABEL_SENSITIVE_OPS
+    raw = json.loads(grid_module.find_grid("ambiguity").read_text())
+    raw["cells"] = [
+        *raw["cells"],
+        {
+            "operator": "coarsen",
+            "severity": 0.5,
+            "steps": [["coarsen", 0.5]],
+            "seeds": [0],
+        },
+    ]
+    path = tmp_path / "ambiguity.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    with pytest.raises(ValueError, match="coarsen"):
+        load_grid("ambiguity")

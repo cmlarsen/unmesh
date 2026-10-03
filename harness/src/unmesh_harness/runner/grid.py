@@ -12,6 +12,30 @@ from .converters import plugin_hash
 
 Key = tuple[str, str, float, int, str, str, str, str]
 
+FACE_LABEL_SENSITIVE_OPS = frozenset(
+    {
+        "coarsen",
+        "crack_seam",
+        "fillet_rows",
+        "hole_patch",
+        "noise_off_plane",
+        "nonuniform_chords",
+        "refine",
+        "retriangulate",
+        "slivers",
+        "t_junctions",
+    }
+)
+
+
+def ambiguity_rejected_ops(cells: list[dict[str, Any]]) -> list[str]:
+    rejected = []
+    for spec in cells:
+        for name, _ in spec.get("steps", []):
+            if name in FACE_LABEL_SENSITIVE_OPS and name not in rejected:
+                rejected.append(name)
+    return rejected
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -100,12 +124,30 @@ def find_grid(name: str) -> Path:
 
 def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
     raw = json.loads(find_grid(name).read_text())
+    if "ambiguity" in raw.get("categories", []):
+        rejected = ambiguity_rejected_ops(raw["cells"])
+        if rejected:
+            raise ValueError(
+                f"grid {name} selects ambiguity parts but rows {rejected} read face "
+                "labels: pair members share triangles but carry different truth faces, "
+                "so those rows diverge by design"
+            )
     entries = select(load_manifest(manifest_path), raw["corpus_grid"])
     if "categories" in raw:
         wanted = set(raw["categories"])
         entries = [e for e in entries if e["strata"].get("category", "planar") in wanted]
         if not entries:
             raise KeyError(f"grid {name} selects no parts for categories {sorted(wanted)}")
+    if raw.get("indistinguishable_only"):
+        from ..groundtruth import generate
+
+        entries = [
+            e
+            for e in entries
+            if generate(e["family"], e["seed"]).parameters.get("indistinguishable") is True
+        ]
+        if not entries:
+            raise KeyError(f"grid {name} selects no indistinguishable parts")
     return Grid(
         raw["name"],
         raw["corpus_grid"],
@@ -153,7 +195,11 @@ def prep_hash(grid: Grid, manifest_path: Path | None = None) -> str:
     digest.update(
         json.dumps([grid.input_deflection, grid.truth_deflection, grid.need_truth]).encode()
     )
-    files = sorted((base / "groundtruth").glob("*.py")) + [base / "labels.py", base / "corpus.py"]
+    files = (
+        sorted((base / "groundtruth").glob("*.py"))
+        + [base / "labels.py", base / "corpus.py", base / "runner" / "execute.py"]
+        + [base / "degrade" / name for name in ("__init__.py", "fillets.py", "retriangulate.py")]
+    )
     for f in files:
         digest.update(f.read_bytes())
     return digest.hexdigest()[:16]
