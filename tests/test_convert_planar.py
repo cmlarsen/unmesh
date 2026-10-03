@@ -20,6 +20,7 @@ def parts():
     return [
         tessellate(generate(e["family"], e["seed"]).solid, 0.01, 0.2)
         for e in select(load_manifest(), "smoke")
+        if e["strata"].get("category", "planar") == "planar"
     ]
 
 

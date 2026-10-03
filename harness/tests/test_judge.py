@@ -31,9 +31,12 @@ def test_oracle_scores_its_own_input(entry):
     result = judge(ir, mesh, tessellate(shape, *FINE), samples_per_mm2=2.0, seed=1)
     if planar_only(mesh):
         assert result.input.max < 1e-6
+        trim = FINE[0]
     else:
         assert result.input.max <= LIN + 1e-9
-    assert result.truth.ir_to_mesh.max <= FINE[0] + 1e-9
+        # Oracle trims inherit the input mesh's edge discretization.
+        trim = LIN + FINE[0]
+    assert result.truth.ir_to_mesh.max <= trim + 1e-9
     assert result.truth.mesh_to_ir.max <= LIN + 1e-9
 
 

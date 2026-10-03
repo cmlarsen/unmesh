@@ -340,7 +340,7 @@ def revolved_cone(rng: np.random.Generator):
     features = [
         {
             "type": "cylinder_section",
-            "center": [0.0, 0.0, h1 / 2],
+            "center": [0.0, 0.0, _r(h1 / 2)],
             "axis": [0, 0, 1],
             "radius": r1,
             "height": h1,
@@ -374,7 +374,7 @@ def revolved_dome(rng: np.random.Generator):
     features = [
         {
             "type": "cylinder_section",
-            "center": [0.0, 0.0, h / 2],
+            "center": [0.0, 0.0, _r(h / 2)],
             "axis": [0, 0, 1],
             "radius": r,
             "height": h,

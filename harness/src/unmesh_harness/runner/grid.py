@@ -101,6 +101,12 @@ def find_grid(name: str) -> Path:
 def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
     raw = json.loads(find_grid(name).read_text())
     entries = select(load_manifest(manifest_path), raw["corpus_grid"])
+    if "parts" in raw:
+        wanted = set(raw["parts"])
+        entries = [e for e in entries if e["id"] in wanted]
+        missing = wanted - {e["id"] for e in entries}
+        if missing:
+            raise KeyError(f"grid {name} lists unknown parts: {sorted(missing)}")
     return Grid(
         raw["name"],
         raw["corpus_grid"],
