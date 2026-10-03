@@ -5,7 +5,8 @@ use super::surface::Surface;
 pub const NOISE_FACTOR: f64 = 5.0;
 
 const ANCHOR_MIN_VERTS: usize = 50;
-const ANCHOR_MIN_AREA_FRAC: f64 = 0.25;
+const POOL_WINDOW_MIN_AREA_FRAC: f64 = 0.5;
+const POOL_GAP_RATIO: f64 = 10.0;
 
 pub fn snap_normals(
     v: &[V3],
@@ -102,54 +103,67 @@ pub fn snap_normals(
 }
 
 pub fn estimate_noise(v: &[V3], regions: &[Region], tol: f64) -> f64 {
-    pool_noise(v, regions, ANCHOR_MIN_VERTS, true)
-        .or_else(|| pool_noise(v, regions, 4, false))
+    pool_noise(v, regions, ANCHOR_MIN_VERTS)
+        .or_else(|| pool_noise(v, regions, 4))
         .unwrap_or(tol / NOISE_FACTOR)
 }
 
-fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize, anchor_min: bool) -> Option<f64> {
+fn region_stats(v: &[V3], regions: &[Region], min_verts: usize) -> Vec<(f64, f64, f64, f64)> {
     let mut stats: Vec<(f64, f64, f64, f64)> = Vec::new();
     for r in regions {
         let nv = r.verts.len();
-        if r.area <= 0.0 || nv < min_verts {
+        if r.area <= 0.0 || nv < min_verts || !r.surface.is_analytic() {
             continue;
         }
-        let Some((n, d)) = r.surface.as_plane() else {
-            continue;
-        };
         let ss: f64 = r
             .verts
             .iter()
-            .map(|&(vi, _)| (dot(n, v[vi as usize]) - d).powi(2))
+            .map(|&(vi, _)| r.surface.distance(v[vi as usize]).powi(2))
             .sum();
-        let dof = (nv - 3) as f64;
+        let dof = (nv - r.surface.param_count()) as f64;
         stats.push(((ss / dof).sqrt(), ss, dof, r.area));
     }
-    if stats.is_empty() {
-        return None;
-    }
     stats.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let anchor = if anchor_min {
-        stats[0].0
-    } else {
-        stats[stats.len() / 2].0
-    };
-    let total_area: f64 = stats.iter().map(|x| x.3).sum();
-    let mut keep_ss = 0.0;
-    let mut keep_dof = 0.0;
-    let mut keep_area = 0.0;
-    for x in &stats {
-        if x.0 > 10.0 * anchor + 1e-9 {
-            break;
-        }
-        keep_ss += x.1;
-        keep_dof += x.2;
-        keep_area += x.3;
-    }
-    if keep_area < ANCHOR_MIN_AREA_FRAC * total_area {
+    stats
+}
+
+fn pooled(stats: &[(f64, f64, f64, f64)]) -> f64 {
+    let ss: f64 = stats.iter().map(|x| x.1).sum();
+    let dof: f64 = stats.iter().map(|x| x.2).sum();
+    (ss / dof).sqrt()
+}
+
+fn pool_noise(v: &[V3], regions: &[Region], min_verts: usize) -> Option<f64> {
+    let all = region_stats(v, regions, 4);
+    if all.is_empty() {
         return None;
     }
-    Some((keep_ss / keep_dof).sqrt())
+    let sup = region_stats(v, regions, min_verts);
+    if sup.is_empty() {
+        return None;
+    }
+    let total_area: f64 = sup.iter().map(|x| x.3).sum();
+    let mut cut = sup.len();
+    let mut best = POOL_GAP_RATIO;
+    let mut below_area = 0.0;
+    for i in 0..sup.len() - 1 {
+        below_area += sup[i].3;
+        if below_area < POOL_WINDOW_MIN_AREA_FRAC * total_area {
+            continue;
+        }
+        let gap = sup[i + 1].0 / sup[i].0.max(f64::MIN_POSITIVE);
+        if gap > best {
+            best = gap;
+            cut = i + 1;
+        }
+    }
+    let kept_area: f64 = sup[..cut].iter().map(|x| x.3).sum();
+    let supported: f64 = all.iter().map(|x| x.3).sum();
+    if kept_area >= POOL_WINDOW_MIN_AREA_FRAC * supported {
+        Some(pooled(&sup[..cut]))
+    } else {
+        Some(pooled(&all))
+    }
 }
 
 #[cfg(test)]
@@ -207,5 +221,55 @@ mod tests {
     fn sub_snap_tilt_still_snaps() {
         let n = snap_tilt(0.2);
         assert_eq!(n, [0.0, 0.0, 1.0]);
+    }
+
+    fn pool_case(bases: &[f64], areas: &[f64]) -> f64 {
+        let mut v = Vec::new();
+        let mut regions = Vec::new();
+        for (k, (&b, &a)) in bases.iter().zip(areas).enumerate() {
+            let mut verts = Vec::new();
+            for i in 0..60 {
+                let z = b * (1.0 + 0.01 * ((i % 7) as f64 - 3.0));
+                v.push([i as f64 * 0.01, k as f64, z]);
+                verts.push((v.len() as u32 - 1, 1.0));
+            }
+            regions.push(Region {
+                faces: vec![0],
+                surface: Surface::Plane {
+                    normal: [0.0, 0.0, 1.0],
+                    offset: 0.0,
+                },
+                area: a,
+                width: 1.0,
+                verts,
+                rms: 0.0,
+                max: 0.0,
+            });
+        }
+        estimate_noise(&v, &regions, 1.0)
+    }
+
+    #[test]
+    fn pool_uses_quiet_population_below_a_decade_gap() {
+        let sigma = pool_case(&[1e-9, 2e-9, 1.5e-9, 1.0], &[1.0, 1.0, 1.0, 1.0]);
+        assert!(sigma < 1e-7, "sigma={sigma}");
+    }
+
+    #[test]
+    fn pool_keeps_a_gapless_continuum_whole() {
+        let sigma = pool_case(&[0.001, 0.003, 0.01, 0.03], &[1.0, 1.0, 1.0, 1.0]);
+        assert!(sigma > 0.012, "sigma={sigma}");
+    }
+
+    #[test]
+    fn pool_ignores_a_chance_tiny_sliver() {
+        let sigma = pool_case(&[1e-12, 0.005, 0.006, 0.007], &[0.01, 1.0, 1.0, 1.0]);
+        assert!((0.004..0.008).contains(&sigma), "sigma={sigma}");
+    }
+
+    #[test]
+    fn pool_falls_back_to_all_when_quiet_set_is_small() {
+        let sigma = pool_case(&[1e-9, 1.0], &[1.0, 3.0]);
+        assert!(sigma > 0.1, "sigma={sigma}");
     }
 }

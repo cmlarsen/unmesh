@@ -93,6 +93,7 @@ pub fn run(
     run_fenced(v, f, nbr, info, eligible, None, tol, strict)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_fenced(
     v: &[V3],
     f: &[[u32; 3]],
