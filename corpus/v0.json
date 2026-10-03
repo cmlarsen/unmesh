@@ -11,7 +11,11 @@
       "family": "boss_plate",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 222.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -38,7 +42,11 @@
       "family": "lshape_outline",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1273.853,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -65,7 +73,11 @@
       "family": "plate_pockets",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 174.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -92,7 +104,11 @@
       "family": "polygon_prism",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 533.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -119,7 +135,11 @@
       "family": "rotated_pockets",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 165.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -146,7 +166,11 @@
       "family": "square_slots",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 504.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -173,7 +197,11 @@
       "family": "stepped_block",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 289.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -200,7 +228,11 @@
       "family": "thin_walls",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 909.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -227,7 +259,11 @@
       "family": "through_cuts",
       "seed": 0,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 22,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 657.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -254,7 +290,11 @@
       "family": "boss_plate",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 424.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -281,7 +321,11 @@
       "family": "lshape_outline",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1123.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -308,7 +352,11 @@
       "family": "plate_pockets",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 21,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 400.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -335,7 +383,11 @@
       "family": "polygon_prism",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1952.828,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -362,7 +414,11 @@
       "family": "rotated_pockets",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 21,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 378.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -389,7 +445,11 @@
       "family": "square_slots",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 23,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 251.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -416,7 +476,11 @@
       "family": "stepped_block",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 107.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -443,7 +507,11 @@
       "family": "thin_walls",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 71.4,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "smoke",
@@ -470,7 +538,11 @@
       "family": "through_cuts",
       "seed": 1,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 18,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 526.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -497,7 +569,11 @@
       "family": "boss_plate",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 36,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 285.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -524,7 +600,11 @@
       "family": "lshape_outline",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1700.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -551,7 +631,11 @@
       "family": "plate_pockets",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 36,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 628.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -577,7 +661,11 @@
       "family": "polygon_prism",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 683.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -603,7 +691,11 @@
       "family": "rotated_pockets",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 36,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 535.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -629,7 +721,11 @@
       "family": "square_slots",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 564.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -655,7 +751,11 @@
       "family": "stepped_block",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 138.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -681,7 +781,11 @@
       "family": "thin_walls",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 2488.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -707,7 +811,11 @@
       "family": "through_cuts",
       "seed": 2,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 30,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 825.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -733,7 +841,11 @@
       "family": "boss_plate",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 669.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -759,7 +871,11 @@
       "family": "lshape_outline",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 688.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -785,7 +901,11 @@
       "family": "plate_pockets",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 800.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -811,7 +931,11 @@
       "family": "polygon_prism",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1050.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -837,7 +961,11 @@
       "family": "rotated_pockets",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 919.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -863,7 +991,11 @@
       "family": "square_slots",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 24,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 338.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -889,7 +1021,11 @@
       "family": "stepped_block",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 150.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -915,7 +1051,11 @@
       "family": "thin_walls",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 54.0,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -941,7 +1081,11 @@
       "family": "through_cuts",
       "seed": 3,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1721.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -967,7 +1111,11 @@
       "family": "boss_plate",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 339.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -993,7 +1141,11 @@
       "family": "lshape_outline",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1714.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1019,7 +1171,11 @@
       "family": "plate_pockets",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1467.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1045,7 +1201,11 @@
       "family": "polygon_prism",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 661.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1071,7 +1231,11 @@
       "family": "rotated_pockets",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1007.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1097,7 +1261,11 @@
       "family": "square_slots",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 23,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 682.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1123,7 +1291,11 @@
       "family": "stepped_block",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 356.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1149,7 +1321,11 @@
       "family": "thin_walls",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 70.1,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -1175,7 +1351,11 @@
       "family": "through_cuts",
       "seed": 4,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1966.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1201,7 +1381,11 @@
       "family": "boss_plate",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 979.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1227,7 +1411,11 @@
       "family": "lshape_outline",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 607.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1253,7 +1441,11 @@
       "family": "plate_pockets",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 804.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1279,7 +1471,11 @@
       "family": "polygon_prism",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1071.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1305,7 +1501,11 @@
       "family": "rotated_pockets",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 500.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1331,7 +1531,11 @@
       "family": "square_slots",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 19,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 918.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1357,7 +1561,11 @@
       "family": "stepped_block",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 128.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1383,7 +1591,11 @@
       "family": "thin_walls",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 50.4,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -1409,7 +1621,11 @@
       "family": "through_cuts",
       "seed": 5,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1321.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1435,7 +1651,11 @@
       "family": "boss_plate",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 781.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1461,7 +1681,11 @@
       "family": "lshape_outline",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1796.148,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1487,7 +1711,11 @@
       "family": "plate_pockets",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 310.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1513,7 +1741,11 @@
       "family": "polygon_prism",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1154.09,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1539,7 +1771,11 @@
       "family": "rotated_pockets",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 406.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1565,7 +1801,11 @@
       "family": "square_slots",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 20,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 320.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1591,7 +1831,11 @@
       "family": "stepped_block",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 302.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1617,7 +1861,11 @@
       "family": "thin_walls",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1540.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1643,7 +1891,11 @@
       "family": "through_cuts",
       "seed": 6,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 423.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1669,7 +1921,11 @@
       "family": "boss_plate",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 372.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1695,7 +1951,11 @@
       "family": "lshape_outline",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1100.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1721,7 +1981,11 @@
       "family": "plate_pockets",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 702.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1747,7 +2011,11 @@
       "family": "polygon_prism",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 950.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1773,7 +2041,11 @@
       "family": "rotated_pockets",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 679.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1799,7 +2071,11 @@
       "family": "square_slots",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 25,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 431.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1825,7 +2101,11 @@
       "family": "stepped_block",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 394.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1851,7 +2131,11 @@
       "family": "thin_walls",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 2456.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1877,7 +2161,11 @@
       "family": "through_cuts",
       "seed": 7,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1686.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1903,7 +2191,11 @@
       "family": "boss_plate",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 355.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1929,7 +2221,11 @@
       "family": "lshape_outline",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2239.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1955,7 +2251,11 @@
       "family": "plate_pockets",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 400.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -1981,7 +2281,11 @@
       "family": "polygon_prism",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 870.024,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2007,7 +2311,11 @@
       "family": "rotated_pockets",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 409.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2033,7 +2341,11 @@
       "family": "square_slots",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 19,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 535.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2059,7 +2371,11 @@
       "family": "stepped_block",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 286.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2085,7 +2401,11 @@
       "family": "thin_walls",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 51.9,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -2111,7 +2431,11 @@
       "family": "through_cuts",
       "seed": 8,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1046.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2137,7 +2461,11 @@
       "family": "boss_plate",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 795.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2163,7 +2491,11 @@
       "family": "lshape_outline",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1932.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2189,7 +2521,11 @@
       "family": "plate_pockets",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 36,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 410.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2215,7 +2551,11 @@
       "family": "polygon_prism",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1929.185,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2241,7 +2581,11 @@
       "family": "rotated_pockets",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 36,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 410.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2267,7 +2611,11 @@
       "family": "square_slots",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 19,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 277.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2293,7 +2641,11 @@
       "family": "stepped_block",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 123.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2319,7 +2671,11 @@
       "family": "thin_walls",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 2048.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2345,7 +2701,11 @@
       "family": "through_cuts",
       "seed": 9,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 30,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 792.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2371,7 +2731,11 @@
       "family": "boss_plate",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 802.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2397,7 +2761,11 @@
       "family": "lshape_outline",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1525.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2423,7 +2791,11 @@
       "family": "plate_pockets",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1238.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2449,7 +2821,11 @@
       "family": "polygon_prism",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 798.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2475,7 +2851,11 @@
       "family": "rotated_pockets",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 767.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2501,7 +2881,11 @@
       "family": "square_slots",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 19,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 488.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2527,7 +2911,11 @@
       "family": "stepped_block",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 907.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2553,7 +2941,11 @@
       "family": "thin_walls",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 64.5,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -2579,7 +2971,11 @@
       "family": "through_cuts",
       "seed": 10,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1759.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2605,7 +3001,11 @@
       "family": "boss_plate",
       "seed": 11,
       "strata": {
-        "category": "planar"
+        "category": "planar",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 318.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2631,7 +3031,11 @@
       "family": "through_bore",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1528.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2658,7 +3062,11 @@
       "family": "blind_bore",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 838.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2685,7 +3093,11 @@
       "family": "round_boss",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 299.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2712,7 +3124,11 @@
       "family": "counterbore",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 18,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 137.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2739,7 +3155,11 @@
       "family": "countersink",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 376.835,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2766,7 +3186,11 @@
       "family": "round_slot_through",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 657.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2793,7 +3217,11 @@
       "family": "round_slot_blind",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 11,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 437.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2820,7 +3248,11 @@
       "family": "revolved_cone",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 904.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2847,7 +3279,11 @@
       "family": "revolved_dome",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 904.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2874,7 +3310,11 @@
       "family": "revolved_torus",
       "seed": 0,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2044.548,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -2901,7 +3341,11 @@
       "family": "through_bore",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 801.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2927,7 +3371,11 @@
       "family": "blind_bore",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 334.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2953,7 +3401,11 @@
       "family": "round_boss",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 307.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -2979,7 +3431,11 @@
       "family": "counterbore",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 15,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 269.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3005,7 +3461,11 @@
       "family": "countersink",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 365.987,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3031,7 +3491,11 @@
       "family": "round_slot_through",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 22,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 801.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3057,7 +3521,11 @@
       "family": "round_slot_blind",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 294.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3083,7 +3551,11 @@
       "family": "revolved_cone",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1925.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3109,7 +3581,11 @@
       "family": "revolved_dome",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1925.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3135,7 +3611,11 @@
       "family": "revolved_torus",
       "seed": 1,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 4774.593,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3161,7 +3641,11 @@
       "family": "through_bore",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1025.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3187,7 +3671,11 @@
       "family": "blind_bore",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 411.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3213,7 +3701,11 @@
       "family": "round_boss",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 608.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3239,7 +3731,11 @@
       "family": "counterbore",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 24,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 453.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3265,7 +3761,11 @@
       "family": "countersink",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 18,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 536.849,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3291,7 +3791,11 @@
       "family": "round_slot_through",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1022.588,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3317,7 +3821,11 @@
       "family": "round_slot_blind",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 16,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1011.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3343,7 +3851,11 @@
       "family": "revolved_cone",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 848.239,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3369,7 +3881,11 @@
       "family": "revolved_dome",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 947.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3395,7 +3911,11 @@
       "family": "revolved_torus",
       "seed": 2,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2161.416,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3421,7 +3941,11 @@
       "family": "through_bore",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 502.027,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3447,7 +3971,11 @@
       "family": "blind_bore",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 502.027,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3473,7 +4001,11 @@
       "family": "round_boss",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 513.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3499,7 +4031,11 @@
       "family": "counterbore",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 9,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 546.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3525,7 +4061,11 @@
       "family": "countersink",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 493.485,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3551,7 +4091,11 @@
       "family": "round_slot_through",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 22,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 579.938,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3577,7 +4121,11 @@
       "family": "round_slot_blind",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 579.938,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3603,7 +4151,11 @@
       "family": "revolved_cone",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 855.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3629,7 +4181,11 @@
       "family": "revolved_dome",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 855.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3655,7 +4211,11 @@
       "family": "revolved_torus",
       "seed": 3,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1909.46,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3681,7 +4241,11 @@
       "family": "through_bore",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1762.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3707,7 +4271,11 @@
       "family": "blind_bore",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1285.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3733,7 +4301,11 @@
       "family": "round_boss",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 339.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3759,7 +4331,11 @@
       "family": "counterbore",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 9,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 925.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3785,7 +4361,11 @@
       "family": "countersink",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 780.536,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3811,7 +4391,11 @@
       "family": "round_slot_through",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 22,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 854.199,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3837,7 +4421,11 @@
       "family": "round_slot_blind",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 854.199,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3863,7 +4451,11 @@
       "family": "revolved_cone",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1267.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3889,7 +4481,11 @@
       "family": "revolved_dome",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1267.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3915,7 +4511,11 @@
       "family": "revolved_torus",
       "seed": 4,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 3031.009,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3941,7 +4541,11 @@
       "family": "through_bore",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1290.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3967,7 +4571,11 @@
       "family": "blind_bore",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 357.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -3993,7 +4601,11 @@
       "family": "round_boss",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 721.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4019,7 +4631,11 @@
       "family": "counterbore",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 9,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 522.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4045,7 +4661,11 @@
       "family": "countersink",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 465.677,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4071,7 +4691,11 @@
       "family": "round_slot_through",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 18,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1113.066,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4097,7 +4721,11 @@
       "family": "round_slot_blind",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 21,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 551.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4123,7 +4751,11 @@
       "family": "revolved_cone",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1011.179,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4149,7 +4781,11 @@
       "family": "revolved_dome",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1711.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4175,7 +4811,11 @@
       "family": "revolved_torus",
       "seed": 5,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 4242.407,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4201,7 +4841,11 @@
       "family": "through_bore",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 363.168,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4227,7 +4871,11 @@
       "family": "blind_bore",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 14,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 310.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4253,7 +4901,11 @@
       "family": "round_boss",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 241.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4279,7 +4931,11 @@
       "family": "counterbore",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 240.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4305,7 +4961,11 @@
       "family": "countersink",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 349.984,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4331,7 +4991,11 @@
       "family": "round_slot_through",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 18,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 612.925,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4357,7 +5021,11 @@
       "family": "round_slot_blind",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 21,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 340.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4383,7 +5051,11 @@
       "family": "revolved_cone",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1014.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4409,7 +5081,11 @@
       "family": "revolved_dome",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1014.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4435,7 +5111,11 @@
       "family": "revolved_torus",
       "seed": 6,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2344.256,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4461,7 +5141,11 @@
       "family": "through_bore",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 806.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4487,7 +5171,11 @@
       "family": "blind_bore",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 555.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4513,7 +5201,11 @@
       "family": "round_boss",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 442.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4539,7 +5231,11 @@
       "family": "counterbore",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 12,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 490.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4565,7 +5261,11 @@
       "family": "countersink",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 559.323,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4591,7 +5291,11 @@
       "family": "round_slot_through",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 22,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 845.717,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4617,7 +5321,11 @@
       "family": "round_slot_blind",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 845.717,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4643,7 +5351,11 @@
       "family": "revolved_cone",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1117.682,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4669,7 +5381,11 @@
       "family": "revolved_dome",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1845.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4695,7 +5411,11 @@
       "family": "revolved_torus",
       "seed": 7,
       "strata": {
-        "category": "curved"
+        "category": "curved",
+        "face_count": 1,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 4606.831,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -4721,7 +5441,11 @@
       "family": "planar_chamfer",
       "seed": 0,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 713.085,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4748,7 +5472,11 @@
       "family": "straight_fillet",
       "seed": 0,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 836.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4775,7 +5503,11 @@
       "family": "circular_fillet",
       "seed": 0,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 792.153,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4802,7 +5534,11 @@
       "family": "bore_chamfer",
       "seed": 0,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 402.202,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4829,7 +5565,11 @@
       "family": "corner_fillet",
       "seed": 0,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1011.907,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4856,7 +5596,11 @@
       "family": "planar_chamfer",
       "seed": 1,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 713.605,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4883,7 +5627,11 @@
       "family": "straight_fillet",
       "seed": 1,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 819.327,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4910,7 +5658,11 @@
       "family": "circular_fillet",
       "seed": 1,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 752.411,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4937,7 +5689,11 @@
       "family": "bore_chamfer",
       "seed": 1,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1345.624,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4964,7 +5720,11 @@
       "family": "corner_fillet",
       "seed": 1,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 819.327,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -4991,7 +5751,11 @@
       "family": "planar_chamfer",
       "seed": 2,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 443.232,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5017,7 +5781,11 @@
       "family": "straight_fillet",
       "seed": 2,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 434.168,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5043,7 +5811,11 @@
       "family": "circular_fillet",
       "seed": 2,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 434.168,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5069,7 +5841,11 @@
       "family": "bore_chamfer",
       "seed": 2,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 441.942,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5095,7 +5871,11 @@
       "family": "corner_fillet",
       "seed": 2,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 434.168,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5121,7 +5901,11 @@
       "family": "planar_chamfer",
       "seed": 3,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 179.96,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5147,7 +5931,11 @@
       "family": "straight_fillet",
       "seed": 3,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 163.206,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5173,7 +5961,11 @@
       "family": "circular_fillet",
       "seed": 3,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 163.206,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5199,7 +5991,11 @@
       "family": "bore_chamfer",
       "seed": 3,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 356.523,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5225,7 +6021,11 @@
       "family": "corner_fillet",
       "seed": 3,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 163.206,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5251,7 +6051,11 @@
       "family": "planar_chamfer",
       "seed": 4,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1322.248,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5277,7 +6081,11 @@
       "family": "straight_fillet",
       "seed": 4,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 977.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5303,7 +6111,11 @@
       "family": "circular_fillet",
       "seed": 4,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1483.146,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5329,7 +6141,11 @@
       "family": "bore_chamfer",
       "seed": 4,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 622.395,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5355,7 +6171,11 @@
       "family": "corner_fillet",
       "seed": 4,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1483.146,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5381,7 +6201,11 @@
       "family": "planar_chamfer",
       "seed": 5,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1170.347,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5407,7 +6231,11 @@
       "family": "straight_fillet",
       "seed": 5,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1270.617,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5433,7 +6261,11 @@
       "family": "circular_fillet",
       "seed": 5,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1270.617,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5459,7 +6291,11 @@
       "family": "bore_chamfer",
       "seed": 5,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1019.224,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5485,7 +6321,11 @@
       "family": "corner_fillet",
       "seed": 5,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1270.617,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5511,7 +6351,11 @@
       "family": "planar_chamfer",
       "seed": 6,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 863.601,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5537,7 +6381,11 @@
       "family": "straight_fillet",
       "seed": 6,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 859.854,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5563,7 +6411,11 @@
       "family": "circular_fillet",
       "seed": 6,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 859.854,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5589,7 +6441,11 @@
       "family": "bore_chamfer",
       "seed": 6,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 504.026,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5615,7 +6471,11 @@
       "family": "corner_fillet",
       "seed": 6,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 859.854,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5641,7 +6501,11 @@
       "family": "planar_chamfer",
       "seed": 7,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 915.562,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5667,7 +6531,11 @@
       "family": "straight_fillet",
       "seed": 7,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 993.686,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5693,7 +6561,11 @@
       "family": "circular_fillet",
       "seed": 7,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 993.686,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5719,7 +6591,11 @@
       "family": "bore_chamfer",
       "seed": 7,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1057.549,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5745,7 +6621,11 @@
       "family": "corner_fillet",
       "seed": 7,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 993.686,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5771,7 +6651,11 @@
       "family": "planar_chamfer",
       "seed": 8,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 589.59,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5797,7 +6681,11 @@
       "family": "straight_fillet",
       "seed": 8,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 534.699,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5823,7 +6711,11 @@
       "family": "circular_fillet",
       "seed": 8,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 534.699,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5849,7 +6741,11 @@
       "family": "bore_chamfer",
       "seed": 8,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 347.331,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5875,7 +6771,11 @@
       "family": "corner_fillet",
       "seed": 8,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 534.699,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5901,7 +6801,11 @@
       "family": "planar_chamfer",
       "seed": 9,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1243.093,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5927,7 +6831,11 @@
       "family": "straight_fillet",
       "seed": 9,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1370.991,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5953,7 +6861,11 @@
       "family": "circular_fillet",
       "seed": 9,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1355.44,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -5979,7 +6891,11 @@
       "family": "bore_chamfer",
       "seed": 9,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 425.82,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6005,7 +6921,11 @@
       "family": "corner_fillet",
       "seed": 9,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1370.991,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6031,7 +6951,11 @@
       "family": "planar_chamfer",
       "seed": 10,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1219.537,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6057,7 +6981,11 @@
       "family": "straight_fillet",
       "seed": 10,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1128.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6083,7 +7011,11 @@
       "family": "circular_fillet",
       "seed": 10,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1494.77,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6109,7 +7041,11 @@
       "family": "bore_chamfer",
       "seed": 10,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 316.077,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6135,7 +7071,11 @@
       "family": "corner_fillet",
       "seed": 10,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1503.095,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6161,7 +7101,11 @@
       "family": "planar_chamfer",
       "seed": 11,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 252.879,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6187,7 +7131,11 @@
       "family": "straight_fillet",
       "seed": 11,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 229.336,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6213,7 +7161,11 @@
       "family": "circular_fillet",
       "seed": 11,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 229.336,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6239,7 +7191,11 @@
       "family": "bore_chamfer",
       "seed": 11,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 467.256,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6265,7 +7221,11 @@
       "family": "corner_fillet",
       "seed": 11,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 229.336,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6291,7 +7251,11 @@
       "family": "planar_chamfer",
       "seed": 12,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 460.379,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6317,7 +7281,11 @@
       "family": "straight_fillet",
       "seed": 12,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 417.518,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6343,7 +7311,11 @@
       "family": "circular_fillet",
       "seed": 12,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 417.518,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6369,7 +7341,11 @@
       "family": "bore_chamfer",
       "seed": 12,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 292.459,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6395,7 +7371,11 @@
       "family": "corner_fillet",
       "seed": 12,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 417.518,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6421,7 +7401,11 @@
       "family": "planar_chamfer",
       "seed": 13,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1247.25,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6447,7 +7431,11 @@
       "family": "straight_fillet",
       "seed": 13,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1362.666,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6473,7 +7461,11 @@
       "family": "circular_fillet",
       "seed": 13,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1362.666,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6499,7 +7491,11 @@
       "family": "bore_chamfer",
       "seed": 13,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1041.993,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6525,7 +7521,11 @@
       "family": "corner_fillet",
       "seed": 13,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1362.666,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6551,7 +7551,11 @@
       "family": "planar_chamfer",
       "seed": 14,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1304.407,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6577,7 +7581,11 @@
       "family": "straight_fillet",
       "seed": 14,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1310.672,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6603,7 +7611,11 @@
       "family": "circular_fillet",
       "seed": 14,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1310.672,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6629,7 +7641,11 @@
       "family": "bore_chamfer",
       "seed": 14,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 528.492,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6655,7 +7671,11 @@
       "family": "corner_fillet",
       "seed": 14,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1310.672,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6681,7 +7701,11 @@
       "family": "planar_chamfer",
       "seed": 15,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 976.184,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6707,7 +7731,11 @@
       "family": "straight_fillet",
       "seed": 15,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 898.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6733,7 +7761,11 @@
       "family": "circular_fillet",
       "seed": 15,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1080.708,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6759,7 +7791,11 @@
       "family": "bore_chamfer",
       "seed": 15,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 893.642,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6785,7 +7821,11 @@
       "family": "corner_fillet",
       "seed": 15,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1097.83,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6811,7 +7851,11 @@
       "family": "planar_chamfer",
       "seed": 16,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 704.771,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6837,7 +7881,11 @@
       "family": "straight_fillet",
       "seed": 16,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 904.15,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6863,7 +7911,11 @@
       "family": "circular_fillet",
       "seed": 16,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 761.993,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6889,7 +7941,11 @@
       "family": "bore_chamfer",
       "seed": 16,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 625.224,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6915,7 +7971,11 @@
       "family": "corner_fillet",
       "seed": 16,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 904.15,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6941,7 +8001,11 @@
       "family": "planar_chamfer",
       "seed": 17,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1074.218,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6967,7 +8031,11 @@
       "family": "straight_fillet",
       "seed": 17,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1332.349,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -6993,7 +8061,11 @@
       "family": "circular_fillet",
       "seed": 17,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1318.055,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7019,7 +8091,11 @@
       "family": "bore_chamfer",
       "seed": 17,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 251.447,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7045,7 +8121,11 @@
       "family": "corner_fillet",
       "seed": 17,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1332.349,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7071,7 +8151,11 @@
       "family": "planar_chamfer",
       "seed": 18,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 608.816,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7097,7 +8181,11 @@
       "family": "straight_fillet",
       "seed": 18,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 646.069,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7123,7 +8211,11 @@
       "family": "circular_fillet",
       "seed": 18,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 646.069,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7149,7 +8241,11 @@
       "family": "bore_chamfer",
       "seed": 18,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 331.209,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7175,7 +8271,11 @@
       "family": "corner_fillet",
       "seed": 18,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 646.069,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7201,7 +8301,11 @@
       "family": "planar_chamfer",
       "seed": 19,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 625.097,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7227,7 +8331,11 @@
       "family": "straight_fillet",
       "seed": 19,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 678.584,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7253,7 +8361,11 @@
       "family": "circular_fillet",
       "seed": 19,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 678.584,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7279,7 +8391,11 @@
       "family": "bore_chamfer",
       "seed": 19,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 328.239,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7305,7 +8421,11 @@
       "family": "corner_fillet",
       "seed": 19,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 678.584,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7331,7 +8451,11 @@
       "family": "planar_chamfer",
       "seed": 20,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 510.089,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7357,7 +8481,11 @@
       "family": "straight_fillet",
       "seed": 20,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 462.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7383,7 +8511,11 @@
       "family": "circular_fillet",
       "seed": 20,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 462.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7409,7 +8541,11 @@
       "family": "bore_chamfer",
       "seed": 20,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 263.751,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7435,7 +8571,11 @@
       "family": "corner_fillet",
       "seed": 20,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 462.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7461,7 +8601,11 @@
       "family": "planar_chamfer",
       "seed": 21,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1103.836,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7487,7 +8631,11 @@
       "family": "straight_fillet",
       "seed": 21,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 996.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7513,7 +8661,11 @@
       "family": "circular_fillet",
       "seed": 21,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1233.861,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7539,7 +8691,11 @@
       "family": "bore_chamfer",
       "seed": 21,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 718.986,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7565,7 +8721,11 @@
       "family": "corner_fillet",
       "seed": 21,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1233.861,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7591,7 +8751,11 @@
       "family": "planar_chamfer",
       "seed": 22,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 627.002,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7617,7 +8781,11 @@
       "family": "straight_fillet",
       "seed": 22,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 595.332,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7643,7 +8811,11 @@
       "family": "circular_fillet",
       "seed": 22,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 546.009,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7669,7 +8841,11 @@
       "family": "bore_chamfer",
       "seed": 22,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 249.75,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7695,7 +8871,11 @@
       "family": "corner_fillet",
       "seed": 22,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 595.332,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7721,7 +8901,11 @@
       "family": "planar_chamfer",
       "seed": 23,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 856.846,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7747,7 +8931,11 @@
       "family": "straight_fillet",
       "seed": 23,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 10,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1050.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7773,7 +8961,11 @@
       "family": "circular_fillet",
       "seed": 23,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 920.801,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7799,7 +8991,11 @@
       "family": "bore_chamfer",
       "seed": 23,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 4,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 770.605,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7825,7 +9021,11 @@
       "family": "corner_fillet",
       "seed": 23,
       "strata": {
-        "category": "chamfer_fillet"
+        "category": "chamfer_fillet",
+        "face_count": 26,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 1099.715,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -7851,7 +9051,11 @@
       "family": "ngon_prism",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 30,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 405.177,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -7878,7 +9082,11 @@
       "family": "coarse_cylinder_prism",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 581.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -7905,7 +9113,11 @@
       "family": "one_segment_fillet",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 175.301,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -7932,7 +9144,11 @@
       "family": "chamfer_same_chord",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 157.826,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -7959,7 +9175,11 @@
       "family": "two_segment_fillet",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 175.301,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -7986,7 +9206,11 @@
       "family": "two_planes",
       "seed": 0,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 85.415,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "smoke",
@@ -8013,7 +9237,11 @@
       "family": "ngon_prism",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 20,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 788.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8039,7 +9267,11 @@
       "family": "coarse_cylinder_prism",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 788.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8065,7 +9297,11 @@
       "family": "one_segment_fillet",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1200.245,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8091,7 +9327,11 @@
       "family": "chamfer_same_chord",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1080.601,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8117,7 +9357,11 @@
       "family": "two_segment_fillet",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 1200.245,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8143,7 +9387,11 @@
       "family": "two_planes",
       "seed": 1,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 584.817,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8169,7 +9417,11 @@
       "family": "ngon_prism",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 30,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 424.457,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8195,7 +9447,11 @@
       "family": "coarse_cylinder_prism",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2128.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8221,7 +9477,11 @@
       "family": "one_segment_fillet",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 258.082,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8247,7 +9507,11 @@
       "family": "chamfer_same_chord",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 232.355,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8273,7 +9537,11 @@
       "family": "two_segment_fillet",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 258.082,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8299,7 +9567,11 @@
       "family": "two_planes",
       "seed": 2,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 125.75,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8325,7 +9597,11 @@
       "family": "ngon_prism",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 29,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 397.131,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8351,7 +9627,11 @@
       "family": "coarse_cylinder_prism",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2102.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8377,7 +9657,11 @@
       "family": "one_segment_fillet",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 797.179,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8403,7 +9687,11 @@
       "family": "chamfer_same_chord",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 717.713,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8429,7 +9717,11 @@
       "family": "two_segment_fillet",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 797.179,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8455,7 +9747,11 @@
       "family": "two_planes",
       "seed": 3,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 388.424,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8481,7 +9777,11 @@
       "family": "ngon_prism",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 27,
+        "face_bucket": "11-50",
+        "min_feature_ratio": 635.189,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8507,7 +9807,11 @@
       "family": "coarse_cylinder_prism",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 3,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 2452.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8533,7 +9837,11 @@
       "family": "one_segment_fillet",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 245.987,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8559,7 +9867,11 @@
       "family": "chamfer_same_chord",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 221.466,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8585,7 +9897,11 @@
       "family": "two_segment_fillet",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 7,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 245.987,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8611,7 +9927,11 @@
       "family": "two_planes",
       "seed": 4,
       "strata": {
-        "category": "ambiguity"
+        "category": "ambiguity",
+        "face_count": 8,
+        "face_bucket": "0-10",
+        "min_feature_ratio": 119.856,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8637,7 +9957,11 @@
       "family": "complex_mixed",
       "seed": 0,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 251.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -8664,7 +9988,11 @@
       "family": "complex_thin",
       "seed": 0,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 91,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 28.5,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "smoke",
@@ -8691,7 +10019,11 @@
       "family": "complex_void",
       "seed": 0,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 201.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "smoke",
@@ -8718,7 +10050,11 @@
       "family": "complex_assembly",
       "seed": 0,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 225,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.7,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "smoke",
@@ -8745,7 +10081,11 @@
       "family": "complex_mixed",
       "seed": 1,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 231.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8771,7 +10111,11 @@
       "family": "complex_thin",
       "seed": 1,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 136,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 26.8,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -8797,7 +10141,11 @@
       "family": "complex_void",
       "seed": 1,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 61,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 192.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8823,7 +10171,11 @@
       "family": "complex_assembly",
       "seed": 1,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 204,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 26.6,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -8849,7 +10201,11 @@
       "family": "complex_mixed",
       "seed": 2,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 260.4,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8875,7 +10231,11 @@
       "family": "complex_thin",
       "seed": 2,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 89,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 32.6,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -8901,7 +10261,11 @@
       "family": "complex_void",
       "seed": 2,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 241.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8927,7 +10291,11 @@
       "family": "complex_assembly",
       "seed": 2,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 213,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 17.7,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -8953,7 +10321,11 @@
       "family": "complex_mixed",
       "seed": 3,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 323.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -8979,7 +10351,11 @@
       "family": "complex_thin",
       "seed": 3,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 120,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 28.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9005,7 +10381,11 @@
       "family": "complex_void",
       "seed": 3,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 200.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9031,7 +10411,11 @@
       "family": "complex_assembly",
       "seed": 3,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 200,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.9,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9057,7 +10441,11 @@
       "family": "complex_mixed",
       "seed": 4,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 238.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9083,7 +10471,11 @@
       "family": "complex_thin",
       "seed": 4,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 110,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 31.6,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9109,7 +10501,11 @@
       "family": "complex_void",
       "seed": 4,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 287.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9135,7 +10531,11 @@
       "family": "complex_assembly",
       "seed": 4,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 221,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.4,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9161,7 +10561,11 @@
       "family": "complex_mixed",
       "seed": 5,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 174.044,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9187,7 +10591,11 @@
       "family": "complex_thin",
       "seed": 5,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 98,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 17.7,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9213,7 +10621,11 @@
       "family": "complex_void",
       "seed": 5,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 212.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9239,7 +10651,11 @@
       "family": "complex_assembly",
       "seed": 5,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 206,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.1,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9265,7 +10681,11 @@
       "family": "complex_mixed",
       "seed": 6,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 235.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9291,7 +10711,11 @@
       "family": "complex_thin",
       "seed": 6,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 105,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 20.5,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9317,7 +10741,11 @@
       "family": "complex_void",
       "seed": 6,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 171.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9343,7 +10771,11 @@
       "family": "complex_assembly",
       "seed": 6,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 225,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 20.3,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9369,7 +10801,11 @@
       "family": "complex_mixed",
       "seed": 7,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 384.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9395,7 +10831,11 @@
       "family": "complex_thin",
       "seed": 7,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 107,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 22.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9421,7 +10861,11 @@
       "family": "complex_void",
       "seed": 7,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 207.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9447,7 +10891,11 @@
       "family": "complex_assembly",
       "seed": 7,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 216,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9473,7 +10921,11 @@
       "family": "complex_mixed",
       "seed": 8,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 281.6,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9499,7 +10951,11 @@
       "family": "complex_thin",
       "seed": 8,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 123,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 21.8,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9525,7 +10981,11 @@
       "family": "complex_void",
       "seed": 8,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 251.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9551,7 +11011,11 @@
       "family": "complex_assembly",
       "seed": 8,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 211,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 19.1,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9577,7 +11041,11 @@
       "family": "complex_mixed",
       "seed": 9,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 271.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9603,7 +11071,11 @@
       "family": "complex_thin",
       "seed": 9,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 120,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 17.9,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9629,7 +11101,11 @@
       "family": "complex_void",
       "seed": 9,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 319.186,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9655,7 +11131,11 @@
       "family": "complex_assembly",
       "seed": 9,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 218,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 20.6,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9681,7 +11161,11 @@
       "family": "complex_mixed",
       "seed": 10,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 282.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9707,7 +11191,11 @@
       "family": "complex_thin",
       "seed": 10,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 101,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 30.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9733,7 +11221,11 @@
       "family": "complex_void",
       "seed": 10,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 335.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9759,7 +11251,11 @@
       "family": "complex_assembly",
       "seed": 10,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 199,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 17.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9785,7 +11281,11 @@
       "family": "complex_mixed",
       "seed": 11,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 277.3,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9811,7 +11311,11 @@
       "family": "complex_thin",
       "seed": 11,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 100,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 24.2,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9837,7 +11341,11 @@
       "family": "complex_void",
       "seed": 11,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 185.5,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9863,7 +11371,11 @@
       "family": "complex_assembly",
       "seed": 11,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 228,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 17.7,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9889,7 +11401,11 @@
       "family": "complex_mixed",
       "seed": 12,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 221.2,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9915,7 +11431,11 @@
       "family": "complex_thin",
       "seed": 12,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 98,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.1,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9941,7 +11461,11 @@
       "family": "complex_void",
       "seed": 12,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 300.0,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -9967,7 +11491,11 @@
       "family": "complex_assembly",
       "seed": 12,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 232,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.3,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -9993,7 +11521,11 @@
       "family": "complex_mixed",
       "seed": 13,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 59,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 360.7,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -10019,7 +11551,11 @@
       "family": "complex_thin",
       "seed": 13,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 104,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 20.3,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -10045,7 +11581,11 @@
       "family": "complex_void",
       "seed": 13,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 57,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 206.1,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -10071,7 +11611,11 @@
       "family": "complex_assembly",
       "seed": 13,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 220,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 22.9,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -10097,7 +11641,11 @@
       "family": "complex_mixed",
       "seed": 14,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 63,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 303.8,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -10123,7 +11671,11 @@
       "family": "complex_thin",
       "seed": 14,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 100,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 25.3,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
@@ -10149,7 +11701,11 @@
       "family": "complex_void",
       "seed": 14,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 61,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 220.9,
+        "feature_bucket": "100+"
       },
       "grids": [
         "standard"
@@ -10175,7 +11731,11 @@
       "family": "complex_assembly",
       "seed": 14,
       "strata": {
-        "category": "complex"
+        "category": "complex",
+        "face_count": 202,
+        "face_bucket": "51-300",
+        "min_feature_ratio": 15.7,
+        "feature_bucket": "10-100"
       },
       "grids": [
         "standard"

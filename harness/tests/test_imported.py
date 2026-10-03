@@ -16,6 +16,7 @@ from unmesh_harness.imported import (
 )
 from unmesh_harness.labels import tessellate
 from unmesh_harness.oracle import build_oracle_ir
+from unmesh_harness.strata import compute_strata
 
 
 def _imported_entries(grid="standard"):
@@ -65,6 +66,7 @@ def test_imported_shapes_valid_and_match_fingerprint():
         )
         assert len(shape.faces()) == entry["fingerprint"]["face_count"], entry["id"]
         assert shape.volume == pytest.approx(entry["fingerprint"]["volume"], rel=1e-9)
+        assert entry["strata"] == compute_strata(shape, "imported"), entry["id"]
         if (i + 1) % 50 == 0:
             print(f"checked {i + 1}/{len(entries)}")
 

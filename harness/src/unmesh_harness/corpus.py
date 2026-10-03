@@ -319,6 +319,23 @@ def sync_imported(manifest: dict[str, Any], cache_dir=None) -> dict[str, Any]:
     return manifest
 
 
+def sync_strata(manifest: dict[str, Any]) -> dict[str, Any]:
+    from .strata import compute_strata
+
+    want = ("face_count", "face_bucket", "min_feature_ratio", "feature_bucket")
+    missing = [
+        entry
+        for entry in manifest["entries"]
+        if entry.get("tier") == "generated" and any(k not in entry.get("strata", {}) for k in want)
+    ]
+    for i, entry in enumerate(missing):
+        gt = generate(entry["family"], entry["seed"])
+        entry["strata"] = compute_strata(gt.solid, entry["strata"].get("category", "planar"))
+        if (i + 1) % 25 == 0 or i + 1 == len(missing):
+            print(f"strata {i + 1}/{len(missing)}", flush=True)
+    return manifest
+
+
 def empty_manifest() -> dict[str, Any]:
     return {
         "version": MANIFEST_VERSION,

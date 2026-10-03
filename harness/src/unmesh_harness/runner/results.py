@@ -100,12 +100,28 @@ def _strata_key(record: dict[str, Any]) -> str:
     return str(strata) if strata is not None else "?"
 
 
+def _bucket_key(field: str):
+    def key(record: dict[str, Any]) -> str:
+        strata = record.get("strata")
+        if isinstance(strata, dict) and strata.get(field) is not None:
+            return str(strata[field])
+        return "?"
+
+    key.__name__ = field
+    return key
+
+
 def _breakdown(records: list[dict[str, Any]]) -> list[str]:
     ok = [r for r in records if r.get("status") == "ok"]
     if not ok:
         return []
     lines = []
-    for title, key in (("family", lambda r: str(r.get("family", "?"))), ("strata", _strata_key)):
+    for title, key in (
+        ("family", lambda r: str(r.get("family", "?"))),
+        ("strata", _strata_key),
+        ("face_bucket", _bucket_key("face_bucket")),
+        ("feature_bucket", _bucket_key("feature_bucket")),
+    ):
         groups: dict[tuple, list[dict]] = defaultdict(list)
         for r in ok:
             groups[(r["converter"], key(r))].append(r)

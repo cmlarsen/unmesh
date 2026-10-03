@@ -13,6 +13,7 @@ from unmesh_harness.corpus import (
     select,
 )
 from unmesh_harness.groundtruth import families, fingerprint, generate, validity_problems
+from unmesh_harness.strata import compute_strata
 
 from .volumes import expected_volume
 
@@ -33,7 +34,8 @@ def test_manifest_contains_planned_entries_unchanged():
     ids = {e["id"]: e for e in load_manifest()["entries"]}
     for planned in planned_entries():
         entry = ids[planned["id"]]
-        assert all(entry[k] == v for k, v in planned.items())
+        assert all(entry[k] == v for k, v in planned.items() if k != "strata")
+        assert entry["strata"]["category"] == planned["strata"]["category"]
         assert "fingerprint" in entry
 
 
@@ -41,7 +43,8 @@ def test_manifest_contains_curved_entries_unchanged():
     ids = {e["id"]: e for e in load_manifest()["entries"]}
     for planned in curved_entries():
         entry = ids[planned["id"]]
-        assert all(entry[k] == v for k, v in planned.items())
+        assert all(entry[k] == v for k, v in planned.items() if k != "strata")
+        assert entry["strata"]["category"] == planned["strata"]["category"]
         assert "fingerprint" in entry
 
 
@@ -83,6 +86,7 @@ def _check_pinned(entry):
     assert now["bbox_min"] == pytest.approx(pinned["bbox_min"], abs=1e-6)
     assert now["bbox_max"] == pytest.approx(pinned["bbox_max"], abs=1e-6)
     assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9)
+    assert entry["strata"] == compute_strata(gt.solid, entry["strata"]["category"])
 
 
 @pytest.mark.parametrize("entry", select(load_manifest(), "smoke"), ids=lambda e: e["id"])
