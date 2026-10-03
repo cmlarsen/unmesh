@@ -14,6 +14,11 @@ PAIR_TWO = ("one_segment_fillet", "chamfer_same_chord")
 PAIR_THREE = ("two_segment_fillet", "two_planes")
 
 
+@pytest.fixture
+def pair_seeds(request):
+    return range(32) if request.config.getoption("--slow") else range(8)
+
+
 def surface_counts(solid):
     counts = {}
     for face in solid.faces():
@@ -88,10 +93,10 @@ def test_pair_one_surface_types():
         assert surface_counts(cyl.solid) == {"GeomAbs_Plane": 2, "GeomAbs_Cylinder": 1}
 
 
-def test_pair_one_valid_deterministic_and_closed_form_volume():
+def test_pair_one_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_ONE:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -121,8 +126,8 @@ def test_pair_one_preprocess_recorded():
             ]
 
 
-def test_pair_one_triangle_sets_match_after_preprocess():
-    for seed in range(32):
+def test_pair_one_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
         assert triangle_set(preprocessed("ngon_prism", seed)) == triangle_set(
             preprocessed("coarse_cylinder_prism", seed)
         ), seed
@@ -155,10 +160,10 @@ def test_pair_two_surface_types():
         assert surface_counts(generate("chamfer_same_chord", seed).solid) == {"GeomAbs_Plane": 7}
 
 
-def test_pair_two_valid_deterministic_and_closed_form_volume():
+def test_pair_two_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_TWO:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -223,8 +228,8 @@ def test_pair_two_preprocess_recorded():
         assert c.parameters["pair_preprocess"] == [["canonical_planar", {}]]
 
 
-def test_pair_two_triangle_sets_match_after_preprocess():
-    for seed in range(32):
+def test_pair_two_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
         assert triangle_set(preprocessed("one_segment_fillet", seed)) == triangle_set(
             preprocessed("chamfer_same_chord", seed)
         ), seed
@@ -257,10 +262,10 @@ def test_pair_three_surface_types():
         assert surface_counts(generate("two_planes", seed).solid) == {"GeomAbs_Plane": 8}
 
 
-def test_pair_three_valid_deterministic_and_closed_form_volume():
+def test_pair_three_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_THREE:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -316,8 +321,8 @@ def test_pair_three_preprocess_recorded():
         assert t.parameters["pair_preprocess"] == [["canonical_planar", {}]]
 
 
-def test_pair_three_triangle_sets_match_after_preprocess():
-    for seed in range(32):
+def test_pair_three_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
         assert triangle_set(preprocessed("two_segment_fillet", seed)) == triangle_set(
             preprocessed("two_planes", seed)
         ), seed
