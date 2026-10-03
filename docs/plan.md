@@ -119,6 +119,9 @@ No C++ is written in this project.
 
    Calibration is measured against the input mesh because that's all the library can see. Deviation
    from the truth after smoothing or decimation is a fidelity metric, not a calibration failure.
+   Genus is computed from each shell's triangle coverage in the welded input mesh, not from IR
+   adjacency, so a writer that drops a face is caught by the volume and validity checks rather
+   than by genus.
 7. **Stage isolation through oracle inputs.** The labels let every stage run on perfect inputs from
    the stage before it:
    - segmentation is scored per triangle
