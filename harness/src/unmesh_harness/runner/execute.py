@@ -19,6 +19,27 @@ import numpy as np
 _PARTS: dict[str, tuple[Any, np.ndarray]] = {}
 
 PAIR_PREPROCESS_SEED = 0
+PAIR_SNAP_DECIMALS = 9
+
+
+def canonicalise_pair_mesh(mesh):
+    mesh.tris = np.round(mesh.tris.astype(np.float64), PAIR_SNAP_DECIMALS) + 0.0
+    if mesh.vertices:
+        mesh.vertices = (
+            np.round(np.array(mesh.vertices, dtype=np.float64), PAIR_SNAP_DECIMALS) + 0.0
+        ).tolist()
+    for adj in mesh.adjacency:
+        adj.points = (
+            np.round(np.array(adj.points, dtype=np.float64), PAIR_SNAP_DECIMALS) + 0.0
+        ).tolist()
+    tris = mesh.tris.reshape(-1, 3, 3)
+    keys = [
+        min(tuple(t[[i, (i + 1) % 3, (i + 2) % 3]].reshape(-1)) for i in range(3)) for t in tris
+    ]
+    order = sorted(range(len(tris)), key=keys.__getitem__)
+    mesh.tris = tris[order]
+    mesh.face_id = mesh.face_id[np.array(order, dtype=np.int64)]
+    return mesh
 
 
 def _cache_paths(cache: Path, part: str) -> tuple[Path, Path]:
@@ -43,6 +64,7 @@ def prep_part(task: dict[str, Any]) -> dict[str, Any]:
     pair_preprocess = gt.parameters.get("pair_preprocess") or []
     if pair_preprocess:
         labeled = apply_pair_preprocess(labeled, pair_preprocess, PAIR_PREPROCESS_SEED)
+        labeled = canonicalise_pair_mesh(labeled)
     if task["need_truth"]:
         truth = tessellate(gt.solid, *task["truth_deflection"])
         np.save(truth_path, truth.tris)
