@@ -33,8 +33,8 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise of its best-supported planar regions, and refits at five times that noise, clamped between a floor of 2e-5 of the diagonal and the first guess. Becomes `ir.tolerances.linear`. |
-| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise over the quiet population below the largest decade-plus residual gap (falling back to every supported region when that population holds under half the area), and refits at five times that noise, floored at 1e-6 of the diagonal plus 5e-7 of the largest absolute coordinate. Becomes `ir.tolerances.linear`. |
+| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region. |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
 
@@ -50,7 +50,7 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
-A clean mesh therefore gets the floor (2e-5 of the bounding-box diagonal, so the
+A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the
 tolerance scales with the part's units) and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
 
@@ -124,8 +124,10 @@ structural problem; `unmesh.ir.validate(ir)` returns the list instead. `Ir.loads
 
 The planar converter welds the input, groups triangles into regions by growing them while every
 vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each
-plane robustly (Huber IRLS), snaps normals to the world axes and to exact parallel and perpendicular
-relations when the snapped plane still fits within the estimated noise, and moves every vertex onto
+plane robustly (Huber IRLS), re-grows regions that still exceed the tolerance at strict tolerance
+over the union of creased regions and re-merges, snaps normals to the world axes and to exact
+parallel and perpendicular relations when the snapped plane still fits within the estimated noise
+(allowing `angular_snap_deg + atan(3σ/width)` per region), and moves every vertex onto
 the planes it belongs to (one plane: projection; two: their line; three or more: their
 least-squares point, with a conditioning guard). `report.max_deviation` is the largest distance any
 vertex moved plus its remaining distance to its planes, so it bounds the distance between the input
