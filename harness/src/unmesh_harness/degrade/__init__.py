@@ -1,4 +1,4 @@
-from . import coarsen, noise, pose, precision, refine
+from . import coarsen, noise, pose, precision, refine, retriangulate
 from .core import (
     OPERATORS,
     Operator,
@@ -20,6 +20,7 @@ __all__ = [
     "precision",
     "refine",
     "register",
+    "retriangulate",
     "to_original",
     "to_original_points",
 ]

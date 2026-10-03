@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -12,7 +13,7 @@ from unmesh_harness.labels import LabeledMesh, distance_to_surface, tessellate
 
 from .test_labels import closed_manifold_problems
 
-TESS_OPS = ("coarsen",)
+TESS_OPS = ("coarsen", "retriangulate")
 SLOW_SEED = 11
 
 
@@ -30,6 +31,16 @@ def fillet_mesh():
     return tessellate(gt.solid, lin, ang)
 
 
+def ngon_mesh():
+    gt = generate("ngon_prism", 3)
+    lin, ang = gt.parameters["pair_deflection"]
+    return tessellate(gt.solid, lin, ang)
+
+
+def drilled_mesh():
+    return tessellate(Box(10, 10, 10) - Cylinder(2, 20), 0.1, 0.5)
+
+
 @pytest.fixture(scope="module")
 def box():
     return box_mesh()
@@ -43,6 +54,34 @@ def cyl():
 @pytest.fixture(scope="module")
 def fillet():
     return fillet_mesh()
+
+
+@pytest.fixture(scope="module")
+def ngon():
+    return ngon_mesh()
+
+
+@pytest.fixture(scope="module")
+def drilled():
+    return drilled_mesh()
+
+
+def boundary_nodes(mesh: LabeledMesh, fid: int) -> set:
+    t = mesh.tris[mesh.face_id == fid]
+    counts: dict = {}
+    for tri in t:
+        for i in range(3):
+            a, b = tuple(tri[i]), tuple(tri[(i + 1) % 3])
+            key = (min(a, b), max(a, b))
+            counts[key] = counts.get(key, 0) + 1
+    return {v for e, n in counts.items() if n == 1 for v in e}
+
+
+def valence_of(tris: np.ndarray) -> list[int]:
+    import unmesh
+
+    _, idx, *_ = unmesh.weld(tris, 0.0)
+    return sorted(Counter(idx.ravel().tolist()).values())
 
 
 def geometry_equal(a: LabeledMesh, b: LabeledMesh) -> bool:
@@ -172,3 +211,53 @@ def test_coarsen_fillet_mesh_stays_valid(fillet):
     assert_tess_labels_aligned(fillet, out)
     assert_on_surface(out)
     assert OPERATORS["coarsen"].family == "tessellation"
+
+
+def test_retriangulate_schemes_from_severity(ngon):
+    assert (
+        degrade.apply("retriangulate", ngon, 0.2, 0).metadata["history"][-1]["params"]["scheme"]
+        == "fan"
+    )
+    assert (
+        degrade.apply("retriangulate", ngon, 0.5, 0).metadata["history"][-1]["params"]["scheme"]
+        == "strip"
+    )
+    assert (
+        degrade.apply("retriangulate", ngon, 0.9, 0).metadata["history"][-1]["params"]["scheme"]
+        == "delaunay"
+    )
+
+
+def test_retriangulate_keeps_boundary_and_watertight(ngon, drilled):
+    for mesh in (ngon, drilled):
+        assert closed_manifold_problems(mesh.tris)[0] == []
+        for severity in (0.2, 0.5, 0.9):
+            out = degrade.apply("retriangulate", mesh, severity, 5)
+            assert closed_manifold_problems(out.tris)[0] == [], severity
+            assert_tess_labels_aligned(mesh, out)
+            for fid in set(mesh.face_id.tolist()):
+                assert boundary_nodes(out, fid) == boundary_nodes(mesh, fid)
+            assert out.metadata["history"][-1]["params"]["faces_retriangulated"] > 0
+
+
+def test_retriangulate_leaves_curved_faces_bit_identical(cyl):
+    out = degrade.apply("retriangulate", cyl, 0.9, 3)
+    for face in cyl.faces:
+        if face.surface == "plane":
+            continue
+        assert np.array_equal(out.tris[out.face_id == face.id], cyl.tris[cyl.face_id == face.id])
+
+
+def test_retriangulate_valence_differs_from_occt(ngon):
+    cap = next(
+        f.id for f in ngon.faces if f.surface == "plane" and (ngon.face_id == f.id).sum() > 10
+    )
+    occt = valence_of(ngon.tris[ngon.face_id == cap])
+    seen = {tuple(occt)}
+    for severity in (0.2, 0.5, 0.9):
+        out = degrade.apply("retriangulate", ngon, severity, 3)
+        assert (out.face_id == cap).sum() == (ngon.face_id == cap).sum()
+        got = tuple(valence_of(out.tris[out.face_id == cap]))
+        assert got not in seen, severity
+        seen.add(got)
+    assert len(seen) == 4
