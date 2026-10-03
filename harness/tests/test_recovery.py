@@ -157,6 +157,20 @@ def _perp(v):
     return p / np.linalg.norm(p)
 
 
+def _area_centroid(tris):
+    tris = np.asarray(tris, dtype=float)
+    cross = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    area = np.linalg.norm(cross, axis=1)
+    return (tris.mean(axis=1) * area[:, None]).sum(axis=0) / area.sum()
+
+
+def _rotate(vec, axis, angle_deg):
+    vec = np.asarray(vec, float)
+    axis = np.asarray(axis, float) / np.linalg.norm(axis)
+    theta = np.deg2rad(angle_deg)
+    return vec * np.cos(theta) + np.cross(axis, vec) * np.sin(theta)
+
+
 def _with_surface(ir, pred, fn):
     regions = [dataclasses.replace(r, surface=fn(r.surface)) if pred(r) else r for r in ir.regions]
     return dataclasses.replace(ir, regions=regions)
@@ -164,6 +178,68 @@ def _with_surface(ir, pred, fn):
 
 def _detail(result, surface):
     return next(d for d in result["faces_detail"] if d["type"] == surface)
+
+
+def test_bore_radius_plus_0_99_percent_is_recovered():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    bore = next(r for r in ir.regions if r.surface.type == "cylinder")
+    assert bore.surface.radius == pytest.approx(2.0)
+    bigger = dataclasses.replace(bore.surface, radius=bore.surface.radius * 1.0099)
+    regions = [dataclasses.replace(r, surface=bigger) if r.id == bore.id else r for r in ir.regions]
+    result = score_recovery(mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4))
+    assert result["matched"] == len(mesh.faces)
+    assert result["f1"] == 1.0
+    detail = _detail(result, "cylinder")
+    assert detail["recovered"] is True
+    assert detail["errors"]["radius_rel"] == pytest.approx(0.0099)
+    assert detail["errors"]["position_mm"] > 0.01
+
+
+def test_bore_axis_tilted_0_19_deg_is_recovered():
+    mesh = tessellate(Box(20, 20, 4) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    is_bore = lambda r: r.surface.type == "cylinder"  # noqa: E731
+    face = next(f for f in mesh.faces if f.surface == "cylinder")
+    centroid = _area_centroid(mesh.face_tris(face.id))
+    gt_origin = np.array(face.params["origin"], float)
+    gt_axis = np.array(face.params["axis"], float)
+    gt_axis = gt_axis / np.linalg.norm(gt_axis)
+    pivot = gt_origin + float((centroid - gt_origin) @ gt_axis) * gt_axis
+    tilted = _rotate(gt_axis, _perp(gt_axis), 0.19)
+    moved = _with_surface(
+        ir, is_bore, lambda s: dataclasses.replace(s, origin=tuple(pivot), axis=tuple(tilted))
+    )
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces)
+    assert result["f1"] == 1.0
+    detail = _detail(result, "cylinder")
+    assert detail["recovered"] is True
+    assert detail["errors"]["axis_deg"] == pytest.approx(0.19, abs=1e-6)
+    assert detail["errors"]["axis_mm"] <= 0.01
+
+
+def test_plate_tilted_0_05_deg_about_centroid_is_recovered():
+    mesh = tessellate(Box(100, 100, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    top = next(
+        f for f in mesh.faces if f.surface == "plane" and np.array(f.params["normal"])[2] > 0.9
+    )
+    centroid = _area_centroid(mesh.face_tris(top.id))
+    tilted = _rotate(top.params["normal"], _perp(top.params["normal"]), 0.05)
+    moved = _with_surface(
+        ir,
+        lambda r: r.id == top.id,
+        lambda s: dataclasses.replace(s, normal=tuple(tilted), origin=tuple(centroid)),
+    )
+    result = score_recovery(mesh, mesh.face_id, moved, np.eye(4))
+    assert result["matched"] == len(mesh.faces)
+    assert result["f1"] == 1.0
+    detail = next(d for d in result["faces_detail"] if d["face"] == top.id)
+    assert detail["recovered"] is True
+    assert detail["errors"]["normal_deg"] == pytest.approx(0.05, abs=1e-6)
+    assert detail["errors"]["offset_mm"] <= 0.01
+    assert detail["errors"]["position_mm"] > 0.01
 
 
 def test_cylinder_axis_line_shifted_two_mm_is_not_recovered():

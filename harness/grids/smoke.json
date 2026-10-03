@@ -122,13 +122,10 @@
       "judge_truth": true,
       "floors": {
         "f1_row": 0.98,
-        "f1_cell": 0.85,
+        "f1_cell": 0.9,
         "fallback_max": 0,
         "dev_input_max": 0.031,
         "dev_truth_max": 0.02
-      },
-      "waiver": {
-        "f1_cell": "lowered 0.90 -> 0.85 by the coordinator on Caleb's behalf, 2026-10-02: polygon_prism-0001 scores 0.875 because the planar fitter leaves a ~0.06 deg tilt under noise (3-5x worse than least squares). Restore to 0.90 in #47."
       }
     },
     {

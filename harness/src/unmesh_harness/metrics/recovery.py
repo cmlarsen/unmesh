@@ -106,6 +106,30 @@ def _radius_ok(radius: float, truth: float) -> tuple[bool, float, float]:
     )
 
 
+def _point_to_line(points: np.ndarray, origin: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    rel = np.asarray(points, dtype=np.float64) - np.asarray(origin, dtype=np.float64)
+    unit = np.asarray(axis, dtype=np.float64) / np.linalg.norm(axis)
+    return np.linalg.norm(rel - np.outer(rel @ unit, unit), axis=1)
+
+
+def _axis_line_error(
+    face_params: dict[str, Any],
+    mapped: dict[str, Any],
+    gt_points: np.ndarray,
+    centroid: np.ndarray,
+) -> float:
+    gt_origin = np.asarray(face_params["origin"], dtype=np.float64)
+    gt_axis = np.asarray(face_params["axis"], dtype=np.float64)
+    gt_axis = gt_axis / np.linalg.norm(gt_axis)
+    centroid = np.asarray(centroid, dtype=np.float64)
+    axis_point = gt_origin + float((centroid - gt_origin) @ gt_axis) * gt_axis
+    pts = np.asarray(gt_points, dtype=np.float64).reshape(-1, 3)
+    t = (pts - gt_origin) @ gt_axis
+    ends = np.array([gt_origin + t.min() * gt_axis, gt_origin + t.max() * gt_axis])
+    probe = np.vstack([axis_point, ends])
+    return float(_point_to_line(probe, mapped["origin"], mapped["axis"]).max())
+
+
 def _position_error(face: FaceInfo, gt_points: np.ndarray, mapped: dict[str, Any]) -> float:
     params = {k: v for k, v in mapped.items() if k != "type"}
     probe = FaceInfo(face.id, face.surface, params, False)
@@ -142,9 +166,7 @@ def surface_matches(
         )
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
-            errors["normal_deg"] <= ANGLE_TOL_DEG
-            and errors["offset_mm"] <= OFFSET_TOL_MM
-            and errors["position_mm"] <= POSITION_TOL_MM,
+            errors["normal_deg"] <= ANGLE_TOL_DEG and errors["offset_mm"] <= OFFSET_TOL_MM,
             errors,
         )
     if face_surface == "cylinder":
@@ -156,12 +178,13 @@ def surface_matches(
             np.asarray(mapped["axis"], dtype=np.float64),
         )
         errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+        errors["axis_mm"] = _axis_line_error(face_params, mapped, gt_points, centroid)
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
             ok_r
             and errors["axis_deg"] <= ANGLE_TOL_DEG
             and not errors["orientation_mismatch"]
-            and errors["position_mm"] <= POSITION_TOL_MM,
+            and errors["axis_mm"] <= POSITION_TOL_MM,
             errors,
         )
     if face_surface == "cone":
@@ -173,12 +196,18 @@ def surface_matches(
             math.degrees(mapped["half_angle"]) - math.degrees(face_params["half_angle"])
         )
         errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+        errors["apex_mm"] = float(
+            np.linalg.norm(
+                np.asarray(mapped["apex"], dtype=np.float64)
+                - np.asarray(face_params["apex"], dtype=np.float64)
+            )
+        )
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
             errors["axis_deg"] <= ANGLE_TOL_DEG
             and errors["half_angle_deg"] <= HALF_ANGLE_TOL_DEG
             and not errors["orientation_mismatch"]
-            and errors["position_mm"] <= POSITION_TOL_MM,
+            and errors["apex_mm"] <= CENTER_TOL_MM,
             errors,
         )
     if face_surface == "sphere":
@@ -194,10 +223,7 @@ def surface_matches(
         errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
         errors["position_mm"] = _position_error(face, gt_points, mapped)
         return (
-            ok_r
-            and errors["center_mm"] <= CENTER_TOL_MM
-            and not errors["orientation_mismatch"]
-            and errors["position_mm"] <= POSITION_TOL_MM,
+            ok_r and errors["center_mm"] <= CENTER_TOL_MM and not errors["orientation_mismatch"],
             errors,
         )
     ok_major, major_rel, major_abs = _radius_ok(mapped["major_radius"], face_params["major_radius"])
@@ -211,13 +237,19 @@ def surface_matches(
         np.asarray(mapped["axis"], dtype=np.float64),
     )
     errors["orientation_mismatch"] = _orientation_mismatch(face, ir_orientation)
+    errors["center_mm"] = float(
+        np.linalg.norm(
+            np.asarray(mapped["center"], dtype=np.float64)
+            - np.asarray(face_params["center"], dtype=np.float64)
+        )
+    )
     errors["position_mm"] = _position_error(face, gt_points, mapped)
     return (
         ok_major
         and ok_minor
         and errors["axis_deg"] <= ANGLE_TOL_DEG
         and not errors["orientation_mismatch"]
-        and errors["position_mm"] <= POSITION_TOL_MM,
+        and errors["center_mm"] <= CENTER_TOL_MM,
         errors,
     )
 
