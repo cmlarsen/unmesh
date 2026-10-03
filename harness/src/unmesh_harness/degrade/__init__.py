@@ -48,16 +48,19 @@ def apply_pair_preprocess(mesh, steps, seed=0):
     import numpy as np
 
     out = copy.deepcopy(mesh)
-    rng = np.random.default_rng(seed)
     for i, (op, args) in enumerate(steps):
         args = dict(args)
+        step_seed = int(seed) + i
         if op == "fillet_rows":
-            params = fillets.fillet_rows(out, 1.0, rng, segments=args.get("segments"))
+            params = fillets.fillet_rows(
+                out, 1.0, np.random.default_rng(step_seed), segments=args.get("segments")
+            )
         elif op == "canonical_planar":
             params = retriangulate.canonical_planar(out)
+            step_seed = None
         else:
             raise ValueError(f"unknown pair preprocessing step {op!r}")
         out.metadata.setdefault("history", []).append(
-            {"op": op, "severity": 1.0, "seed": int(seed) + i, "params": params}
+            {"op": op, "severity": 1.0, "seed": step_seed, "params": params}
         )
     return out
