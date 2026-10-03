@@ -333,7 +333,7 @@ def _masked_regions(face_id: np.ndarray, masked: set[int], ir: Ir) -> set[int]:
     for region in ir.regions:
         tris = np.asarray(region.triangles, dtype=np.int64)
         tris = tris[(tris >= 0) & (tris < len(owners))]
-        if len(tris) and sum(int(t in masked) for t in owners[tris]) * 2 > len(tris):
+        if len(tris) and bool(np.isin(owners[tris], list(masked)).all()):
             out.add(region.id)
     return out
 

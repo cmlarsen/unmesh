@@ -538,6 +538,34 @@ def test_corrupted_masked_face_does_not_lower_f1():
     assert detail["recovered"] is False
 
 
+def test_merged_masked_region_counts_as_false_positive():
+    mesh = _corner_fillet_mesh()
+    ir = build_oracle_ir(mesh)
+    centroids = {f.id: _area_centroid(mesh.face_tris(f.id)) for f in mesh.faces}
+    cylinders = [f.id for f in mesh.faces if f.surface == "cylinder"]
+    spheres = [f.id for f in mesh.faces if f.surface == "sphere"]
+    targets: dict[int, list[int]] = {}
+    for s in spheres:
+        c = min(cylinders, key=lambda c: float(np.linalg.norm(centroids[c] - centroids[s])))
+        targets.setdefault(c, []).append(s)
+    by_id = {r.id: r for r in ir.regions}
+    consumed = set(targets) | {s for group in targets.values() for s in group}
+    merged = []
+    for c, group in targets.items():
+        tris = list(by_id[c].triangles)
+        for s in group:
+            tris += list(by_id[s].triangles)
+        merged.append(dataclasses.replace(by_id[c], triangles=tris))
+    regions = merged + [r for r in ir.regions if r.id not in consumed]
+    regions = [dataclasses.replace(r, id=i) for i, r in enumerate(regions)]
+    result = score_recovery(
+        mesh, mesh.face_id, dataclasses.replace(ir, regions=regions), np.eye(4)
+    )
+    assert result["regions"] == len(regions)
+    assert result["precision"] < 1.0
+    assert result["precision"] == pytest.approx(14 / 18)
+
+
 def test_unmasked_mesh_reports_no_masked_faces():
     mesh = tessellate(Box(10, 10, 10), LIN, ANG)
     result = score_recovery(mesh, mesh.face_id, build_oracle_ir(mesh), np.eye(4))
