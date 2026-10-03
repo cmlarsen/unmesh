@@ -17,9 +17,9 @@ from .test_labels import closed_manifold_problems
 LIN, ANG = DEFLECTION_SETTINGS[0]
 SEED = 11
 
-PROC_OPS = ("quadric_decimation", "isotropic_remesh")
-WATERTIGHT = {"quadric_decimation": True, "isotropic_remesh": True}
-SMOOTHING = ()
+PROC_OPS = ("quadric_decimation", "isotropic_remesh", "laplacian_smoothing")
+WATERTIGHT = {"quadric_decimation": True, "isotropic_remesh": True, "laplacian_smoothing": True}
+SMOOTHING = ("laplacian_smoothing",)
 
 
 def box_mesh():
@@ -57,9 +57,15 @@ def assert_processing_labels_aligned(before: LabeledMesh, after: LabeledMesh, na
     assert len(conf) == len(after.tris)
     assert all(0.0 <= c <= 1.0 for c in conf)
     assert [f.__dict__ for f in after.faces] == [f.__dict__ for f in before.faces]
-    assert [a.__dict__ for a in after.adjacency] == [a.__dict__ for a in before.adjacency]
     assert [s.__dict__ for s in after.shells] == [s.__dict__ for s in before.shells]
-    assert after.vertices == before.vertices
+    if name in SMOOTHING:
+        assert [(a.edge_id, a.face_a, a.face_b) for a in after.adjacency] == [
+            (a.edge_id, a.face_a, a.face_b) for a in before.adjacency
+        ]
+        assert len(after.vertices) == len(before.vertices)
+    else:
+        assert [a.__dict__ for a in after.adjacency] == [a.__dict__ for a in before.adjacency]
+        assert after.vertices == before.vertices
     params = after.metadata["history"][-1]["params"]
     assert params["triangles_before"] == len(before.tris)
     assert params["triangles_after"] == len(after.tris)
@@ -216,6 +222,65 @@ def test_remesh_high_confidence_on_smooth_refinement(box):
     out = degrade.apply("isotropic_remesh", box, 0.5, SEED)
     assert len(out.tris) > len(box.tris)
     assert out.metadata["history"][-1]["params"]["fraction_below_0_9"] == 0.0
+
+
+def test_smoothing_keeps_connectivity_and_moves_vertices_once(cyl):
+    for name in SMOOTHING:
+        out = degrade.apply(name, cyl, 1.0, SEED)
+        assert len(out.tris) == len(cyl.tris)
+        before = cyl.tris.reshape(-1, 3)
+        after = out.tris.reshape(-1, 3)
+        mapping: dict[tuple, tuple] = {}
+        for b, a in zip(before.tolist(), after.tolist(), strict=True):
+            assert mapping.setdefault(tuple(b), tuple(a)) == tuple(a)
+        assert not np.array_equal(before, after)
+        params = out.metadata["history"][-1]["params"]
+        measured = float(np.linalg.norm(after - before, axis=1).max())
+        assert params["max_displacement_mm"] == pytest.approx(measured)
+        assert measured > 0
+
+
+def test_smoothing_is_graded_and_label_stable_on_fine_meshes(box):
+    fine = degrade.apply("refine", box, 0.3, 0)
+    assert len(fine.tris) > len(box.tris)
+    disps = []
+    for name in SMOOTHING:
+        for severity in (0.2, 0.5, 1.0):
+            out = degrade.apply(name, fine, severity, SEED)
+            params = out.metadata["history"][-1]["params"]
+            disps.append(params["max_displacement_mm"])
+            assert np.array_equal(out.face_id, fine.face_id)
+            assert params["triangles_after"] == params["triangles_before"] == len(fine.tris)
+        assert disps[0] <= disps[1] <= disps[2]
+        assert disps[0] > 0
+
+
+def test_smoothing_at_full_severity_relabels_with_low_confidence(cyl):
+    for name in SMOOTHING:
+        out = degrade.apply(name, cyl, 1.0, SEED)
+        assert len(out.tris) == len(cyl.tris)
+        assert_processing_labels_aligned(cyl, out, name)
+        assert not np.array_equal(out.tris, cyl.tris)
+        assert out.metadata["history"][-1]["params"]["iterations"] > 0
+
+
+def test_smoothing_iterations_scale_with_severity(cyl):
+    for name in SMOOTHING:
+        counts = [
+            degrade.apply(name, cyl, s, SEED).metadata["history"][-1]["params"]["iterations"]
+            for s in (0.25, 0.5, 1.0)
+        ]
+        assert counts[0] <= counts[1] <= counts[2]
+        assert counts[2] > 0
+
+
+def test_smoothing_polylines_move_with_mesh(cyl):
+    for name in SMOOTHING:
+        out = degrade.apply(name, cyl, 1.0, SEED)
+        known = {tuple(p) for p in out.tris.reshape(-1, 3).tolist()}
+        for adj in out.adjacency:
+            assert all(tuple(p) in known for p in adj.points)
+        assert all(tuple(v) in known for v in out.vertices)
 
 
 @pytest.mark.slow

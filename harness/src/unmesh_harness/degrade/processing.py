@@ -31,7 +31,7 @@ import math
 import numpy as np
 
 from ..labels import distance_to_surface
-from .core import register
+from .core import displace_vertices, register, vertex_table
 from .refine import _split_triangle
 
 CONFIDENCE_KEY = "label_confidence"
@@ -426,5 +426,62 @@ def isotropic_remesh(mesh, severity, rng):
         "collapses": collapses,
         "triangles_before": before,
         "triangles_after": len(tris),
+        **label,
+    }
+
+
+SMOOTH_MAX_ITERS = 20
+LAPLACIAN_LAMBDA = 0.5
+
+
+def smoothing_iterations(severity: float) -> int:
+    return int(round(SMOOTH_MAX_ITERS * severity))
+
+
+def _umbrella_neighbors(mesh) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    uniq, inverse = vertex_table(mesh)
+    corners = inverse.reshape(-1, 3).tolist()
+    nbrs: list[set[int]] = [set() for _ in range(len(uniq))]
+    for a, b, c in corners:
+        nbrs[a].update((b, c))
+        nbrs[b].update((a, c))
+        nbrs[c].update((a, b))
+    return uniq, inverse, [np.array(sorted(s), dtype=np.int64) for s in nbrs]
+
+
+def _laplacian_step(pos: np.ndarray, nbrs: list[np.ndarray], rate: float) -> np.ndarray:
+    out = pos.copy()
+    for i, js in enumerate(nbrs):
+        if len(js):
+            out[i] = pos[i] + rate * (pos[js].mean(axis=0) - pos[i])
+    return out
+
+
+@register(
+    "laplacian_smoothing",
+    "processing",
+    "identity",
+    "round(20 * severity) umbrella passes (lambda 0.5) moving each distinct vertex "
+    "toward its neighbour mean (20 at severity 1); displacement scales with the local "
+    "chord length, so coarse meshes move more; connectivity unchanged, shared "
+    "vertices move once so the mesh stays watertight",
+    preserves_watertight=True,
+)
+def laplacian_smoothing(mesh, severity, rng):
+    src_tris = mesh.tris.copy()
+    src_ids = mesh.face_id.copy()
+    uniq, inverse, nbrs = _umbrella_neighbors(mesh)
+    pos = uniq.copy()
+    iters = smoothing_iterations(severity)
+    for _ in range(iters):
+        pos = _laplacian_step(pos, nbrs, LAPLACIAN_LAMBDA)
+    peak = displace_vertices(mesh, uniq, inverse, pos - uniq)
+    label = transfer_labels(mesh, src_tris, src_ids)
+    return {
+        "iterations": iters,
+        "lambda": LAPLACIAN_LAMBDA,
+        "max_displacement_mm": peak,
+        "triangles_before": len(src_tris),
+        "triangles_after": len(mesh.tris),
         **label,
     }
