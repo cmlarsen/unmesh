@@ -12,6 +12,7 @@ from .corpus import (
     find_manifest,
     load_manifest,
     planned_entries,
+    sync_imported,
     sync_manifest,
 )
 
@@ -115,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     path = args.manifest or find_manifest()
     manifest = json.loads(path.read_text()) if path.exists() else empty_manifest()
     manifest = sync_manifest(manifest, planned_entries())
+    manifest = sync_imported(manifest)
     path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"pinned {len(manifest['entries'])} entries in {path}")
     return 0

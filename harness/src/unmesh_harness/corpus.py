@@ -10,7 +10,7 @@ from build123d import export_step
 from .groundtruth import fingerprint, generate
 
 MANIFEST_VERSION = 0
-GRID_SIZES = {"smoke": 50, "standard": 390}
+GRID_SIZES = {"smoke": 50, "standard": 619}
 GRID_ORDER = ["smoke", "standard"]
 
 PLANAR_GRID_COUNTS = {"smoke": 20, "standard": 100}
@@ -207,6 +207,118 @@ def sync_manifest(manifest: dict[str, Any], planned: list[dict[str, Any]]) -> di
     return manifest
 
 
+def imported_candidates(cache_dir=None) -> list[dict[str, Any]]:
+    from .imported import IMPORTED_DATASETS, datasets_root
+
+    root = datasets_root(cache_dir)
+    out = []
+    for dataset in IMPORTED_DATASETS:
+        manifest_path = root / dataset / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+        manifest = json.loads(manifest_path.read_text())
+        for item in manifest.get("entries", []):
+            step = item.get("files", {}).get("step")
+            if step is None:
+                continue
+            out.append({"dataset": dataset, "file_id": item["id"], "sha256": step["sha256"]})
+    out.sort(key=lambda s: (s["dataset"], s["file_id"]))
+    return out
+
+
+def probe_imported_candidate(payload: dict[str, Any]) -> dict[str, Any]:
+    from .groundtruth import validity_problems
+    from .imported import load_imported_shape
+    from .strata import compute_strata
+
+    entry = {"id": "probe", "source": payload["source"]}
+    shape = load_imported_shape(entry, payload.get("cache_dir"))
+    if shape.wrapped is None:
+        raise RuntimeError("STEP import produced no geometry")
+    solids, shells = len(shape.solids()), len(shape.shells())
+    problems = validity_problems(shape, solids=solids, shells=shells)
+    if problems or not solids or not shape.faces():
+        raise RuntimeError("; ".join(problems) or "no faces")
+    return {
+        "solids": solids,
+        "shells": shells,
+        "fingerprint": pinned_fingerprint(shape),
+        "strata": compute_strata(shape, "imported"),
+    }
+
+
+def probe_main(payload_json: str) -> int:
+    print(PROBE_MARKER + json.dumps(probe_imported_candidate(json.loads(payload_json))), flush=True)
+    return 0
+
+
+PROBE_MARKER = "UNMESH_PROBE_RESULT "
+_PROBE_CODE = (
+    "import json, sys; "
+    "from unmesh_harness.corpus import probe_main; "
+    "raise SystemExit(probe_main(sys.argv[1]))"
+)
+
+
+def sync_imported(manifest: dict[str, Any], cache_dir=None) -> dict[str, Any]:
+    import subprocess
+    import sys
+
+    from .imported import IMPORTED_FAMILY, datasets_root
+
+    have = {e["source"]["file_id"] for e in manifest["entries"] if e.get("tier") == "imported"}
+    new = [c for c in imported_candidates(cache_dir) if c["file_id"] not in have]
+    if not new:
+        return manifest
+    start = sum(1 for e in manifest["entries"] if e.get("tier") == "imported")
+    kept, skipped = 0, 0
+    for i, source in enumerate(new):
+        payload = json.dumps({"source": source, "cache_dir": str(cache_dir) if cache_dir else None})
+        try:
+            run = subprocess.run(
+                [sys.executable, "-c", _PROBE_CODE, payload],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"skip {source['file_id']}: import timed out", flush=True)
+            skipped += 1
+            continue
+        if run.returncode != 0:
+            tail = (run.stderr.strip().splitlines() or ["import crashed"])[:1]
+            print(f"skip {source['file_id']}: {run.returncode}: {tail[0][:160]}", flush=True)
+            skipped += 1
+            continue
+        try:
+            (line,) = [ln for ln in run.stdout.splitlines() if ln.startswith(PROBE_MARKER)]
+            probed = json.loads(line[len(PROBE_MARKER) :])
+        except ValueError:
+            print(f"skip {source['file_id']}: unreadable probe output", flush=True)
+            skipped += 1
+            continue
+        manifest["entries"].append(
+            {
+                "id": f"imported-{start + kept:04d}",
+                "tier": "imported",
+                "family": IMPORTED_FAMILY,
+                "seed": start + kept,
+                "source": source,
+                "strata": probed["strata"],
+                "grids": ["standard"],
+                "fingerprint": probed["fingerprint"],
+                "solids": probed["solids"],
+                "shells": probed["shells"],
+            }
+        )
+        kept += 1
+        if (i + 1) % 25 == 0 or i + 1 == len(new):
+            print(f"imported {i + 1}/{len(new)} ({kept} kept, {skipped} skipped)", flush=True)
+    root = datasets_root(cache_dir)
+    print(f"imported tier: {kept} kept, {skipped} skipped; dataset cache at {root}")
+    return manifest
+
+
 def empty_manifest() -> dict[str, Any]:
     return {
         "version": MANIFEST_VERSION,
@@ -244,17 +356,25 @@ def default_cache_dir() -> Path:
 
 
 def build_entry(entry: dict[str, Any], out: Path):
-    if entry["tier"] != "generated":
-        raise NotImplementedError(f"tier {entry['tier']!r} is not buildable yet")
-    gt = generate(entry["family"], entry["seed"])
+    from .imported import imported_metadata, load_imported_shape
+
     out.mkdir(parents=True, exist_ok=True)
-    export_step(gt.solid, str(out / f"{entry['id']}.step"))
-    meta = gt.metadata()
+    if entry["tier"] == "imported":
+        shape = load_imported_shape(entry)
+        export_step(shape, str(out / f"{entry['id']}.step"))
+        meta = imported_metadata(shape, entry)
+    elif entry["tier"] == "generated":
+        gt = generate(entry["family"], entry["seed"])
+        export_step(gt.solid, str(out / f"{entry['id']}.step"))
+        meta = gt.metadata()
+        shape = gt.solid
+    else:
+        raise NotImplementedError(f"tier {entry['tier']!r} is not buildable yet")
     meta["id"] = entry["id"]
     meta["tier"] = entry["tier"]
     meta["strata"] = entry.get("strata", {})
     (out / f"{entry['id']}.json").write_text(json.dumps(meta, indent=2) + "\n")
-    return gt
+    return shape
 
 
 def build_grid(manifest: dict[str, Any], grid: str, out: Path) -> int:
