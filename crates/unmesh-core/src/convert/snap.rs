@@ -8,10 +8,7 @@ pub fn snap_normals(v: &[V3], regions: &mut [Region], tol: f64, sigma: f64, snap
     let mut done = vec![false; n];
     let mut classes: Vec<V3> = Vec::new();
 
-    let allow = |r: &Region| -> f64 {
-        (snap_deg.to_radians() + (2.0 * tol).atan2(r.width.max(1e-300)))
-            .min(std::f64::consts::FRAC_PI_2)
-    };
+    let allow = |_r: &Region| -> f64 { snap_deg.to_radians() };
     let allow_cos = |r: &Region| -> f64 { allow(r).cos() };
     let try_normal = |r: &Region, cand: V3| -> Option<(f64, f64, f64)> {
         let d = offset_fit(v, &r.verts, cand, tol);
@@ -124,4 +121,59 @@ pub fn estimate_noise(v: &[V3], regions: &[Region]) -> f64 {
         .iter()
         .fold((0.0, 0.0), |(s, d), x| (s + x.1, d + x.2));
     (ss / dof).sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::linalg::dot;
+    use super::*;
+
+    fn tilted_strip(tilt_deg: f64) -> (Vec<V3>, Region) {
+        let t = tilt_deg.to_radians().tan();
+        let mut v = Vec::new();
+        for i in 0..6 {
+            let x = -0.025 + 0.01 * i as f64;
+            for &y in &[0.0, 0.5, 1.0] {
+                v.push([x, y, x * t]);
+            }
+        }
+        let n = [-t, 0.0, 1.0];
+        let l = (t * t + 1.0).sqrt();
+        let n = [n[0] / l, 0.0, n[2] / l];
+        let verts: Vec<(u32, f64)> = (0..v.len() as u32).map(|i| (i, 1.0)).collect();
+        let r = Region {
+            faces: vec![0],
+            surface: Surface::Plane { normal: n, offset: 0.0 },
+            area: 0.05,
+            width: 0.05,
+            verts,
+            rms: 0.0,
+            max: 0.0,
+        };
+        (v, r)
+    }
+
+    fn snap_tilt(tilt_deg: f64) -> V3 {
+        let (v, r) = tilted_strip(tilt_deg);
+        let mut regions = vec![r];
+        snap_normals(&v, &mut regions, 1e-3, 1e-4, 0.5);
+        regions[0].surface.as_plane().unwrap().0
+    }
+
+    #[test]
+    fn one_degree_tilt_on_50um_face_stays_unsnapped() {
+        let n = snap_tilt(1.0);
+        let cos = dot(n, [0.0, 0.0, 1.0]);
+        assert!(
+            cos < 0.5_f64.to_radians().cos(),
+            "1.0 deg tilt was snapped to the axis"
+        );
+        assert!((cos - 1.0_f64.to_radians().cos()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sub_snap_tilt_still_snaps() {
+        let n = snap_tilt(0.2);
+        assert_eq!(n, [0.0, 0.0, 1.0]);
+    }
 }
