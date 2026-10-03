@@ -205,7 +205,7 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
     if floors.get("topology_match"):
         topo = r.get("topology") or {}
         if topo.get("topology_match") is not True:
-            aspects = ("faces", "pairs", "roles", "shells", "genera", "holes")
+            aspects = ("faces", "pairs", "edges", "roles", "shells", "genera", "holes")
             failed = [k for k in aspects if not topo.get(f"{k}_match")]
             bad(f"topology mismatch ({', '.join(failed) if failed else 'not scored'})")
     if floors.get("through_holes_equal"):
