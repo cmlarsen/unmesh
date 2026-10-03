@@ -57,8 +57,12 @@ scripts/check.sh
   owner's credentials this check is NOT agent-proof (residual risk): anything acting with an
   approver's credentials can waive. The planned identity split gives agents their own
   credentials so the allowlist and timing rules bind them.
-  CI uploads each main push's smoke JSONL as the `smoke-baseline-<os>` artifact; PR runs download
-  the latest one and compare against it. A missing baseline skips compare with a notice, never fails.
+  CI uploads each main push's smoke JSONL as the `smoke-baseline-<os>` artifact. PR runs pin
+  `harness/grids/smoke.json` to main's copy, then compare the PR results against the baseline
+  from the run for the PR base sha (falling back to the latest successful main run with a
+  warning). Compare and check-waiver always execute from a worktree of origin/main, never
+  from PR code. No main run at all skips compare with a warning; a main run whose artifact
+  cannot be downloaded fails the job.
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions

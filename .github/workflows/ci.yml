@@ -37,6 +37,12 @@ jobs:
         with:
           path: ${{ runner.temp }}/smoke/cache
           key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py', 'harness/src/unmesh_harness/runner/execute.py', 'harness/src/unmesh_harness/degrade/__init__.py', 'harness/src/unmesh_harness/degrade/fillets.py', 'harness/src/unmesh_harness/degrade/retriangulate.py') }}
+      - name: Pin smoke grid to main for PR compare
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main --depth 1
+          git show FETCH_HEAD:harness/grids/smoke.json > harness/grids/smoke.json
+          git diff --stat
       - name: Smoke grid
         env:
           UV_LOCKED: "1"
@@ -66,28 +72,64 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           base="$RUNNER_TEMP/baseline"
+          main_tree="$RUNNER_TEMP/unmesh-main"
           mkdir -p "$base"
+          git fetch origin main --depth 1
+          git worktree add --detach "$main_tree" FETCH_HEAD
+          export PYTHONPATH="$main_tree/harness/src"
+          base_sha="${{ github.event.pull_request.base.sha }}"
           run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow ci.yml \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            --status success --commit "$base_sha" --limit 1 --json databaseId --jq '.[0].databaseId')
           if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "compare: no successful main run yet, skipping"
+            echo "::warning::no successful main run for base sha $base_sha, falling back to latest"
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow ci.yml \
+              --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::warning::no successful main run yet, skipping compare"
             exit 0
           fi
           if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
             -n "smoke-baseline-${{ matrix.os }}" -D "$base"; then
-            echo "compare: main baseline artifact missing, skipping"
-            exit 0
+            echo "::error::baseline artifact missing for main run $run_id"
+            exit 1
           fi
-          if uv run unmesh-harness compare "$base/smoke.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
+          # Compare and waive with origin/main's code. While main predates this
+          # feature the PR that introduces it runs its own code instead, loudly.
+          use_main=1
+          if [ ! -f "$main_tree/harness/src/unmesh_harness/runner/compare.py" ]; then
+            echo "::warning::main predates compare, using PR code (transitional)"
+            use_main=0
+          else
+            export PYTHONPATH="$main_tree/harness/src"
+          fi
+          run_compare() {
+            if [ "$use_main" = 1 ]; then
+              uv run --locked python -c "from unmesh_harness.cli import main; import sys; raise SystemExit(main(['compare', sys.argv[1], sys.argv[2]]))" "$1" "$2"
+            else
+              uv run --locked unmesh-harness compare "$1" "$2"
+            fi
+          }
+          if run_compare "$base/smoke.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
             echo "compare: no regressions"
             exit 0
           fi
-          echo "compare: regressions found, checking for a human-approved waiver"
-          if uv run scripts/check-waiver; then
-            echo "compare: regression waived by a human"
+          echo "compare: regressions found, checking for an approved waiver"
+          waiver="scripts/check-waiver"
+          waiver_args="--run-a $base/smoke.jsonl --run-b $RUNNER_TEMP/smoke/smoke.jsonl"
+          if [ "$use_main" = 1 ]; then
+            waiver="$main_tree/scripts/check-waiver"
+            if ! uv run --locked python "$waiver" --help | grep -q -- --run-a; then
+              echo "::warning::main check-waiver predates --run-a/--run-b, using its semantics"
+              waiver_args=""
+            fi
+          fi
+          # shellcheck disable=SC2086
+          if uv run --locked python "$waiver" $waiver_args; then
+            echo "compare: regression waived"
             exit 0
           fi
-          echo "compare: regressions without a human-approved waiver"
+          echo "compare: regressions without an approved waiver"
           exit 1
       - name: Wheel imports on Python 3.11 without OCP
         run: |
