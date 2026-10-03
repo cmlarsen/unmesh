@@ -26,10 +26,24 @@ def vertex_set(mesh):
     return np.unique(np.round(mesh.tris.reshape(-1, 3), 6), axis=0)
 
 
+def triangle_set(mesh):
+    return {frozenset(map(tuple, t)) for t in np.round(mesh.tris, 6).tolist()}
+
+
 def assert_vertex_sets_match(a, b, tol=1e-6):
     d = np.linalg.norm(a[:, None, :] - b[None, :, :], axis=2)
     assert (d.min(axis=1) <= tol).all()
     assert (d.min(axis=0) <= tol).all()
+
+
+def preprocessed(family, seed):
+    from unmesh_harness.degrade import apply_pair_preprocess
+
+    gt = generate(family, seed)
+    lin, ang = gt.parameters["pair_deflection"]
+    return apply_pair_preprocess(
+        tessellate(gt.solid, lin, ang), gt.parameters["pair_preprocess"], seed
+    )
 
 
 def test_families_registered():
@@ -97,6 +111,21 @@ def test_pair_one_vertex_sets_match_at_pair_deflection():
         assert len(va) == len(vb) == 2 * a.parameters["n"], seed
         assert_vertex_sets_match(va, vb)
         assert math.isclose(ang, 4 * math.pi / a.parameters["n"] * 1.02, rel_tol=1e-9)
+
+
+def test_pair_one_preprocess_recorded():
+    for seed in range(8):
+        for family in PAIR_ONE:
+            assert generate(family, seed).parameters["pair_preprocess"] == [
+                ["canonical_planar", {}]
+            ]
+
+
+def test_pair_one_triangle_sets_match_after_preprocess():
+    for seed in range(32):
+        assert triangle_set(preprocessed("ngon_prism", seed)) == triangle_set(
+            preprocessed("coarse_cylinder_prism", seed)
+        ), seed
 
 
 def test_pair_two_families_registered():
@@ -183,6 +212,24 @@ def test_pair_two_vertex_sets_match_at_pair_deflection():
         )
 
 
+def test_pair_two_preprocess_recorded():
+    for seed in range(8):
+        f = generate("one_segment_fillet", seed)
+        c = generate("chamfer_same_chord", seed)
+        assert f.parameters["pair_preprocess"] == [
+            ["fillet_rows", {"segments": 1}],
+            ["canonical_planar", {}],
+        ]
+        assert c.parameters["pair_preprocess"] == [["canonical_planar", {}]]
+
+
+def test_pair_two_triangle_sets_match_after_preprocess():
+    for seed in range(32):
+        assert triangle_set(preprocessed("one_segment_fillet", seed)) == triangle_set(
+            preprocessed("chamfer_same_chord", seed)
+        ), seed
+
+
 def test_pair_three_families_registered():
     assert set(PAIR_THREE) <= set(families())
 
@@ -256,6 +303,24 @@ def test_pair_three_vertex_sets_match_at_pair_deflection():
             vertex_set(degraded),
             vertex_set(tessellate(t.solid, lin, ang)),
         )
+
+
+def test_pair_three_preprocess_recorded():
+    for seed in range(8):
+        f = generate("two_segment_fillet", seed)
+        t = generate("two_planes", seed)
+        assert f.parameters["pair_preprocess"] == [
+            ["fillet_rows", {"segments": 2}],
+            ["canonical_planar", {}],
+        ]
+        assert t.parameters["pair_preprocess"] == [["canonical_planar", {}]]
+
+
+def test_pair_three_triangle_sets_match_after_preprocess():
+    for seed in range(32):
+        assert triangle_set(preprocessed("two_segment_fillet", seed)) == triangle_set(
+            preprocessed("two_planes", seed)
+        ), seed
 
 
 def test_new_smoke_entries_pinned():

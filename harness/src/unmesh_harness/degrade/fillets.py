@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from .core import register
-from .retriangulate import triangulate_loops_3d
+from .retriangulate import canonical_triangulate_loops
 
 
 def segments_for(severity: float) -> int:
@@ -154,16 +154,18 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
             ]
         )
     grid.append(linek)
-    rows = []
-    for si in range(len(stations) - 1):
-        for j in range(k):
-            a, b, c, d = grid[j][si], grid[j + 1][si], grid[j + 1][si + 1], grid[j][si + 1]
-            rows += [(a, b, c), (a, c, d)]
     ref = np.zeros(3)
     for t in face_tris:
         ref += np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0])) / 2
     if float(np.linalg.norm(ref)) <= 0.0:
         return None
+    rows = []
+    for j in range(k):
+        loop = grid[j] + grid[j + 1][::-1]
+        band = canonical_triangulate_loops(ref, [loop])
+        if band is None:
+            return None
+        rows += band
     probe = np.cross(np.subtract(rows[0][1], rows[0][0]), np.subtract(rows[0][2], rows[0][0]))
     if float(probe @ ref) < 0:
         rows = [(a, c, b) for a, b, c in rows]
@@ -190,8 +192,8 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     "3, 2 or 1 segments across their width (severity up to 1/3, 2/3, above), using the fillet's "
     "tangent-line endpoints as nodes; affected planar neighbours are re-triangulated",
 )
-def fillet_rows(mesh, severity, rng):
-    k = segments_for(severity)
+def fillet_rows(mesh, severity, rng, segments=None):
+    k = segments if segments is not None else segments_for(severity)
     tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
     fids = mesh.face_id.tolist()
     polymap = {idx: [tuple(p) for p in adj.points] for idx, adj in enumerate(mesh.adjacency)}
@@ -228,8 +230,8 @@ def fillet_rows(mesh, severity, rng):
             if loops is None:
                 ok = False
                 break
-            clipped = triangulate_loops_3d(
-                np.array(mesh.faces[other].params["normal"]), loops, "delaunay", rng
+            clipped = canonical_triangulate_loops(
+                np.array(mesh.faces[other].params["normal"]), loops
             )
             if clipped is None:
                 ok = False

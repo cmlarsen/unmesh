@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from ..labels import outward_normals
 from .core import register
 
 
@@ -110,6 +111,11 @@ def _min_angle(a, b, c) -> float:
     return min(math.acos(max(-1.0, min(1.0, x))) for x in cosines)
 
 
+def _canonical_key(poly, i: int, m: int):
+    a, b, c = poly[(i - 1) % m], poly[i], poly[(i + 1) % m]
+    return (_min_angle(a, b, c), tuple(sorted((a, b, c))))
+
+
 def _clip(poly, scheme: str, rng) -> list[tuple] | None:
     poly = list(poly)
     if _area2(poly) < 0:
@@ -172,9 +178,16 @@ def _clip(poly, scheme: str, rng) -> list[tuple] | None:
             else:
                 pick = cands[int(rng.integers(len(cands)))]
         else:
-            pick = max(
-                cands, key=lambda i: (_min_angle(poly[(i - 1) % m], poly[i], poly[(i + 1) % m]), -i)
-            )
+            if scheme == "canonical":
+                pick = max(cands, key=lambda i: _canonical_key(poly, i, m))
+            else:
+                pick = max(
+                    cands,
+                    key=lambda i: (
+                        _min_angle(poly[(i - 1) % m], poly[i], poly[(i + 1) % m]),
+                        -i,
+                    ),
+                )
         a, b, c = poly[(pick - 1) % m], poly[pick], poly[(pick + 1) % m]
         tris.append((a, b, c))
         if scheme == "strip":
@@ -234,11 +247,104 @@ def triangulate_loops_3d(normal, loops, scheme, rng) -> list[tuple] | None:
     return out
 
 
+ROUND_DECIMALS = 9
+
+
+def _r3(p) -> tuple:
+    return tuple(np.round(np.array(p, dtype=np.float64), ROUND_DECIMALS).tolist())
+
+
+def _newell(loop) -> np.ndarray:
+    n = np.zeros(3)
+    m = len(loop)
+    for i in range(m):
+        a = np.array(loop[i], dtype=np.float64)
+        b = np.array(loop[(i + 1) % m], dtype=np.float64)
+        n[0] += (a[1] - b[1]) * (a[2] + b[2])
+        n[1] += (a[2] - b[2]) * (a[0] + b[0])
+        n[2] += (a[0] - b[0]) * (a[1] + b[1])
+    return n
+
+
+def _rot_min(loop: list) -> list:
+    k = min(range(len(loop)), key=lambda i: loop[i])
+    return loop[k:] + loop[:k]
+
+
+def canonical_triangulate_loops(ref_normal, loops: list[list[tuple]]) -> list[tuple] | None:
+    ref = np.array(ref_normal, dtype=np.float64)
+    back: dict = {}
+    rloops = []
+    for loop in loops:
+        if len(loop) < 3:
+            return None
+        rl = [_r3(p) for p in loop]
+        for o, r in zip(loop, rl, strict=True):
+            if r in back and back[r] != tuple(o):
+                return None
+            back[r] = tuple(o)
+        dedup = [rl[0]]
+        for p in rl[1:]:
+            if p != dedup[-1]:
+                dedup.append(p)
+        if len(dedup) < 3:
+            return None
+        n = _newell(dedup)
+        if float(np.linalg.norm(n)) <= 0.0:
+            return None
+        rloops.append(_rot_min(dedup[::-1] if float(n @ ref) < 0 else dedup))
+    areas = []
+    for rl in rloops:
+        n = _newell(rl)
+        if float(np.linalg.norm(n)) <= 0.0:
+            return None
+        areas.append(float(n @ ref))
+    outer_k = max(range(len(rloops)), key=lambda k: abs(areas[k]))
+    basis_n = _newell(rloops[outer_k])
+    if float(basis_n @ ref) <= 0.0:
+        return None
+    u, v = _basis(basis_n)
+    proj = {p: (float(np.array(p) @ u), float(np.array(p) @ v)) for rl in rloops for p in rl}
+    loops2 = []
+    for rl in rloops:
+        loop2 = [proj[p] for p in rl]
+        start = min(range(len(loop2)), key=lambda i: loop2[i])
+        loops2.append(loop2[start:] + loop2[:start])
+    outer = loops2[outer_k]
+    if _area2(outer) < 0:
+        outer = outer[::-1]
+    holes = [x if _area2(x) < 0 else x[::-1] for k, x in enumerate(loops2) if k != outer_k]
+    merged = _bridge(outer, holes) if holes else list(outer)
+    if merged is None:
+        return None
+    start = min(range(len(merged)), key=lambda i: merged[i])
+    merged = merged[start:] + merged[:start]
+    if _area2(merged) < 0:
+        merged = merged[::-1]
+    back2 = {}
+    for p3, p2 in proj.items():
+        if p2 in back2 and back2[p2] != p3:
+            return None
+        back2[p2] = p3
+    clipped = _clip(merged, "canonical", None)
+    if clipped is None:
+        return None
+    out = []
+    for a, b, c in clipped:
+        t = (back[back2[a]], back[back2[b]], back[back2[c]])
+        n = np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0]))
+        out.append((t[0], t[2], t[1]) if float(n @ ref) < 0 else t)
+    return out
+
+
 def retriangulate_face(fid, tris, tis, faces, scheme, rng) -> bool:
     loops = loops_from_tris(tris, tis)
     if loops is None:
         return False
-    clipped = triangulate_loops_3d(np.array(faces[fid].params["normal"]), loops, scheme, rng)
+    if scheme == "canonical":
+        clipped = canonical_triangulate_loops(np.array(faces[fid].params["normal"]), loops)
+    else:
+        clipped = triangulate_loops_3d(np.array(faces[fid].params["normal"]), loops, scheme, rng)
     if clipped is None or len(clipped) != len(tis):
         return False
     for ti, t in zip(tis, clipped, strict=True):
@@ -272,3 +378,102 @@ def retriangulate(mesh, severity, rng):
     mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
     mesh.face_id = np.array(fids, dtype=mesh.face_id.dtype)
     return {"scheme": scheme, "faces_retriangulated": done, "faces_skipped": skipped}
+
+
+def _canonical_band(face, tris, tis) -> bool:
+    prm = face.params
+    axis = np.array(prm["axis"], dtype=np.float64)
+    if float(np.linalg.norm(axis)) <= 0.0:
+        return False
+    axis /= np.linalg.norm(axis)
+    origin = np.array(prm["origin"], dtype=np.float64)
+    corners = [tris[ti] for ti in tis]
+    verts = {p for t in corners for p in t}
+    stations: dict = {}
+    for p in verts:
+        s = round(float((np.array(p) - origin) @ axis), ROUND_DECIMALS)
+        stations.setdefault(s, []).append(p)
+    if len(stations) != 2:
+        return False
+    (_, blo), (_, bhi) = sorted(stations.items())
+
+    def rkey(p):
+        a = float((np.array(p) - origin) @ axis)
+        r = np.array(p, dtype=np.float64) - origin - a * axis
+        return tuple(np.round(r, ROUND_DECIMALS).tolist())
+
+    lomap: dict = {}
+    for p in blo:
+        lomap.setdefault(rkey(p), []).append(p)
+    himap: dict = {}
+    for p in bhi:
+        himap.setdefault(rkey(p), []).append(p)
+    if set(lomap) != set(himap):
+        return False
+    if any(len(v) != 1 for v in list(lomap.values()) + list(himap.values())):
+        return False
+    u, v = _basis(axis)
+    angles = {}
+    for k in lomap:
+        radial = np.array(k, dtype=np.float64)
+        angles[k] = math.atan2(float(radial @ v), float(radial @ u))
+    ring = sorted(lomap, key=lambda k: angles[k])
+    if len(ring) < 3:
+        return False
+    index = {ti: t for ti, t in zip(tis, corners, strict=True)}
+    repl = {}
+    for j in range(len(ring)):
+        k0, k1 = ring[j], ring[(j + 1) % len(ring)]
+        quad = [lomap[k0][0], lomap[k1][0], himap[k1][0], himap[k0][0]]
+        qset = set(quad)
+        pair = [ti for ti, t in index.items() if set(t) <= qset]
+        if len(pair) != 2:
+            return False
+        got = set()
+        for ti in pair:
+            got.update(index[ti])
+        if got != qset:
+            return False
+        if len(set(index[pair[0]]) & set(index[pair[1]])) != 2:
+            return False
+        center = sum(np.array(p) for p in quad) / 4.0
+        try:
+            ref = outward_normals(face, center[None])[0]
+        except Exception:
+            return False
+        if not np.all(np.isfinite(ref)):
+            return False
+        new = canonical_triangulate_loops(ref, [quad])
+        if new is None or len(new) != 2:
+            return False
+        repl[pair[0]] = new[0]
+        repl[pair[1]] = new[1]
+    for ti, t in repl.items():
+        tris[ti] = t
+    return True
+
+
+def canonical_planar(mesh) -> dict:
+    tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
+    fids = mesh.face_id.tolist()
+    by_face: dict[int, list[int]] = {}
+    for ti, f in enumerate(fids):
+        by_face.setdefault(f, []).append(ti)
+    done = skipped = 0
+    for fid in sorted(by_face):
+        face = mesh.faces[fid]
+        tis = by_face[fid]
+        if face.surface == "plane":
+            if retriangulate_face(fid, tris, tis, mesh.faces, "canonical", None):
+                done += 1
+            else:
+                skipped += 1
+        elif face.surface == "cylinder":
+            if _canonical_band(face, tris, tis):
+                done += 1
+            else:
+                skipped += 1
+        else:
+            skipped += 1
+    mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+    return {"faces_retriangulated": done, "faces_skipped": skipped}

@@ -55,6 +55,7 @@ def ngon_prism(rng):
         "truth": "polygon",
         "pair_family": "coarse_cylinder_prism",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["canonical_planar", {}]],
     }
     features = [
         {
@@ -83,6 +84,7 @@ def coarse_cylinder_prism(rng):
         "truth": "cylinder",
         "pair_family": "ngon_prism",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["canonical_planar", {}]],
     }
     features = [
         {
@@ -145,6 +147,7 @@ def one_segment_fillet(rng):
         "truth": "fillet",
         "pair_family": "chamfer_same_chord",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["fillet_rows", {"segments": 1}], ["canonical_planar", {}]],
     }
     features = [{"type": "vertical_fillet", "radius": r, "edges": 1, "axis": [0, 0, 1]}]
     return solid, params, features
@@ -178,6 +181,7 @@ def chamfer_same_chord(rng):
         "truth": "chamfer",
         "pair_family": "one_segment_fillet",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["canonical_planar", {}]],
     }
     features = [{"type": "vertical_chamfer", "length": c, "edges": 1, "axis": [0, 0, 1]}]
     return solid, params, features
@@ -212,6 +216,7 @@ def two_segment_fillet(rng):
         "truth": "fillet",
         "pair_family": "two_planes",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["fillet_rows", {"segments": 2}], ["canonical_planar", {}]],
     }
     features = [
         {"type": "vertical_fillet", "radius": r, "edges": 1, "segments": 2, "axis": [0, 0, 1]}
@@ -243,6 +248,7 @@ def two_planes(rng):
         "truth": "two_planes",
         "pair_family": "two_segment_fillet",
         "pair_deflection": [lin, ang],
+        "pair_preprocess": [["canonical_planar", {}]],
     }
     features = [
         {
