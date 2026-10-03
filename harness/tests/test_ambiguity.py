@@ -5,12 +5,18 @@ import pytest
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 
 from unmesh_harness.corpus import ambiguity_entries, load_manifest, select
+from unmesh_harness.degrade import apply as apply_degradation
 from unmesh_harness.groundtruth import families, generate, validity_problems
 from unmesh_harness.labels import tessellate
 
 PAIR_ONE = ("ngon_prism", "coarse_cylinder_prism")
 PAIR_TWO = ("one_segment_fillet", "chamfer_same_chord")
 PAIR_THREE = ("two_segment_fillet", "two_planes")
+
+
+@pytest.fixture
+def pair_seeds(request):
+    return range(32) if request.config.getoption("--slow") else range(8)
 
 
 def surface_counts(solid):
@@ -25,10 +31,24 @@ def vertex_set(mesh):
     return np.unique(np.round(mesh.tris.reshape(-1, 3), 6), axis=0)
 
 
+def triangle_set(mesh):
+    return {frozenset(map(tuple, t)) for t in np.round(mesh.tris, 6).tolist()}
+
+
 def assert_vertex_sets_match(a, b, tol=1e-6):
     d = np.linalg.norm(a[:, None, :] - b[None, :, :], axis=2)
     assert (d.min(axis=1) <= tol).all()
     assert (d.min(axis=0) <= tol).all()
+
+
+def preprocessed(family, seed):
+    from unmesh_harness.degrade import apply_pair_preprocess
+
+    gt = generate(family, seed)
+    lin, ang = gt.parameters["pair_deflection"]
+    return apply_pair_preprocess(
+        tessellate(gt.solid, lin, ang), gt.parameters["pair_preprocess"], seed
+    )
 
 
 def test_families_registered():
@@ -73,10 +93,10 @@ def test_pair_one_surface_types():
         assert surface_counts(cyl.solid) == {"GeomAbs_Plane": 2, "GeomAbs_Cylinder": 1}
 
 
-def test_pair_one_valid_deterministic_and_closed_form_volume():
+def test_pair_one_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_ONE:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -96,6 +116,21 @@ def test_pair_one_vertex_sets_match_at_pair_deflection():
         assert len(va) == len(vb) == 2 * a.parameters["n"], seed
         assert_vertex_sets_match(va, vb)
         assert math.isclose(ang, 4 * math.pi / a.parameters["n"] * 1.02, rel_tol=1e-9)
+
+
+def test_pair_one_preprocess_recorded():
+    for seed in range(8):
+        for family in PAIR_ONE:
+            assert generate(family, seed).parameters["pair_preprocess"] == [
+                ["canonical_planar", {}]
+            ]
+
+
+def test_pair_one_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
+        assert triangle_set(preprocessed("ngon_prism", seed)) == triangle_set(
+            preprocessed("coarse_cylinder_prism", seed)
+        ), seed
 
 
 def test_pair_two_families_registered():
@@ -125,10 +160,10 @@ def test_pair_two_surface_types():
         assert surface_counts(generate("chamfer_same_chord", seed).solid) == {"GeomAbs_Plane": 7}
 
 
-def test_pair_two_valid_deterministic_and_closed_form_volume():
+def test_pair_two_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_TWO:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -170,19 +205,34 @@ def test_pair_two_chamfer_vertices_are_subset_of_fillet():
         assert (d.min(axis=1) <= 1e-6).all(), seed
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
-)
 def test_pair_two_vertex_sets_match_at_pair_deflection():
     for seed in range(8):
         f = generate("one_segment_fillet", seed)
         c = generate("chamfer_same_chord", seed)
         lin, ang = f.parameters["pair_deflection"]
+        degraded = apply_degradation("fillet_rows", tessellate(f.solid, lin, ang), 0.9, 0)
         assert_vertex_sets_match(
-            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(degraded),
             vertex_set(tessellate(c.solid, lin, ang)),
         )
+
+
+def test_pair_two_preprocess_recorded():
+    for seed in range(8):
+        f = generate("one_segment_fillet", seed)
+        c = generate("chamfer_same_chord", seed)
+        assert f.parameters["pair_preprocess"] == [
+            ["fillet_rows", {"segments": 1}],
+            ["canonical_planar", {}],
+        ]
+        assert c.parameters["pair_preprocess"] == [["canonical_planar", {}]]
+
+
+def test_pair_two_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
+        assert triangle_set(preprocessed("one_segment_fillet", seed)) == triangle_set(
+            preprocessed("chamfer_same_chord", seed)
+        ), seed
 
 
 def test_pair_three_families_registered():
@@ -212,10 +262,10 @@ def test_pair_three_surface_types():
         assert surface_counts(generate("two_planes", seed).solid) == {"GeomAbs_Plane": 8}
 
 
-def test_pair_three_valid_deterministic_and_closed_form_volume():
+def test_pair_three_valid_deterministic_and_closed_form_volume(pair_seeds):
     from .volumes import expected_volume
 
-    for seed in range(32):
+    for seed in pair_seeds:
         for family in PAIR_THREE:
             gt = generate(family, seed)
             assert validity_problems(gt.solid) == [], (family, seed)
@@ -248,19 +298,34 @@ def test_pair_three_cut_points_match_fillet_tangents():
             assert (d.min(axis=0) <= 1e-6).all(), seed
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCCT meshes a 90-degree fillet with at least 3 segments; #26 adds the re-tessellation",
-)
 def test_pair_three_vertex_sets_match_at_pair_deflection():
     for seed in range(8):
         f = generate("two_segment_fillet", seed)
         t = generate("two_planes", seed)
         lin, ang = f.parameters["pair_deflection"]
+        degraded = apply_degradation("fillet_rows", tessellate(f.solid, lin, ang), 0.5, 0)
         assert_vertex_sets_match(
-            vertex_set(tessellate(f.solid, lin, ang)),
+            vertex_set(degraded),
             vertex_set(tessellate(t.solid, lin, ang)),
         )
+
+
+def test_pair_three_preprocess_recorded():
+    for seed in range(8):
+        f = generate("two_segment_fillet", seed)
+        t = generate("two_planes", seed)
+        assert f.parameters["pair_preprocess"] == [
+            ["fillet_rows", {"segments": 2}],
+            ["canonical_planar", {}],
+        ]
+        assert t.parameters["pair_preprocess"] == [["canonical_planar", {}]]
+
+
+def test_pair_three_triangle_sets_match_after_preprocess(pair_seeds):
+    for seed in pair_seeds:
+        assert triangle_set(preprocessed("two_segment_fillet", seed)) == triangle_set(
+            preprocessed("two_planes", seed)
+        ), seed
 
 
 def test_new_smoke_entries_pinned():
