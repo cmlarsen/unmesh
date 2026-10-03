@@ -117,4 +117,9 @@ def expected_volume(gt):
             + math.pi * r * r * (u + v + w)
             + 4 / 3 * math.pi * r**3
         )
+    if f == "ngon_prism":
+        n, radius, height = p["n"], p["radius"], p["height"]
+        return n / 2 * radius**2 * math.sin(2 * math.pi / n) * height
+    if f == "coarse_cylinder_prism":
+        return math.pi * p["radius"] ** 2 * p["height"]
     raise KeyError(f)

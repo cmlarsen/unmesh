@@ -60,11 +60,14 @@ def generate(family: str, seed: int) -> GroundTruth:
     result = _REGISTRY[family](rng)
     solid, parameters, features = result[0], result[1], result[2]
     tags = result[3] if len(result) > 3 else None
+    parameters = dict(parameters)
+    if "pair_family" in parameters:
+        parameters["pair_id"] = f"{parameters['pair_family']}-{seed:04d}"
     return GroundTruth(family, seed, solid, parameters, features, face_tags=tags)
 
 
 def _load_builtin_families() -> None:
-    from . import chamfer_fillet, curved, planar  # noqa: F401
+    from . import ambiguity, chamfer_fillet, curved, planar  # noqa: F401
 
 
 def fingerprint(shape: Shape) -> dict[str, Any]:
