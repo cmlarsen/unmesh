@@ -111,6 +111,8 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     radius = float(face.params["radius"])
     s1 = [_axial(origin, axis, p) for p in t1]
     s2 = [_axial(origin, axis, p) for p in t2]
+    if sorted(set(s1)) != sorted(set(s2)):
+        return None
     stations = sorted(set(s1) | set(s2))
     if len(stations) < 2:
         return None
