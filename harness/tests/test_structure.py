@@ -1,8 +1,9 @@
 import dataclasses
 import json
+import random
 
 import pytest
-from build123d import Box, Cylinder
+from build123d import Box, Cylinder, Pos, Rot
 
 from unmesh.ir import Adjacency, Region, validate
 from unmesh_harness.corpus import load_manifest, select
@@ -185,11 +186,83 @@ def test_oracle_topology_matches_curved_families(family):
     json.dumps(result)
 
 
+@pytest.mark.slow
 def test_oracle_topology_matches_smoke_parts():
     for entry in select(load_manifest(), "smoke"):
         mesh = tessellate(generate(entry["family"], entry["seed"]).solid, 0.1, 0.5)
         result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
         assert result["topology_match"], (entry["id"], result)
+
+
+def _relabel_regions(ir, perm):
+    regions = sorted(
+        [dataclasses.replace(r, id=perm[r.id]) for r in ir.regions], key=lambda r: r.id
+    )
+    shells = [dataclasses.replace(s, regions=sorted(perm[r] for r in s.regions)) for s in ir.shells]
+    adjacencies = []
+    for adj in ir.adjacencies:
+        x, y = (perm[r] for r in adj.regions)
+        bounds = adj.boundaries
+        if x > y:
+            x, y = y, x
+            bounds = [
+                dataclasses.replace(
+                    b,
+                    points=b.points[::-1],
+                    start_vertex=b.end_vertex,
+                    end_vertex=b.start_vertex,
+                )
+                for b in bounds
+            ]
+        adjacencies.append(Adjacency((x, y), bounds))
+    adjacencies.sort(key=lambda a: a.regions)
+    vertices = [
+        dataclasses.replace(v, regions=sorted(perm[r] for r in v.regions)) for v in ir.vertices
+    ]
+    return dataclasses.replace(
+        ir, regions=regions, shells=shells, adjacencies=adjacencies, vertices=vertices
+    )
+
+
+def test_renumbered_oracle_regions_still_match():
+    mesh = tessellate(Box(10, 10, 10) - Cylinder(2, 20), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    perm = list(range(len(ir.regions)))
+    random.Random(1).shuffle(perm)
+    relabeled = _relabel_regions(ir, perm)
+    assert validate(relabeled) == []
+    result = score_topology(mesh, mesh.face_id, mesh.tris, relabeled)
+    assert result["topology_match"], result
+    assert result["pairs_match"] and result["roles_match"] and result["shells_match"]
+    json.dumps(result)
+
+
+def test_swapped_shell_roles_do_not_match():
+    mesh = tessellate(Box(30, 30, 30) - Box(10, 10, 10), 0.1, 0.5)
+    ir = build_oracle_ir(mesh)
+    assert [s.role for s in ir.shells] == ["outer", "cavity"]
+    swapped = dataclasses.replace(
+        ir,
+        shells=[
+            dataclasses.replace(ir.shells[0], role="cavity", parent=1),
+            dataclasses.replace(ir.shells[1], role="outer", parent=None),
+        ],
+    )
+    assert validate(swapped) == []
+    result = score_topology(mesh, mesh.face_id, mesh.tris, swapped)
+    assert result["topology_match"] is False
+    assert result["shells_match"] is False
+    assert result["pairs_match"] and result["roles_match"]
+    json.dumps(result)
+
+
+def test_rod_through_block_oracle_matches():
+    solid = Box(10, 10, 10) + Pos(0, 0, 5) * Rot(0, 90, 0) * Cylinder(3, 20)
+    mesh = tessellate(solid, LIN, ANG)
+    result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
+    assert result["topology_match"], result
+    assert result["pairs_match"] and result["edges_match"]
+    json.dumps(result)
 
 
 def test_dropped_bore_is_caught_by_through_holes():
