@@ -28,13 +28,6 @@ impl Surface {
         }
     }
 
-    pub fn param_count(&self) -> usize {
-        match self {
-            Surface::Plane { .. } => 3,
-            Surface::Facets => 0,
-        }
-    }
-
     pub fn linearize(&self, _p: V3, weight: f64) -> Option<Constraint> {
         match *self {
             Surface::Plane { normal, offset } => Some(Constraint {

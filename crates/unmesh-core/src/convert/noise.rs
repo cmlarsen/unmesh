@@ -363,3 +363,32 @@ fn jacobi(mut a: M6) -> ([f64; NP], M6) {
     }
     (vals, v)
 }
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::super::segment::tri_info;
+    use super::super::topology;
+    use super::*;
+
+    pub fn grid_faces(nx: usize, ny: usize) -> Vec<[u32; 3]> {
+        let id = |i: usize, j: usize| (i * ny + j) as u32;
+        let mut f = Vec::new();
+        for i in 0..nx - 1 {
+            for j in 0..ny - 1 {
+                f.push([id(i, j), id(i + 1, j), id(i + 1, j + 1)]);
+                f.push([id(i, j), id(i + 1, j + 1), id(i, j + 1)]);
+            }
+        }
+        f
+    }
+
+    pub fn sigma_of(v: &[V3], mut faces: Vec<[u32; 3]>) -> Option<f64> {
+        let topo = topology::build(&mut faces);
+        let info = tri_info(v, &faces);
+        estimate_sigma(v, &faces, &topo.nbr, &info, &vec![true; faces.len()])
+    }
+
+    pub fn grid_sigma(v: &[V3], nx: usize, ny: usize) -> f64 {
+        sigma_of(v, grid_faces(nx, ny)).unwrap()
+    }
+}
