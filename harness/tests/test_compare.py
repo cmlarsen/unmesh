@@ -266,3 +266,58 @@ def test_unscorable_cell_is_not_scored_as_perfect_or_zero():
     assert "nan" in row.splitlines()[2]
     comp = run(seeds([1.0, 1.0]), [blank | {"seed": 0}, blank | {"seed": 1}])
     assert not comp.improvements
+
+
+def skipped(seed=0, **fields):
+    return record(
+        seed=seed,
+        status="skipped",
+        skipped_operator="noise_off_plane",
+        error="noise_off_plane does not apply",
+        **fields,
+    )
+
+
+def test_ok_to_skipped_is_coverage_not_regression():
+    comp = run(seeds([1.0, 1.0, 1.0]), [skipped(i) for i in range(3)])
+    assert not comp.regressions and not comp.improvements
+    assert len(comp.coverage_changed) == 1
+    assert "scored in A, skipped in B" in comp.coverage_changed[0].note
+    text = format_comparison(comp)
+    assert "COVERAGE-CHANGED" in text and "0 regression(s)" in text
+
+
+def test_skipped_to_ok_is_coverage_not_regression():
+    comp = run([skipped(i) for i in range(3)], seeds([1.0, 1.0, 1.0]))
+    assert not comp.regressions and not comp.improvements
+    assert len(comp.coverage_changed) == 1
+    assert "skipped in A, scored in B" in comp.coverage_changed[0].note
+
+
+def test_skipped_to_skipped_is_silent():
+    comp = run([skipped(i) for i in range(3)], [skipped(i) for i in range(3)])
+    assert not comp.regressions and not comp.improvements
+    assert not comp.coverage_changed and not comp.only_a and not comp.only_b
+
+
+def test_partially_skipped_cell_compares_shared_scored_seeds():
+    comp = run(seeds([1.0, 1.0, 1.0]), seeds([1.0, 1.0]) + [skipped(2)])
+    assert not comp.regressions and not comp.improvements
+    assert len(comp.coverage_changed) == 1
+    assert "2" in comp.coverage_changed[0].note
+
+
+def test_skipped_cell_absent_elsewhere_is_coverage_not_missing():
+    comp = run([skipped()], [])
+    assert not comp.regressions and not comp.only_a
+    assert len(comp.coverage_changed) == 1
+    comp = run([], [skipped()])
+    assert not comp.regressions and not comp.only_b
+    assert len(comp.coverage_changed) == 1
+
+
+def test_cli_ok_to_skipped_passes(tmp_path):
+    a = write_jsonl(tmp_path / "a.jsonl", seeds([1.0, 1.0, 1.0]))
+    b = write_jsonl(tmp_path / "b.jsonl", [skipped(i) for i in range(3)])
+    assert cli_main(["compare", str(a), str(b)]) == 0
+    assert cli_main(["compare", str(b), str(a)]) == 0

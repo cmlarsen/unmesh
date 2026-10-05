@@ -58,6 +58,10 @@ def stage_of(record: dict) -> str:
     return "converter"
 
 
+def bad_count(counts: dict[str, int]) -> int:
+    return sum(v for k, v in counts.items() if k not in ("ok", "skipped"))
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     from unmesh_harness.runner.grid import git_sha, load_grid, prep_hash
@@ -150,7 +154,7 @@ def main(argv=None) -> int:
         _attribute_timeouts(grid, cache, timeout, timed_out)
 
     print(f"sample wall {wall_total:.0f}s -> {path}", flush=True)
-    bad = sum(v for k, v in counts.items() if k != "ok")
+    bad = bad_count(counts)
     print(f"counts: {counts}  timeout-or-error rate {bad / len(picked):.1%}", flush=True)
     return 0
 

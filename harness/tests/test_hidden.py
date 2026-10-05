@@ -69,6 +69,33 @@ def test_aggregate_has_no_per_part_data():
     assert "part-0" not in text and "part-3" not in text and '"seed"' not in text
 
 
+def test_aggregate_ok_rate_excludes_skipped():
+    records = [
+        {
+            "part": f"part-{i}",
+            "operator": "noise_isotropic",
+            "severity": 0.5,
+            "seed": 100 + i,
+            "converter": "unmesh",
+            "status": "ok",
+            "f1": 0.9,
+            "valid": True,
+            "fallback": False,
+            "under_report": False,
+        }
+        for i in range(3)
+    ]
+    skipped = dict(records[0], part="part-9", seed=109, status="skipped")
+    payload = aggregate(records + [skipped], "abc123")
+    (row,) = payload["rows"]
+    assert row["cells"] == 4
+    assert row["ok_rate"] == 1.0
+    assert row["valid_rate"] == 1.0
+    payload = aggregate([skipped], "abc123")
+    (row,) = payload["rows"]
+    assert row["ok_rate"] is None
+
+
 def test_hidden_run_writes_aggregates_only(tmp_path, monkeypatch):
     monkeypatch.setenv("UNMESH_HIDDEN_SEEDS", "101,102")
     grid = tiny_grid()
