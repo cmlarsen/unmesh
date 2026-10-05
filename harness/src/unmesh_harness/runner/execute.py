@@ -107,7 +107,7 @@ def _score(
     from ..judge import judge, under_reports
     from ..metrics.structure import score_structure, score_topology, score_validity
     from .converters import BASELINES, get_converter
-    from .score import face_recovery, load_step_shape, step_problems
+    from .score import STEP_TOLERANCE_MM, face_recovery, load_step_shape, step_problems
 
     baseline = task["converter"] in BASELINES
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
@@ -264,7 +264,6 @@ def run_prep(task: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok"}
 
 
-STEP_TOLERANCE_MM = 0.006
 JUDGE_FIELDS = (
     "dev_input_max",
     "dev_input_p99",
