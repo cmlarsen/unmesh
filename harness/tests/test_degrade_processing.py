@@ -715,3 +715,20 @@ def test_output_is_pinned_across_platforms(part, name):
         + np.asarray(out.metadata[CONFIDENCE_KEY]).tobytes()
     )
     assert hashlib.sha256(blob).hexdigest()[:16] == PINNED[(part, name)]
+
+
+def test_qem_refuses_a_collapse_that_folds_a_triangle(box):
+    from unmesh_harness.degrade.processing import _Qem
+
+    fine = degrade.apply("refine", box, 0.3, 0)
+    V, F = _weld(fine.tris)
+    qem = _Qem(V, F)
+    top = float(V[:, 2].max())
+    inner = [
+        v for v in range(len(V)) if V[v, 2] == top and all(V[n, 2] == top for n in qem.ring(v))
+    ]
+    a = inner[0]
+    b = min(qem.ring(a))
+    assert qem.collapse_ok(a, b, V[b].copy())[0]
+    far = V[a] + 50.0 * (V[a] - V[b])
+    assert not qem.collapse_ok(a, b, far)[0]
