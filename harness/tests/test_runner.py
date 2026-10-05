@@ -262,6 +262,57 @@ def test_adversarial_plugins_fail_the_gate(tmp_path, monkeypatch):
     assert flagged == {f"adversaries:{n}" for n in ADVERSARY_NAMES}, verdict.violations
 
 
+WIDE_BORE = """
+import json
+
+from build123d import Cylinder, Plane, export_step, import_step
+
+from unmesh_harness.runner.converters import convert_unmesh
+
+
+def wide_bore(p):
+    ir, step, rep = convert_unmesh(p)
+    surfaces = [r["surface"] for r in json.loads(ir)["regions"]]
+    bore = next(s for s in surfaces if s["type"] == "cylinder")
+    tool = Plane(origin=bore["origin"], z_dir=bore["axis"]) * Cylinder(bore["radius"] + 0.02, 1000)
+    export_step(import_step(step) - tool, step)
+    return ir, step, rep
+"""
+
+BORE_PARTS = ("through_bore-0000", "blind_bore-0000", "bore_chamfer-0000")
+
+
+def test_step_deviation_passes_bores_and_fails_a_wrong_radius(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "wide.py").write_text(WIDE_BORE)
+    monkeypatch.syspath_prepend(str(plugins))
+    grid = load_grid("smoke")
+    identity = next(c for c in grid.cells if c["operator"] == "identity")
+    grid = dataclasses.replace(
+        grid,
+        entries=[e for e in select(load_manifest(), "smoke") if e["id"] in BORE_PARTS],
+        cells=[{**identity, "floors": {**identity["floors"], "dev_input_max": 0.015}}],
+        seeds=[0],
+        step_deviation_sample=(1, 1),
+    )
+    assert len(grid.entries) == len(BORE_PARTS)
+    converters = ["unmesh", "wide:wide_bore"]
+    summary = run_grid(
+        grid, converters, tmp_path / "out", jobs=3, sha="s", timeout=60, log=lambda *_: None
+    )
+    records = read_results(summary.results_path)
+    honest = [r for r in records if r["converter"] == "unmesh"]
+    assert len(honest) == len(BORE_PARTS)
+    assert all(r["valid"] and r["step_problems"] == [] for r in honest), honest
+    assert gate(honest, grid, ["unmesh"], "s").passed
+    wide = next(
+        r for r in records if r["converter"] == "wide:wide_bore" and r["part"] == BORE_PARTS[0]
+    )
+    assert len(wide["step_problems"]) == 1
+    assert wide["step_problems"][0].startswith("STEP deviates 2"), wide["step_problems"]
+
+
 ORACLE_ADVERSARIES = """
 import hashlib
 import json
