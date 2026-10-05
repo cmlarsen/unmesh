@@ -181,6 +181,16 @@ def _canonical_knn(tree: cKDTree, points: np.ndarray, k: int) -> np.ndarray:
     return np.take_along_axis(idx, order, axis=1)[:, :k]
 
 
+def confidence_summary(conf) -> dict:
+    conf = np.asarray(conf, dtype=np.float64)
+    if not len(conf):
+        return {"mean_confidence": 1.0, "fraction_below_0_9": 0.0}
+    return {
+        "mean_confidence": float(conf.mean()),
+        "fraction_below_0_9": float((conf < MASK_THRESHOLD).mean()),
+    }
+
+
 def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
     src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3)
     out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
@@ -242,10 +252,7 @@ def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
         conf = np.minimum(conf, carried)
     mesh.face_id = np.array(faces[win], dtype=src_ids.dtype)
     mesh.metadata[CONFIDENCE_KEY] = [float(v) for v in conf]
-    return {
-        "mean_confidence": float(conf.mean()) if len(conf) else 1.0,
-        "fraction_below_0_9": float((conf < MASK_THRESHOLD).mean()) if len(conf) else 0.0,
-    }
+    return confidence_summary(conf)
 
 
 def carry_confidence(
@@ -1154,8 +1161,7 @@ def laplacian_smoothing(mesh, severity, rng):
         "capped_to_budget": capped,
         "triangles_before": before,
         "triangles_after": len(mesh.tris),
-        "mean_confidence": 1.0,
-        "fraction_below_0_9": 0.0,
+        **confidence_summary(mesh.metadata[CONFIDENCE_KEY]),
     }
 
 
@@ -1191,8 +1197,7 @@ def taubin_smoothing(mesh, severity, rng):
         "capped_to_budget": capped,
         "triangles_before": before,
         "triangles_after": len(mesh.tris),
-        "mean_confidence": 1.0,
-        "fraction_below_0_9": 0.0,
+        **confidence_summary(mesh.metadata[CONFIDENCE_KEY]),
     }
 
 
