@@ -37,22 +37,12 @@ def crossing_side(mesh, vertex):
         if (adj.face_a, adj.face_b) != (a, b) or len(adj.dihedral_samples) != len(adj.points):
             continue
         pts = [tuple(p) for p in adj.points]
+        if pos not in pts:
+            continue
+        j = pts.index(pos)
         kinds = [s < thr for s in adj.dihedral_samples]
-        if pos in pts:
-            j = pts.index(pos)
-            if any(kinds[k] != kinds[j] for k in (j - 1, j + 1) if 0 <= k < len(kinds)):
-                return True
-        for k in range(len(pts) - 1):
-            on_segment = (
-                abs(
-                    math.dist(pos, pts[k])
-                    + math.dist(pos, pts[k + 1])
-                    - math.dist(pts[k], pts[k + 1])
-                )
-                < 1e-9
-            )
-            if on_segment and kinds[k] != kinds[k + 1]:
-                return True
+        if any(kinds[k] != kinds[j] for k in (j - 1, j + 1) if 0 <= k < len(kinds)):
+            return True
     return False
 
 
@@ -266,7 +256,7 @@ def test_labeled_mesh_round_trip_builds_same_ir(tmp_path):
 
 
 def check_mid_edge_splits(shape):
-    mesh = tessellate(shape, 0.01, 0.2)
+    mesh = tessellate(shape, 0.001, 0.1)
     ir = build_oracle_ir(mesh)
     assert validate(ir) == []
     changed = [v for v in ir.vertices if v.role == "kind_change"]
@@ -311,33 +301,28 @@ def make_directed(points, samples_deg):
     return _Directed(adj)
 
 
-def test_split_runs_inserts_far_crossing():
-    d = make_directed([0.0, 10.0, 20.0], [1.0, 1.0, 10.0])
+def test_split_runs_snaps_to_nearest_node():
+    d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [1.0, 1.0, 1.0, 10.0, 10.0])
     segs = _split_runs(d, 3.0, (0, 1))
     assert len(segs) == 2
     assert isinstance(segs[0].end, _Split) and segs[0].end is segs[1].start
-    assert segs[0].points[-1] == segs[1].points[0] == segs[0].end.point
-    assert segs[0].points[-1][0] == pytest.approx(10.0 + (3.0 - 1.0) / 9.0 * 10.0)
+    assert segs[0].points[-1] == segs[1].points[0] == segs[0].end.point == (20.0, 0.0, 0.0)
     assert segs[0].dihedral == pytest.approx(1.0)
     assert segs[1].dihedral == pytest.approx(10.0)
 
 
-def test_split_runs_splits_at_near_node():
-    d = make_directed([0.0, 10.0, 20.0], [1.0, 2.9, 10.0])
+def test_split_runs_snaps_to_closer_side_of_segment():
+    d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [1.0, 1.0, 2.9, 10.0, 10.0])
     segs = _split_runs(d, 3.0, (0, 1))
     assert len(segs) == 2
-    assert segs[0].points[-1] == segs[1].points[0] == (10.0, 0.0, 0.0)
-    assert segs[0].dihedral == pytest.approx(1.95)
-    assert segs[1].dihedral == pytest.approx(6.45)
+    assert segs[0].points[-1] == segs[1].points[0] == (20.0, 0.0, 0.0)
 
 
-def test_split_runs_interior_tangent_run():
+def test_split_runs_short_spike_stays_whole():
     d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [10.0, 10.0, 1.0, 10.0, 10.0])
-    segs = _split_runs(d, 3.0, (0, 1))
-    assert len(segs) == 3
-    assert [s.dihedral > 3.0 for s in (segs[0], segs[2])] == [True, True]
-    assert segs[1].dihedral == pytest.approx(1.0)
-    assert len(segs[1].points) == 3
+    (seg,) = _split_runs(d, 3.0, (0, 1))
+    assert seg.points == d.points and seg.dihedral == d.dihedral
+    assert (seg.start, seg.end) == (0, 1)
 
 
 def test_split_runs_no_crossing_keeps_whole_edge():

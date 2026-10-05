@@ -202,6 +202,13 @@ evaluated on the fitted analytic surfaces at that point, never between mesh tria
 `kind` is `tangent` exactly when `dihedral_deg < tolerances.tangent_threshold_deg`. The threshold is
 stored in the IR and `kind` is authoritative; a validator checks the two agree.
 
+Where `kind` changes partway along one edge, the edge is split with hysteresis around the threshold:
+a crossing counts only if the per-node dihedral samples fall below `threshold - 0.5°` on one side and
+above `threshold + 0.5°` on the other, and every resulting run spans at least two polyline segments.
+The split lands on the existing polyline node nearest the threshold, so every `kind_change` vertex
+and boundary point stays a mesh vertex position. An edge that only touches the threshold, or hovers
+inside the band, keeps a single boundary classified by its median dihedral.
+
 How the default of 3.0 degrees was chosen:
 
 - It uses fitted surfaces, so the facet chord angle of a coarse tessellation (a fillet drawn with 10

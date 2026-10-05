@@ -74,73 +74,110 @@ class _Split:
 
 
 class _Seg:
-    def __init__(self, points, dihedral: float, start, end):
+    def __init__(self, points, dihedral: float, start: int | _Split, end: int | _Split):
         self.points = points
         self.dihedral = dihedral
         self.start = start
         self.end = end
 
 
+KIND_HYSTERESIS_DEG = 0.5
+MIN_RUN_SEGMENTS = 2
+
+
+def _near_node(samples: list[float], i: int, threshold_deg: float) -> int:
+    return i if abs(samples[i] - threshold_deg) <= abs(samples[i + 1] - threshold_deg) else i + 1
+
+
+def _span_nodes(span: tuple[int, int, bool], n: int) -> list[int]:
+    lo, hi, wrap = span
+    if not wrap:
+        return list(range(lo, hi + 1))
+    return list(range(lo, n)) + list(range(1, hi + 1))
+
+
+def _span_len(span: tuple[int, int, bool], n: int) -> int:
+    lo, hi, wrap = span
+    return (n - 1 - lo + hi) if wrap else hi - lo
+
+
+def _spans(joints: list[int], n: int, closed: bool) -> list[tuple[int, int, bool]]:
+    if not closed:
+        bounds = [0] + joints + [n - 1]
+        return [(bounds[j], bounds[j + 1], False) for j in range(len(bounds) - 1)]
+    return [(joints[j], joints[(j + 1) % len(joints)], j == len(joints) - 1) for j in range(len(joints))]
+
+
 def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> list[_Seg]:
-    if len(d.samples) != len(d.points) or not d.samples:
+    samples = d.samples
+    n = len(d.points)
+    if len(samples) != n or n < 2:
         return [_Seg(d.points, d.dihedral, d.start, d.end)]
-    kinds = [s < threshold_deg for s in d.samples]
-    cuts = [i for i in range(len(kinds) - 1) if kinds[i] != kinds[i + 1]]
-    if not cuts:
+    lo = threshold_deg - KIND_HYSTERESIS_DEG
+    hi = threshold_deg + KIND_HYSTERESIS_DEG
+    tangent = [s < lo for s in samples]
+    transversal = [s > hi for s in samples]
+    if not any(tangent) or not any(transversal):
         return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    first = next(i for i in range(n) if tangent[i] or transversal[i])
+    state: list[bool] = []
+    cur = bool(tangent[first])
+    for i in range(n):
+        if tangent[i]:
+            cur = True
+        elif transversal[i]:
+            cur = False
+        state.append(cur)
+    closed = d.start == d.end
+    joints = sorted(_near_node(samples, i, threshold_deg) for i in range(n - 1) if state[i] != state[i + 1])
+    if closed and state[0] != state[-1]:
+        wrap = n - 1 if abs(samples[n - 1] - threshold_deg) < abs(samples[0] - threshold_deg) else 0
+        joints.append(wrap)
+        joints.sort()
+    while True:
+        spans = _spans(joints, n, closed)
+        bad = next((j for j, s in enumerate(spans) if _span_len(s, n) < MIN_RUN_SEGMENTS), None)
+        if bad is None:
+            break
+        if len(joints) < (2 if closed else 1):
+            return [_Seg(d.points, d.dihedral, d.start, d.end)]
+        if not closed:
+            del joints[bad - 1 if bad > 0 else 0]
+        else:
+            del joints[bad % len(joints)]
+    if not joints or (closed and len(joints) < 2):
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    while True:
+        spans = _spans(joints, n, closed)
+        kinds = [
+            float(np.median([samples[i] for i in _span_nodes(s, n)])) < threshold_deg for s in spans
+        ]
+        if closed:
+            nxt = next((j for j in range(len(spans)) if kinds[j] == kinds[(j + 1) % len(spans)]), None)
+            if nxt is None:
+                break
+            del joints[(nxt + 1) % len(joints)]
+        else:
+            nxt = next((j for j in range(len(spans) - 1) if kinds[j] == kinds[j + 1]), None)
+            if nxt is None:
+                break
+            del joints[nxt]
+        if not joints or (closed and len(joints) < 2):
+            return [_Seg(d.points, d.dihedral, d.start, d.end)]
     pts = [tuple(p) for p in d.points]
-    n = len(pts)
-    cum = [0.0]
-    for p, q in zip(pts, pts[1:], strict=False):
-        cum.append(cum[-1] + math.dist(p, q))
-    total = cum[-1]
-    joints: list[tuple[tuple[float, ...], int, int, bool]] = []
-    for c, i in enumerate(cuts):
-        lo, hi = d.samples[i], d.samples[i + 1]
-        f = (threshold_deg - lo) / (hi - lo)
-        cross = cum[i] + f * (cum[i + 1] - cum[i])
-        near = i + 1 if cross - cum[i] >= cum[i + 1] - cross else i
-        if total > 0.0 and min(cross - cum[i], cum[i + 1] - cross) > 0.01 * total:
-            joints.append(
-                (
-                    tuple(a + f * (b - a) for a, b in zip(pts[i], pts[i + 1], strict=True)),
-                    i,
-                    i + 1,
-                    True,
-                )
-            )
-        elif (
-            (c == 0 and near == 0)
-            or (c + 1 == len(cuts) and near == n - 1)
-            or (joints and not joints[-1][3] and joints[-1][1] == near)
-        ):
-            joints.append(
-                (
-                    tuple(a + f * (b - a) for a, b in zip(pts[i], pts[i + 1], strict=True)),
-                    i,
-                    i + 1,
-                    True,
-                )
-            )
-        else:
-            joints.append((pts[near], near, near, False))
-    splits = [_Split(point, pair) for point, _, _, _ in joints]
+    splits = {j: _Split(pts[j], pair) for j in joints}
     segs = []
-    for k, ((point, lo, _, inserted), split) in enumerate(zip(joints, splits, strict=True)):
-        if k == 0:
-            first, lead = 0, None
-            start: int | _Split = d.start
+    for j, span in enumerate(_spans(joints, n, closed)):
+        nodes = _span_nodes(span, n)
+        if closed:
+            start = splits[joints[j]]
+            end = splits[joints[(j + 1) % len(joints)]]
         else:
-            first = joints[k - 1][2]
-            lead = joints[k - 1][0] if joints[k - 1][3] else None
-        run = ([lead] if lead is not None else []) + list(pts[first : lo + 1])
-        if inserted:
-            run.append(point)
-        segs.append(_Seg(run, float(np.median(d.samples[first : lo + 1])), start, split))
-        start = split
-    _, _, last_first, _ = joints[-1]
-    tail = ([joints[-1][0]] if joints[-1][3] else []) + list(pts[last_first:])
-    segs.append(_Seg(tail, float(np.median(d.samples[last_first:])), splits[-1], d.end))
+            start = d.start if j == 0 else splits[span[0]]
+            end = d.end if j == len(joints) else splits[span[1]]
+        segs.append(
+            _Seg([pts[i] for i in nodes], float(np.median([samples[i] for i in nodes])), start, end)
+        )
     return segs
 
 
@@ -181,8 +218,8 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
         return "tangent" if deg < tangent_threshold_deg else "transversal"
 
     by_pair: dict[tuple[int, int], list[_Seg]] = defaultdict(list)
-    faces_at: dict = defaultdict(set)
-    ends_at: dict = defaultdict(list)
+    faces_at: dict[int | _Split, set[int]] = defaultdict(set)
+    ends_at: dict[int | _Split, list[str]] = defaultdict(list)
     for adj in mesh.adjacency:
         pair = (adj.face_a, adj.face_b)
         for seg in _split_runs(_Directed(adj), tangent_threshold_deg, pair):
@@ -195,7 +232,7 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     def position_of(v) -> tuple[float, ...]:
         return v.point if isinstance(v, _Split) else tuple(mesh.vertices[v])
 
-    roles: dict = {}
+    roles: dict[int | _Split, str] = {}
     for v, faces in faces_at.items():
         if len(faces) >= 3:
             roles[v] = "junction"
@@ -218,7 +255,7 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     adjacencies = []
     for pair in sorted(by_pair):
         edges = by_pair[pair]
-        outgoing: dict = defaultdict(list)
+        outgoing: dict[int | _Split, list[_Seg]] = defaultdict(list)
         for e in edges:
             outgoing[e.start].append(e)
         used: set[int] = set()
