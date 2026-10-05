@@ -5,6 +5,7 @@ mod dsu;
 mod emit;
 mod fit;
 mod linalg;
+mod noise;
 mod project;
 mod segment;
 mod snap;
@@ -165,25 +166,22 @@ fn finish(
     mut warnings: Vec<ConvertWarning>,
     fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
 ) -> Result<ConvertOutput, ConvertError> {
-    let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
-    let mut snap_sigma = sigma;
     if auto_tol {
         let fl = floor(w.diag, w.max_abs);
-        let est = snap::estimate_noise(&w.vc, &regions, tol, fl);
-        sigma = est.sigma;
-        snap_sigma = est.snap_sigma;
-        let derived = (NOISE_FACTOR * sigma).max(fl);
-        if derived < tol {
-            tol = derived;
-            (label2, regions) = fit_once(tol);
+        if let Some(est) =
+            noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
+        {
+            sigma = est;
+            tol = tol.min((NOISE_FACTOR * sigma).max(fl));
         }
     }
+    let (label2, mut regions) = fit_once(tol);
     snap::snap_normals(
         &w.vc,
         &mut regions,
         tol,
-        snap_sigma,
+        sigma,
         options.angular_snap_deg,
         w.diag,
         w.max_abs,
