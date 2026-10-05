@@ -123,8 +123,14 @@ pub fn irls_plane(v: &[V3], list: &[(u32, f64)], init: V3, tol: f64) -> (V3, f64
             n = nn;
         }
         width = (12.0 * vals[1].max(0.0)).sqrt();
+        let mut changed = false;
         for (i, &(vi, w)) in list.iter().enumerate() {
-            weights[i] = w * huber(dot(n, sub(v[vi as usize], c)), k);
+            let nw = w * huber(dot(n, sub(v[vi as usize], c)), k);
+            changed |= nw != weights[i];
+            weights[i] = nw;
+        }
+        if !changed {
+            break;
         }
     }
     (n, dot(n, c), width)
@@ -184,43 +190,52 @@ pub fn build_regions(
     }
     faces
         .into_iter()
-        .map(|fl| {
-            let verts = collect_verts(f, info, &fl, scratch);
-            let mut nsum = [0.0; 3];
-            let mut area = 0.0;
-            for &fi in &fl {
-                let t = &info[fi as usize];
-                for a in 0..3 {
-                    nsum[a] += t.normal[a] * t.area;
-                }
-                area += t.area;
-            }
-            let init = unit(nsum);
-            let (n, d, width) = if area > 0.0 {
-                irls_plane(v, &verts, init, tol)
-            } else {
-                ([0.0; 3], 0.0, 0.0)
-            };
-            let (rms, max) = if area > 0.0 {
-                residual(v, &verts, n, d)
-            } else {
-                (0.0, f64::INFINITY)
-            };
-            Region {
-                faces: fl,
-                surface: Surface::Plane {
-                    normal: n,
-                    offset: d,
-                },
-                area,
-                width,
-                verts,
-                rms,
-                max,
-                sag: 0.0,
-            }
-        })
+        .map(|fl| build_region(v, f, info, fl, tol, scratch))
         .collect()
+}
+
+pub fn build_region(
+    v: &[V3],
+    f: &[[u32; 3]],
+    info: &[TriInfo],
+    fl: Vec<u32>,
+    tol: f64,
+    scratch: &mut Scratch,
+) -> Region {
+    let verts = collect_verts(f, info, &fl, scratch);
+    let mut nsum = [0.0; 3];
+    let mut area = 0.0;
+    for &fi in &fl {
+        let t = &info[fi as usize];
+        for a in 0..3 {
+            nsum[a] += t.normal[a] * t.area;
+        }
+        area += t.area;
+    }
+    let init = unit(nsum);
+    let (n, d, width) = if area > 0.0 {
+        irls_plane(v, &verts, init, tol)
+    } else {
+        ([0.0; 3], 0.0, 0.0)
+    };
+    let (rms, max) = if area > 0.0 {
+        residual(v, &verts, n, d)
+    } else {
+        (0.0, f64::INFINITY)
+    };
+    Region {
+        faces: fl,
+        surface: Surface::Plane {
+            normal: n,
+            offset: d,
+        },
+        area,
+        width,
+        verts,
+        rms,
+        max,
+        sag: 0.0,
+    }
 }
 
 pub fn region_pairs(f_nbr: &[[u32; 3]], label: &[u32]) -> Vec<(u32, u32)> {
@@ -382,12 +397,25 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
     let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, false);
     let (label2, regions) =
         merge_and_rebuild(vc, faces, info, nbr, &label, n_seg, tol, snap_deg, scratch);
-    match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol) {
+    let (label3, regions) = match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol) {
         Some((combined, n_all)) => merge_and_rebuild(
             vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
         ),
         None => (label2, regions),
-    }
+    };
+    let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol);
+    let mut regions = grown.regions;
+    super::curved::refine_regions_with(
+        vc,
+        faces,
+        info,
+        &mut regions,
+        tol,
+        snap_deg,
+        grown.prefit,
+        false,
+    );
+    (grown.label, regions)
 }
 
 pub struct RunArgs<'a> {
@@ -490,12 +518,15 @@ fn merge_and_rebuild(
     let pairs0 = region_pairs(nbr, label);
     let root = merge_coplanar(vc, &regions0, &pairs0, tol, snap_deg);
     let mut compact = vec![NONE; n_seg];
-    let mut n_merged = 0u32;
+    let mut members = Vec::new();
     for r in 0..n_seg {
         if root[r] as usize == r {
-            compact[r] = n_merged;
-            n_merged += 1;
+            compact[r] = members.len() as u32;
+            members.push(0u32);
         }
+    }
+    for r in 0..n_seg {
+        members[compact[root[r] as usize] as usize] += 1;
     }
     let label2: Vec<u32> = label
         .iter()
@@ -507,7 +538,24 @@ fn merge_and_rebuild(
             }
         })
         .collect();
-    let regions = build_regions(vc, faces, info, &label2, n_merged as usize, tol, scratch);
+    let mut merged_faces: Vec<Vec<u32>> = vec![Vec::new(); members.len()];
+    for (fi, &l) in label2.iter().enumerate() {
+        if l != NONE && members[l as usize] > 1 {
+            merged_faces[l as usize].push(fi as u32);
+        }
+    }
+    let mut regions: Vec<Option<Region>> = (0..members.len()).map(|_| None).collect();
+    for (r, reg) in regions0.into_iter().enumerate() {
+        let id = compact[root[r] as usize] as usize;
+        if members[id] == 1 {
+            regions[id] = Some(reg);
+        }
+    }
+    let regions = regions
+        .into_iter()
+        .zip(merged_faces)
+        .map(|(reg, fl)| reg.unwrap_or_else(|| build_region(vc, faces, info, fl, tol, scratch)))
+        .collect();
     (label2, regions)
 }
 

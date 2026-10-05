@@ -3,9 +3,9 @@
 Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` writer, and the Rust
 crate `unmesh-core`. They share one contract, the [IR](ir.md).
 
-Everything here is v0 and may change freely before the first release. `convert` handles all-planar
-parts today (what it cannot fit stays `facets`); `convert_from_labels` also fits cylinders and cones
-on a given segmentation. `step.write` is implemented for planes and `facets`
+Everything here is v0 and may change freely before the first release. `convert` fits planes,
+cylinders and cones (what it cannot fit stays `facets`; spheres and tori are not fitted yet, #19);
+`convert_from_labels` fits the same surfaces on a given segmentation. `step.write` is implemented for planes and `facets`
 (#5).
 
 ## Python
@@ -158,7 +158,8 @@ that is not one-dimensional, not integer, or not one per triangle. Labelled regi
 with each other, and a label whose triangles fall apart into several edge-connected pieces becomes one
 region per piece. Each region gets the most parsimonious surface that fits its vertices within
 `tolerances.linear`: a plane, else a cylinder, else a cone, else it is kept as `facets`. The automatic
-`convert` does not fit curved surfaces yet.
+`convert` finds its own curved regions (see [internals](#unmeshconvert-internals)) and fits them the
+same way.
 
 - **Cylinder**: the axis is the smallest eigenvector of the area-weighted scatter of the triangle normals
   (they lie on a great circle of the Gaussian sphere), the centre and radius a circle fit of the vertices
@@ -197,10 +198,34 @@ is the RMS over the region's vertices only, without the sagitta.
 **Ambiguity sets (n-gon prism versus coarse cylinder, chamfer versus one-segment fillet):** on this
 path the labels decide. A regular n-gon prism whose sides carry one label each stays n planes; the same
 sides under one label become one cylinder with the exact circumradius and an honest deviation equal to
-the polygon's sagitta. The policy for the automatic `convert`, which has to choose without labels, is
-not set yet (#16 part B).
+the polygon's sagitta. The automatic `convert` has to choose without labels, and decides by the crease
+between neighbouring facets: planes meeting at 15° or more stay planes, so a regular polygon with up to
+24 sides stays a prism, and three or more facets meeting at smaller creases become one cylinder (or
+cone) when they fit one. A coarse cylinder exported with fewer than 25 segments around therefore comes
+back as a prism. A one-segment fillet stays one plane (the chamfer reading) and a two-segment fillet
+stays two planes: any two planes meeting at a crease fit a cylinder, so curved recovery needs at least
+three facets.
 
 ### `unmesh.convert` internals
+
+**Curved regions.** After the planar stages below, plane regions that meet across smooth creases (under
+15°, and more than the angle their own noise allows) are grown into cylinders and cones. A seed is a
+region and its two most opposed smooth neighbours, extended along the same turning direction to 12,
+24 or 48 vertices (a short arc of a staggered cone band does not determine its axis); it is fitted from
+the normal-scatter and circle estimates, plus, for cones, an apex and half-angle solved linearly from the
+vertices about an axis taken from the normals or from the rows of vertices (each row a circle across the
+axis). The group then absorbs neighbouring regions whose vertices are within `tolerances.linear` of the
+surface, whose plane normal lies within the spread of the surface normals over its vertices, and whose
+chord sagitta is at most 16 times the group's median: tessellated curves cut every chord at a similar
+deflection, while a flat face is never absorbed into a large cylinder through its four edges (the side
+of a rounded rectangle and the strips beside it always lie on one). A stalled group is refitted and
+retries what it rejected; adjacent groups that fit one surface are joined; the result is refitted
+(tessellation law included) and joins the coaxial snapping above. Regions on a surface curved in two
+directions (a sphere or a torus: normals of the smooth neighbours, weighted by shared boundary length
+and centred, differ along two directions and bend both ways along the second, and the region is not
+much larger than those neighbours) do not seed groups and become `facets`, as does a lone triangle
+whose three neighbours all meet it at smooth creases; a group with two curved neighbours each sharing
+15% of its boundary is a slice of such a surface (rings of a torus are cones) and becomes `facets` too.
 
 The planar converter welds the input, groups triangles into regions by growing them while every
 vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each

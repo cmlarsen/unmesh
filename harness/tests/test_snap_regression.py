@@ -24,7 +24,7 @@ def test_clean_curved_part_recovers_every_plane_face(part_id):
         d["face"] for d in result["faces_detail"] if d["type"] == "plane" and not d["recovered"]
     ]
     assert lost == [], (part_id, lost)
-    assert report.max_deviation <= 1e-3, report.max_deviation
+    assert report.max_deviation <= LIN, report.max_deviation
 
 
 def tilted_boss(width, tilt_deg):

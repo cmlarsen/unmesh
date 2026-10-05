@@ -401,7 +401,6 @@ def test_stray_convert_keeps_main_shell_and_reports_strays(part):
     assert main_sets == clean_sets
 
 
-@pytest.mark.xfail(strict=True, reason="#67")
 def test_stray_convert_curved_keeps_main_shell(curved_part):
     clean = unmesh.convert(curved_part.tris)
     out = degrade.apply("stray_shells", curved_part, 1.0, SEED)

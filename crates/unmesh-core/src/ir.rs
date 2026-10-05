@@ -325,7 +325,19 @@ pub fn format_f64(x: f64) -> String {
     format!("{sign}{body}")
 }
 
+/// A tie needs the exact expansion to continue with a 5 and then only
+/// zeros, so its digit `n + 1` (correctly rounded) must be a 5; checking that
+/// first skips the slow 40-digit expansion for nearly every value.
 fn break_tie(x: f64, digits: String, exp: i32) -> String {
+    let n = digits.len();
+    let next = format!("{x:.n$e}");
+    if next.split_once('e').and_then(|(m, _)| m.bytes().last()) != Some(b'5') {
+        return digits;
+    }
+    break_tie_exact(x, digits, exp)
+}
+
+fn break_tie_exact(x: f64, digits: String, exp: i32) -> String {
     let n = digits.len();
     let exact = format!("{x:.40e}");
     let (mantissa, e) = exact
@@ -679,6 +691,36 @@ pub fn validate(ir: &Ir) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tie_precheck_agrees_with_the_exact_expansion() {
+        let mut state = 0x853c49e6748fea9bu64;
+        let mut values: Vec<f64> = vec![0.5, 2.5, 0.125, 1.5e-3, 9.5, 1e23, 5e-324, 2.5e15];
+        for _ in 0..20000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            values.push(f64::from_bits(state >> 2));
+            let k = (state % 1000) as f64;
+            values.push(k / 8.0);
+            values.push(k * 0.05);
+        }
+        for x in values.into_iter().filter(|x| x.is_finite() && *x != 0.0) {
+            let sci = format!("{x:e}");
+            let (m, e) = sci.split_once('e').unwrap();
+            let digits: String = m
+                .trim_start_matches('-')
+                .chars()
+                .filter(|c| *c != '.')
+                .collect();
+            let exp: i32 = e.parse().unwrap();
+            assert_eq!(
+                break_tie(x.abs(), digits.clone(), exp),
+                break_tie_exact(x.abs(), digits, exp),
+                "{x:e}"
+            );
+        }
+    }
 
     #[test]
     fn float_format() {
