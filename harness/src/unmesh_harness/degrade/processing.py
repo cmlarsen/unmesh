@@ -876,8 +876,19 @@ class _CollapseCheck:
         self.ab, self.r0, self.r1 = ab, r0, r1
         self.targets, self.free, self.keys = targets, free, keys
         self.starts, self.vcounts, self.tri_of = _vertex_tri_map(F, len(V))
+        self.known = np.zeros(len(ab), dtype=bool)
+        self.verdict = np.zeros(len(ab), dtype=bool)
+        self.fresh = np.zeros(len(ab), dtype=bool)
 
     def __call__(self, idx: np.ndarray) -> np.ndarray:
+        todo = idx[~self.known[idx]]
+        if len(todo):
+            self.verdict[todo] = self.check(todo)
+            self.known[todo] = True
+            self.fresh[todo] = True
+        return self.verdict[idx]
+
+    def check(self, idx: np.ndarray) -> np.ndarray:
         V, F, L, proj = self.V, self.F, self.L, self.proj
         n = len(idx)
         a, b = self.ab[idx, 0], self.ab[idx, 1]
@@ -933,7 +944,12 @@ def _collapse_pass(
     V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector, settled
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     collapses = 0
-    for _ in range(8):
+    memo_key = np.zeros(0, dtype=np.int64)
+    memo_at = np.zeros(0, dtype=np.int64)
+    memo_ok = np.zeros(0, dtype=bool)
+    memo_target = np.zeros((0, 3))
+    dirty = np.full(len(V), -1, dtype=np.int64)
+    for step in range(8):
         uniq, counts, t0, t1 = _edges(F)
         lengths = np.linalg.norm(V[uniq[:, 0]] - V[uniq[:, 1]], axis=1)
         cand = np.nonzero((lengths < limit) & (counts == 2))[0]
@@ -967,15 +983,33 @@ def _collapse_pass(
         check = _CollapseCheck(
             V, F, L, proj, ab, t0[cand], t1[cand], targets, free, proj.incidence(F, L)
         )
+        key = (ab[:, 0] << 32) | ab[:, 1]
+        pos = np.clip(np.searchsorted(memo_key, key), 0, max(len(memo_key) - 1, 0))
+        if len(memo_key):
+            hit = (memo_key[pos] == key) & (memo_at[pos] > dirty[ab].max(axis=1))
+            check.known[hit] = True
+            check.verdict[hit] = memo_ok[pos[hit]]
+            check.targets[hit] = memo_target[pos[hit]]
         row, res = _stars(ab.ravel(), check.starts, check.vcounts, check.tri_of)
-        chosen = _first_independent(len(cand), row // 2, res, len(F), check)
+        row //= 2
+        live = ~(check.known & ~check.verdict)[row]
+        chosen = _first_independent(len(cand), row[live], res[live], len(F), check)
+        fresh = np.nonzero(check.fresh)[0]
+        merged = np.concatenate([memo_key, key[fresh]])
+        last = len(merged) - 1 - np.unique(merged[::-1], return_index=True)[1]
+        memo_key = merged[last]
+        memo_at = np.concatenate([memo_at, np.full(len(fresh), step)])[last]
+        memo_ok = np.concatenate([memo_ok, check.verdict[fresh]])[last]
+        memo_target = np.concatenate([memo_target, check.targets[fresh]])[last]
         if not chosen.any():
             break
         win = np.nonzero(chosen)[0]
+        dirty[F[res[chosen[row]]]] = step
         remap = np.arange(len(V), dtype=np.int64)
         remap[ab[win, 0]] = len(V) + np.arange(len(win))
         remap[ab[win, 1]] = len(V) + np.arange(len(win))
         V = np.concatenate([V, check.targets[win]])
+        dirty = np.concatenate([dirty, np.full(len(win), step)])
         settled = settled & (remap[F] == F).all(axis=1)
         F = remap[F]
         alive = ~((F[:, 0] == F[:, 1]) | (F[:, 1] == F[:, 2]) | (F[:, 2] == F[:, 0]))
