@@ -103,10 +103,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-standard-${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}
-          path: ${{ runner.temp }}/nightly/${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}
+          path: ${{ runner.temp }}/nightly/${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}/standard-${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}.jsonl
           retention-days: 30
 
   report:
+    if: always()
     needs: standard
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -128,8 +129,12 @@ jobs:
       - name: Build HTML report
         env:
           UV_LOCKED: "1"
-        run: uv run unmesh-harness report merged --grid standard -o merged/report.html
+        run: |
+          uv run unmesh-harness report merged --grid standard \
+            --expect-plan harness/grids/shards_standard.json \
+            -o merged/report.html
       - name: Upload report and results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-report
