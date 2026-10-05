@@ -15,6 +15,15 @@ from .grid import Grid, git_sha, prep_hash, steps_for
 from .results import append_result, completed_keys, latest, make_record, read_results
 
 PREP_TIMEOUT_S = 120.0
+MEMORY_HEADROOM_MB = 3072.0
+MIN_MEMORY_CAP_MB = 1024.0
+
+
+def default_memory_cap_mb(jobs: int) -> float:
+    import psutil
+
+    total = psutil.virtual_memory().total / 2**20
+    return max(MIN_MEMORY_CAP_MB, (total - MEMORY_HEADROOM_MB) / max(jobs, 1))
 
 
 @dataclass
@@ -74,6 +83,7 @@ def run_grid(
     timeout: float | None = None,
     log=print,
     hidden: bool = False,
+    memory_cap_mb: float | None = None,
 ) -> RunSummary:
     from .hidden import hidden_seeds
 
@@ -82,11 +92,12 @@ def run_grid(
     sha = sha or git_sha()
     timeout = timeout or grid.timeout_s
     jobs = jobs or os.cpu_count() or 1
+    memory_cap_mb = memory_cap_mb or default_memory_cap_mb(jobs)
     if hidden:
         grid = dataclasses.replace(grid, seeds=hidden_seeds())
     out.mkdir(parents=True, exist_ok=True)
     if hidden:
-        return _run_hidden(grid, converters, out, jobs, sha, timeout, log, started)
+        return _run_hidden(grid, converters, out, jobs, sha, timeout, log, started, memory_cap_mb)
     path = results_path(out, grid)
     done = completed_keys(read_results(path))
     cells = [(c, s) for c, s in grid.expand(converters, sha) if c.key not in done]
@@ -125,6 +136,7 @@ def run_grid(
         cells,
         log,
         lambda cell, result: append_result(path, cell, result),
+        memory_cap_mb=memory_cap_mb,
     )
     shutil.rmtree(work, ignore_errors=True)
     records = list(latest(read_results(path), sha).values())
@@ -139,7 +151,9 @@ def run_grid(
     )
 
 
-def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunSummary:
+def _run_hidden(
+    grid, converters, out, jobs, sha, timeout, log, started, memory_cap_mb
+) -> RunSummary:
     from .hidden import aggregate
 
     cells = grid.expand(converters, sha)
@@ -155,7 +169,19 @@ def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunS
         def collect(cell, result):
             collected.append(make_record(cell, result))
 
-        _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, collect, hidden=True)
+        _run_cells(
+            grid,
+            sha,
+            timeout,
+            jobs,
+            cache,
+            work,
+            cells,
+            log,
+            collect,
+            hidden=True,
+            memory_cap_mb=memory_cap_mb,
+        )
     path = hidden_results_path(out, grid)
     payload = aggregate(collected, grid.grid_hash)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -163,7 +189,9 @@ def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunS
     return RunSummary(path, collected, 0, len(collected), time.perf_counter() - started, sha)
 
 
-def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=False) -> int:
+def _run_cells(
+    grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=False, memory_cap_mb=None
+) -> int:
     needed = sorted(
         {c.part for c, _ in cells if not (cache / f"{c.part}.labeled.npz").is_file()}
         | (
@@ -189,7 +217,7 @@ def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=F
     ]
     ready: set[str] = {c.part for c, _ in cells} - set(needed)
     prep_failures = 0
-    for part, result in run_pool(prep_jobs, jobs, max(timeout, PREP_TIMEOUT_S)):
+    for part, result in run_pool(prep_jobs, jobs, max(timeout, PREP_TIMEOUT_S), memory_cap_mb):
         if result["status"] != "ok":
             if hidden:
                 prep_failures += 1
@@ -246,7 +274,7 @@ def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=F
         emit(cell, {"status": "error", "error": "ground-truth preparation failed"})
 
     ran = 0
-    for cell, result in run_pool(cell_jobs, jobs, timeout):
+    for cell, result in run_pool(cell_jobs, jobs, timeout, memory_cap_mb):
         emit(cell, result)
         ran += 1
         if ran % 100 == 0 or ran == len(cell_jobs):
