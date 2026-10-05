@@ -505,6 +505,9 @@ def _run_sweep(meshes) -> None:
             for sev in SWEEP_SEVERITIES:
                 out = degrade.apply(op, mesh, sev, SWEEP_SEED)
                 assert_sweep_clean(pid, op, sev, base_folds, base_degen, out)
+                if op == "retriangulate":
+                    skipped = out.metadata["history"][-1]["params"]["skipped_faces"]
+                    assert skipped["failed_clip"] == [], (pid, sev, skipped)
 
 
 def test_tess_sweep_fast_subset():
@@ -516,26 +519,27 @@ def test_tess_sweep_full_smoke():
     _run_sweep(_sweep_meshes())
 
 
-def test_fillet_rows_skips_half_turn_strips():
+def test_fillet_rows_half_turn_strips_keep_two_segments():
     from build123d import SlotOverall, extrude
 
     mesh = tessellate(extrude(SlotOverall(20, 6), 4), 0.1, 0.5)
     ends = [f.id for f in mesh.faces if f.surface == "cylinder"]
     assert len(ends) == 2
-    out = degrade.apply("fillet_rows", mesh, 1.0, 0)
-    params = out.metadata["history"][-1]["params"]
-    assert params["fillet_faces"] == []
-    assert params["faces_skipped"] == ends
-    assert geometry_equal(mesh, out)
-    out = degrade.apply("fillet_rows", mesh, 0.5, 0)
-    assert out.metadata["history"][-1]["params"]["fillet_faces"] == ends
-    assert _folded_count(out) == 0
-    for fid in ends:
-        face = out.faces[fid]
-        axis = np.array(face.params["axis"]) / np.linalg.norm(face.params["axis"])
-        rel = out.tris[out.face_id == fid].mean(axis=1) - np.array(face.params["origin"])
-        off_axis = np.linalg.norm(rel - np.outer(rel @ axis, axis), axis=1)
-        assert off_axis.min() > 0.5 * float(face.params["radius"])
+    for sev in (0.5, 1.0):
+        out = degrade.apply("fillet_rows", mesh, sev, 0)
+        params = out.metadata["history"][-1]["params"]
+        assert params["fillet_faces"] == ends
+        assert params["half_turn_faces"] == (ends if sev == 1.0 else [])
+        assert not geometry_equal(mesh, out)
+        assert _folded_count(out) == 0
+        assert closed_manifold_problems(out.tris)[0] == []
+        for fid in ends:
+            face = out.faces[fid]
+            assert len(out.tris[out.face_id == fid]) == 4
+            axis = np.array(face.params["axis"]) / np.linalg.norm(face.params["axis"])
+            rel = out.tris[out.face_id == fid].mean(axis=1) - np.array(face.params["origin"])
+            off_axis = np.linalg.norm(rel - np.outer(rel @ axis, axis), axis=1)
+            assert off_axis.min() > 0.5 * float(face.params["radius"])
 
 
 def test_fillet_rows_complex_assembly_does_not_fold():

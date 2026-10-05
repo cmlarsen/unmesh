@@ -142,10 +142,24 @@ class _Holes:
         return out
 
 
+def _leaves_inward(a, p, b, q) -> np.ndarray:
+    def cross(u, v):
+        return u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]
+
+    d = q - p
+    to_next, to_prev = b - p, a - p
+    left_of_next = cross(to_next, d) > 0.0
+    right_of_prev = cross(d, to_prev) > 0.0
+    convex = cross(p - a, to_next) > 0.0
+    return np.where(convex, left_of_next & right_of_prev, left_of_next | right_of_prev)
+
+
 def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, holes, k) -> np.ndarray:
     j, i = np.divmod(flat, n_outer)
     p, q = outer_arr[i], hole_arr[j]
-    ok = ~segs.crossed(p, q)
+    ok = _leaves_inward(outer_arr[i - 1], p, outer_arr[(i + 1) % n_outer], q)
+    rest = np.flatnonzero(ok)
+    ok[rest] = ~segs.crossed(p[rest], q[rest])
     keep = np.flatnonzero(ok)
     if not len(keep):
         return ok
@@ -562,19 +576,19 @@ def canonical_triangulate_loops(ref_normal, loops: list[list[tuple]]) -> list[tu
     return out
 
 
-def retriangulate_face(fid, tris, tis, faces, scheme, rng) -> bool:
+def retriangulate_face(fid, tris, tis, faces, scheme, rng) -> str | None:
     loops = loops_from_tris(tris, tis)
     if loops is None:
-        return False
+        return "inapplicable"
     if scheme == "canonical":
         clipped = canonical_triangulate_loops(np.array(faces[fid].params["normal"]), loops)
     else:
         clipped = triangulate_loops_3d(np.array(faces[fid].params["normal"]), loops, scheme, rng)
     if clipped is None or len(clipped) != len(tis):
-        return False
+        return "failed_clip"
     for ti, t in zip(tis, clipped, strict=True):
         tris[ti] = t
-    return True
+    return None
 
 
 @register(
@@ -592,17 +606,24 @@ def retriangulate(mesh, severity, rng):
     by_face: dict[int, list[int]] = {}
     for ti, f in enumerate(fids):
         by_face.setdefault(f, []).append(ti)
-    done = skipped = 0
+    done = 0
+    skipped: dict[str, list[int]] = {"inapplicable": [], "failed_clip": []}
     for fid in sorted(by_face):
         if mesh.faces[fid].surface != "plane":
             continue
-        if retriangulate_face(fid, tris, by_face[fid], mesh.faces, scheme, rng):
+        reason = retriangulate_face(fid, tris, by_face[fid], mesh.faces, scheme, rng)
+        if reason is None:
             done += 1
         else:
-            skipped += 1
+            skipped[reason].append(fid)
     mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
     mesh.face_id = np.array(fids, dtype=mesh.face_id.dtype)
-    return {"scheme": scheme, "faces_retriangulated": done, "faces_skipped": skipped}
+    return {
+        "scheme": scheme,
+        "faces_retriangulated": done,
+        "faces_skipped": sum(len(v) for v in skipped.values()),
+        "skipped_faces": skipped,
+    }
 
 
 def _canonical_band(face, tris, tis) -> bool:
@@ -689,7 +710,7 @@ def canonical_planar(mesh) -> dict:
         face = mesh.faces[fid]
         tis = by_face[fid]
         if face.surface == "plane":
-            if retriangulate_face(fid, tris, tis, mesh.faces, "canonical", None):
+            if retriangulate_face(fid, tris, tis, mesh.faces, "canonical", None) is None:
                 done += 1
             else:
                 skipped += 1

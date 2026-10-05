@@ -135,8 +135,10 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     footk = origin + ((np.array(linek[0]) - origin) @ axis) * axis
     w = np.array(linek[0]) - footk
     theta = math.atan2(float(w @ e2), float(w @ e1))
-    if abs(theta) < 1e-9 or abs(theta) > math.pi + 1e-9 or abs(theta) / k >= math.pi - 1e-6:
+    if abs(theta) < 1e-9 or abs(theta) > math.pi + 1e-9:
         return None
+    if abs(theta) / k >= math.pi - 1e-6:
+        k = 2
     lo, hi = (0.0, theta) if theta > 0 else (theta, 0.0)
     for idx in spans:
         for q in polymap[idx][1:-1]:
@@ -183,7 +185,7 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
         else:
             return None
         across.append((idx, new))
-    return {"grid_tris": rows, "across": across, "neighbours": sorted(neighbours)}
+    return {"grid_tris": rows, "across": across, "neighbours": sorted(neighbours), "segments": k}
 
 
 @register(
@@ -192,7 +194,8 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     "identity",
     "cylinder fillet strips whose cross edges meet only planar faces re-tessellated with exactly "
     "3, 2 or 1 segments across their width (severity up to 1/3, 2/3, above), using the fillet's "
-    "tangent-line endpoints as nodes; affected planar neighbours are re-triangulated",
+    "tangent-line endpoints as nodes (a strip spanning a half turn keeps at least 2, so no chord "
+    "passes through the axis); affected planar neighbours are re-triangulated",
 )
 def fillet_rows(mesh, severity, rng, segments=None):
     k = segments if segments is not None else segments_for(severity)
@@ -275,6 +278,7 @@ def fillet_rows(mesh, severity, rng, segments=None):
         "fillet_faces": accepted,
         "neighbours_retriangulated": neighbours,
         "faces_skipped": skipped,
+        "half_turn_faces": [f for f in accepted if plans[f]["segments"] != k],
         "triangles_before": len(tris),
         "triangles_after": len(out_tris),
     }
