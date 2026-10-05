@@ -28,6 +28,7 @@ from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell, TopoDS_Solid
 from .topology import BuildError, FacePlan, ShellPlan
 
 SEW_TOLERANCE = 1e-6
+PRECISE_VOLUME = 1e-9
 KEY_SCALE = 1e7
 
 
@@ -115,9 +116,12 @@ def tolerance_of(shape) -> float:
     return float(ShapeAnalysis_ShapeTolerance().Tolerance(shape, 1))
 
 
-def volume_of(shape) -> float:
+def volume_of(shape, precise: bool = False) -> float:
     props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, props)
+    if precise:
+        BRepGProp.VolumeProperties_s(shape, props, PRECISE_VOLUME, True)
+    else:
+        BRepGProp.VolumeProperties_s(shape, props)
     return float(props.Mass())
 
 
@@ -284,12 +288,12 @@ class ReadSolid:
     shells: int
 
 
-def read_back(path) -> tuple[list[ReadSolid], int]:
+def read_back(path, precise: bool = False) -> tuple[list[ReadSolid], int]:
     shape = read_step(path)
     if shape.IsNull():
         return [], 0
     solids = [
-        ReadSolid(volume_of(s), is_valid(s), tolerance_of(s), len(_shells_of(s)))
+        ReadSolid(volume_of(s, precise), is_valid(s), tolerance_of(s), len(_shells_of(s)))
         for s in _solids_of(shape)
     ]
     return solids, len(_shells_of(shape))

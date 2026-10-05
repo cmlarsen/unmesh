@@ -11,6 +11,7 @@ from OCP.BRepClass import BRepClass_FaceClassifier
 from OCP.BRepLib import BRepLib
 from OCP.ElSLib import ElSLib
 from OCP.Geom import (
+    Geom_BSplineCurve,
     Geom_Circle,
     Geom_ConicalSurface,
     Geom_CylindricalSurface,
@@ -20,11 +21,14 @@ from OCP.Geom import (
     Geom_ToroidalSurface,
     Geom_TrimmedCurve,
 )
-from OCP.Geom2d import Geom2d_Line
+from OCP.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
+from OCP.Geom2dAPI import Geom2dAPI_Interpolate
 from OCP.GeomAPI import GeomAPI_Interpolate, GeomAPI_IntSS, GeomAPI_ProjectPointOnCurve
+from OCP.GeomConvert import GeomConvert_CompCurveToBSplineCurve
 from OCP.GeomProjLib import GeomProjLib
 from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Vec2d
-from OCP.TColgp import TColgp_HArray1OfPnt
+from OCP.TColgp import TColgp_Array1OfPnt2d, TColgp_HArray1OfPnt, TColgp_HArray1OfPnt2d
+from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal, TColStd_HArray1OfReal
 from OCP.TopAbs import TopAbs_FORWARD, TopAbs_IN, TopAbs_OUT, TopAbs_REVERSED
 from OCP.TopExp import TopExp
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shell, TopoDS_Wire
@@ -43,6 +47,11 @@ TWO_PI = 2.0 * math.pi
 TANGENT_PROJECTIONS = 8
 SNAP_ITERATIONS = 40
 INTERSECTION_SAMPLES = 400
+KINK_DEG = 30.0
+KINK_RATIO = 3.0
+KINK_JOIN = 1e-9
+PCURVE_SAMPLES = 8
+PCURVE_CHECKS = 512
 LINE_PREFERENCE = 2.0
 FACETS_REASON = "facets regions next to curved surfaces are not supported yet (#34)"
 
@@ -432,26 +441,65 @@ def tangent_curve(surfaces, points, closed: bool, limit: float):
     return min(candidates, key=lambda c: c[2])
 
 
+def kinks(nodes, closed: bool) -> list[int]:
+    pts = np.asarray(nodes, dtype=float)
+    n = len(pts)
+    turn = np.zeros(n)
+    for i in range(n) if closed else range(1, n - 1):
+        a = geo.unit(pts[i] - pts[i - 1])
+        b = geo.unit(pts[(i + 1) % n] - pts[i])
+        turn[i] = math.degrees(math.acos(max(-1.0, min(1.0, float(a @ b)))))
+    out = []
+    for i in range(n) if closed else range(1, n - 1):
+        near = max(turn[(i - 1) % n], turn[(i + 1) % n])
+        if turn[i] > KINK_DEG and turn[i] > KINK_RATIO * near:
+            out.append(i)
+    return out
+
+
+def _interpolate(pts, periodic: bool):
+    arr = TColgp_HArray1OfPnt(1, len(pts))
+    for i, p in enumerate(pts, start=1):
+        arr.SetValue(i, _pnt(p))
+    interp = GeomAPI_Interpolate(arr, periodic, 1e-9)
+    interp.Perform()
+    if not interp.IsDone():
+        raise BuildError("could not fit a curve through the boundary polyline")
+    return interp.Curve()
+
+
+def _with_midpoints(surfaces, chain, project):
+    pts = []
+    for p, q in zip(chain, chain[1:], strict=False):
+        pts.extend([p, project(surfaces, 0.5 * (p + q))])
+    pts.append(chain[-1])
+    return pts
+
+
 def projected_curve(surfaces, nodes, closed: bool, project=None):
     project = project or geo.refine
     inner = nodes[1:] if closed else nodes[1:-1]
     fixed = [nodes[0], *(project(surfaces, p) for p in inner)]
     if not closed:
         fixed.append(nodes[-1])
-    ring = [*fixed, fixed[0]] if closed else fixed
-    pts = []
-    for p, q in zip(ring, ring[1:], strict=False):
-        pts.extend([p, project(surfaces, 0.5 * (p + q))])
-    if not closed:
-        pts.append(fixed[-1])
-    arr = TColgp_HArray1OfPnt(1, len(pts))
-    for i, p in enumerate(pts, start=1):
-        arr.SetValue(i, _pnt(p))
-    interp = GeomAPI_Interpolate(arr, closed, 1e-9)
-    interp.Perform()
-    if not interp.IsDone():
-        raise BuildError("could not fit a curve through the boundary polyline")
-    curve = interp.Curve()
+    corners = [k for k in kinks(fixed, closed) if k != 0]
+    if closed and not corners:
+        pts = _with_midpoints(surfaces, [*fixed, fixed[0]], project)[:-1]
+        curve = _interpolate(pts, True)
+    else:
+        ring = [*fixed, fixed[0]] if closed else fixed
+        cuts = [0, *corners, len(ring) - 1]
+        joined = None
+        pts = []
+        for a, b in zip(cuts, cuts[1:], strict=False):
+            piece = _with_midpoints(surfaces, ring[a : b + 1], project)
+            pts.extend(piece)
+            part = _interpolate(piece, False)
+            if joined is None:
+                joined = GeomConvert_CompCurveToBSplineCurve(part)
+            elif not joined.Add(part, KINK_JOIN, True, False, 0):
+                raise BuildError("could not join the boundary curve at a corner")
+        curve = joined.BSplineCurve()
     first, last = curve.FirstParameter(), curve.LastParameter()
     dev = 0.0
     for s in np.linspace(first, last, 8 * len(pts) + 1):
@@ -672,12 +720,21 @@ class _Builder:
         pts = list(e.points)
         if not e.closed:
             pts = [self.vpos[e.start], *pts[1:-1], self.vpos[e.end]]
+        if self.crossing(e):
+            e.snapped = [pts[0], *(geo.refine(surfaces, p) for p in pts[1:-1]), pts[-1]]
+            e.fit = "bspline"
+            return
         e.snapped = snap_tangency(surfaces, pts, e.closed, self.limit)
         found = tangent_curve(surfaces, e.snapped, e.closed, self.limit)
         if found is None:
             e.fit = "bspline"
             return
         e.fit, e.curve = found[0], found[1]
+
+    def crossing(self, e: _Edge) -> bool:
+        if e.closed:
+            return False
+        return any(self.ir.vertices[v].role == "kind_change" for v in (e.start, e.end))
 
     def axis_of(self, r) -> np.ndarray:
         frame = self.frames.get(r)
@@ -952,7 +1009,10 @@ class _Builder:
         else:
             nodes = [start, *ref[1:-1], end]
         curve, dev = projected_curve(
-            surfaces, nodes, e.closed, onto_both if e.tangent else geo.refine
+            surfaces,
+            nodes,
+            e.closed,
+            onto_both if e.tangent and not self.crossing(e) else geo.refine,
         )
         if dev > self.limit:
             raise BuildError(
@@ -1275,6 +1335,92 @@ def corrected_pcurve(surf, curve, first: float, last: float, pc):
     return out
 
 
+def _pieces(curve, first: float, last: float) -> list[tuple[float, float]]:
+    cuts = [first]
+    for i in range(1, curve.NbKnots() + 1):
+        k = curve.Knot(i)
+        if first < k < last and curve.Multiplicity(i) >= curve.Degree():
+            cuts.append(k)
+    cuts.append(last)
+    return list(zip(cuts, cuts[1:], strict=False))
+
+
+def _spans(curve, lo: float, hi: float) -> np.ndarray:
+    knots = [curve.Knot(i) for i in range(1, curve.NbKnots() + 1)]
+    marks = sorted({lo, hi, *(k for k in knots if lo < k < hi)})
+    ts = [
+        np.linspace(a, b, PCURVE_SAMPLES, endpoint=False)
+        for a, b in zip(marks, marks[1:], strict=False)
+    ]
+    return np.append(np.concatenate(ts), hi)
+
+
+def _concat2d(parts):
+    degree = parts[0].Degree()
+    poles, knots, mults = [], [], []
+    for k, c in enumerate(parts):
+        if c.Degree() != degree:
+            return None
+        cp = [c.Pole(i) for i in range(1, c.NbPoles() + 1)]
+        ck = [c.Knot(i) for i in range(1, c.NbKnots() + 1)]
+        cm = [c.Multiplicity(i) for i in range(1, c.NbKnots() + 1)]
+        if k == 0:
+            poles, knots, mults = cp, ck, cm
+            continue
+        mults[-1] = degree
+        poles.extend(cp[1:])
+        knots.extend(ck[1:])
+        mults.extend(cm[1:])
+    ap = TColgp_Array1OfPnt2d(1, len(poles))
+    for i, q in enumerate(poles, start=1):
+        ap.SetValue(i, q)
+    ak = TColStd_Array1OfReal(1, len(knots))
+    am = TColStd_Array1OfInteger(1, len(mults))
+    for i, (kv, m) in enumerate(zip(knots, mults, strict=True), start=1):
+        ak.SetValue(i, kv)
+        am.SetValue(i, m)
+    return Geom2d_BSplineCurve(ap, ak, am, degree)
+
+
+def sampled_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
+    if not isinstance(curve, Geom_BSplineCurve):
+        return None
+    parts = []
+    prev = None
+    for lo, hi in _pieces(curve, first, last):
+        ts = _spans(curve, lo, hi)
+        uvs = []
+        for t in ts:
+            uv = surface_uv(surf, curve.Value(float(t)))
+            if uv is None:
+                return None
+            if prev is not None:
+                uv[0] += TWO_PI * round((prev[0] - uv[0]) / TWO_PI)
+                if v_periodic:
+                    uv[1] += TWO_PI * round((prev[1] - uv[1]) / TWO_PI)
+            uvs.append(uv)
+            prev = uv
+        pts = TColgp_HArray1OfPnt2d(1, len(uvs))
+        params = TColStd_HArray1OfReal(1, len(uvs))
+        for i, (uv, t) in enumerate(zip(uvs, ts, strict=True), start=1):
+            pts.SetValue(i, gp_Pnt2d(float(uv[0]), float(uv[1])))
+            params.SetValue(i, float(t))
+        interp = Geom2dAPI_Interpolate(pts, params, False, 1e-12)
+        interp.Perform()
+        if not interp.IsDone():
+            return None
+        parts.append(interp.Curve())
+    return parts[0] if len(parts) == 1 else _concat2d(parts)
+
+
+def pcurve_error(surf, curve, first: float, last: float, pc) -> float:
+    worst = 0.0
+    for t in np.linspace(first, last, PCURVE_CHECKS):
+        uv = pc.Value(float(t))
+        worst = max(worst, curve.Value(float(t)).Distance(surf.Value(uv.X(), uv.Y())))
+    return worst
+
+
 def seam_vertex(seam, last: bool):
     return TopExp.LastVertex_s(seam) if last else TopExp.FirstVertex_s(seam)
 
@@ -1295,6 +1441,11 @@ class _UVLoop:
             if pc is None:
                 raise BuildError(f"region {region}: could not project an edge onto the surface")
             pc = corrected_pcurve(surf, curve, first, last, pc)
+            sampled = sampled_pcurve(surf, curve, first, last, self.v_periodic)
+            if sampled is not None and pcurve_error(
+                surf, curve, first, last, sampled
+            ) < pcurve_error(surf, curve, first, last, pc):
+                pc = sampled
             a, b = (first, last) if e.Orientation() == TopAbs_FORWARD else (last, first)
             uv.append([np.array(pc.Value(a).Coord()), np.array(pc.Value(b).Coord())])
             self.pcurves.append(pc)

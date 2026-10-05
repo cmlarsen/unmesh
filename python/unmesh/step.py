@@ -149,7 +149,7 @@ def _check(g: _Group, occ, max_tol: float) -> None:
     if not ok:
         g.issues.append("BRepCheck_Analyzer reports the shape invalid")
     if g.kind == "solid":
-        g.volume = g.expected = occ.volume_of(g.shape)
+        g.volume = g.expected = occ.volume_of(g.shape, g.curved)
         g.area = occ.area_of(g.shape)
         if not g.volume > 0:
             ok = False
@@ -337,7 +337,7 @@ def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float
         volume_tolerance=sum(_volume_tolerance(g) for g in solids_expected),
     )
     try:
-        solids, rb.shells = occ.read_back(path)
+        solids, rb.shells = occ.read_back(path, any(g.curved for g in written))
     except Exception as e:
         rb.issues.append(f"could not re-import the file: {type(e).__name__}: {e}")
         return rb

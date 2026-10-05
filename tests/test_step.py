@@ -583,8 +583,8 @@ def test_fold_faces_first_still_read_back_with_the_mesh_sign(tmp_path):
 def test_readback_catches_an_inverted_reimport(tmp_path, monkeypatch):
     real = occ.read_back
 
-    def inverted(path):
-        solids, shells = real(path)
+    def inverted(path, *args):
+        solids, shells = real(path, *args)
         for solid in solids:
             solid.volume = -solid.volume
         return solids, shells
