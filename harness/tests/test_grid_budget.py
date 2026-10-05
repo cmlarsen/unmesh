@@ -103,6 +103,29 @@ def test_full_grid_shape():
         assert sorted(sevs) == [0.25, 0.5, 1.0], (op, sevs)
 
 
+def test_smoke_curved_grid_shape():
+    grid = load_grid("smoke_curved")
+    assert grid.name == "smoke_curved"
+    assert grid.corpus_grid == "smoke"
+    assert grid.seeds == [0, 1, 2]
+    assert sorted(e["id"] for e in grid.entries) == [
+        "chamfer_same_chord-0000",
+        "counterbore-0000",
+        "countersink-0000",
+        "revolved_cone-0000",
+        "revolved_torus-0000",
+        "round_boss-0000",
+    ]
+    assert [(c["operator"], float(c["severity"])) for c in grid.cells] == [
+        ("identity", 0.0),
+        ("float32", 1.0),
+    ]
+    for spec in grid.cells:
+        assert spec.get("seeds", grid.seeds) == [0]
+        assert spec["floors"]["f1_cell"] == 1.0
+    assert len(grid.expand(["unmesh"], "s")) == 12
+
+
 def _plan(name):
     from unmesh_harness.runner.grid import repo_root
 

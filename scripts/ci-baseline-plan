@@ -126,7 +126,21 @@ def run_metadata(repo: str, run_id: int) -> BaselineRun:
     )
 
 
-def download_artifact(repo: str, run_id: int, artifact: str, dest: Path) -> None:
+class MissingGridFile(ValueError):
+    pass
+
+
+def pick_artifact_file(names: list[str], grid: str | None) -> str | None:
+    jsonl = sorted(n for n in names if n.endswith(".jsonl"))
+    if grid is not None:
+        want = f"{grid}.jsonl"
+        return want if want in jsonl else None
+    return jsonl[0] if jsonl else None
+
+
+def download_artifact(
+    repo: str, run_id: int, artifact: str, dest: Path, select: str | None = None
+) -> bool:
     with tempfile.TemporaryDirectory(prefix="baseline-") as tmp:
         subprocess.run(
             [
@@ -145,12 +159,19 @@ def download_artifact(repo: str, run_id: int, artifact: str, dest: Path) -> None
             text=True,
             check=True,
         )
-        hits = sorted(Path(tmp).glob("*.jsonl"))
-        if not hits:
-            raise ValueError(f"artifact {artifact!r} of run {run_id} holds no jsonl")
+        names = sorted(p.name for p in Path(tmp).glob("*.jsonl"))
+        picked = pick_artifact_file(names, select)
+        if picked is None:
+            if select is None:
+                raise ValueError(f"artifact {artifact!r} of run {run_id} holds no jsonl")
+            raise MissingGridFile(
+                f"artifact {artifact!r} of run {run_id} holds no {select}.jsonl "
+                f"(has: {', '.join(names) or 'nothing'})"
+            )
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(hits[0].read_bytes())
+        dest.write_bytes((Path(tmp) / picked).read_bytes())
     validate_baseline(dest)
+    return True
 
 
 def validate_baseline(dest: Path) -> None:
@@ -168,6 +189,32 @@ def validate_baseline(dest: Path) -> None:
         raise ValueError(f"baseline {dest} holds no JSON records")
 
 
+def grid_path(grid: str) -> str:
+    return f"harness/grids/{grid}.json"
+
+
+def bootstrap_for_missing_grid(*, allow_missing: bool, grid_present_at_baseline: bool) -> bool:
+    return allow_missing and not grid_present_at_baseline
+
+
+def grid_exists_at_sha(repo: str, path: str, sha: str) -> bool:
+    try:
+        subprocess.run(
+            ["gh", "api", f"repos/{repo}/contents/{path}?ref={sha}", "--silent"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        err = e.stderr or ""
+        if "No commit found for the ref" in err:
+            raise
+        if "Not Found (HTTP 404)" in err:
+            return False
+        raise
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
@@ -176,6 +223,21 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--main-tree", type=Path, required=True)
     parser.add_argument("--workflow", default="ci.yml")
+    parser.add_argument(
+        "--select",
+        default=None,
+        help="only accept <SELECT>.jsonl from the downloaded artifact "
+        "(default: the first jsonl)",
+    )
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="warn and exit 0 (writing nothing) when the artifact holds no "
+        "<SELECT>.jsonl but that grid did not exist at the baseline run's "
+        "head sha, i.e. the baseline predates the grid; a missing file for "
+        "a grid that existed at the baseline sha is an error, exactly like "
+        "the planar compare",
+    )
     args = parser.parse_args()
     try:
         compare_on_main = (args.main_tree / COMPARE_MODULE).is_file()
@@ -210,11 +272,44 @@ def main() -> int:
             print(f"::error::{decision.message}")
             return 1
         assert decision.run_id is not None
+        baseline_sha: str | None = None
+        for candidate in (base, latest):
+            if candidate is not None and candidate.id == decision.run_id:
+                baseline_sha = candidate.head_sha
         if decision.fell_back:
             print(f"::warning::{decision.message}")
         else:
             print(decision.message)
-        download_artifact(args.repo, decision.run_id, args.artifact, args.out)
+        try:
+            download_artifact(args.repo, decision.run_id, args.artifact, args.out, args.select)
+        except MissingGridFile as e:
+            if not args.allow_missing:
+                raise
+            if baseline_sha is None:
+                raise ValueError(
+                    f"baseline run {decision.run_id} has no recorded head sha: {e}"
+                ) from None
+            assert args.select is not None
+            try:
+                present = grid_exists_at_sha(args.repo, grid_path(args.select), baseline_sha)
+            except subprocess.CalledProcessError as g:
+                detail = (g.stderr or "").strip() or g
+                print(
+                    f"::error::cannot verify {args.select} grid at baseline "
+                    f"{baseline_sha}: {detail}; failing instead of silently passing"
+                )
+                return 1
+            if not bootstrap_for_missing_grid(
+                allow_missing=args.allow_missing,
+                grid_present_at_baseline=present,
+            ):
+                print(
+                    f"::error::{e}; grid {args.select} exists at baseline "
+                    f"{baseline_sha}; failing instead of silently passing"
+                )
+                return 1
+            print(f"::warning::{e}; baseline predates the grid; skipping compare for that grid")
+            return 0
     except (subprocess.CalledProcessError, ValueError, KeyError) as e:
         print(f"::error::baseline artifact missing or unreadable: {e}")
         return 1

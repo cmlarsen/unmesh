@@ -37,26 +37,33 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/smoke/cache
-          key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py', 'harness/src/unmesh_harness/runner/execute.py', 'harness/src/unmesh_harness/degrade/__init__.py', 'harness/src/unmesh_harness/degrade/fillets.py', 'harness/src/unmesh_harness/degrade/retriangulate.py') }}
-      - name: Pin smoke grid to main for PR compare
+          key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/grids/smoke_curved.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py', 'harness/src/unmesh_harness/runner/execute.py', 'harness/src/unmesh_harness/degrade/__init__.py', 'harness/src/unmesh_harness/degrade/fillets.py', 'harness/src/unmesh_harness/degrade/retriangulate.py') }}
+      - name: Pin smoke grids to main for PR compare
         if: github.event_name == 'pull_request'
         run: |
           git fetch origin main --depth 1
           git show FETCH_HEAD:harness/grids/smoke.json > harness/grids/smoke.json
+          if git show "FETCH_HEAD:harness/grids/smoke_curved.json" > "$RUNNER_TEMP/smoke_curved.main.json" 2>/dev/null; then
+            cp "$RUNNER_TEMP/smoke_curved.main.json" harness/grids/smoke_curved.json
+            echo "pinned smoke_curved.json to main"
+          else
+            echo "no smoke_curved.json on main yet; running the PR copy (bootstrap)"
+          fi
           git diff --stat
-      - name: Smoke grid
+      - name: Smoke grids
         env:
           UV_LOCKED: "1"
         run: |
           start=$(date +%s)
           uv run unmesh-harness run --converter unmesh --grid smoke --out "$RUNNER_TEMP/smoke" --gate
-          echo "smoke grid wall time: $(( $(date +%s) - start )) s"
+          uv run unmesh-harness run --converter unmesh --grid smoke_curved --out "$RUNNER_TEMP/smoke" --gate
+          echo "smoke grids wall time: $(( $(date +%s) - start )) s"
       - name: Upload smoke results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-results-${{ matrix.os }}
-          path: ${{ runner.temp }}/smoke/smoke.jsonl
+          path: ${{ runner.temp }}/smoke/*.jsonl
           if-no-files-found: ignore
       - name: Cache Rust target for the main-tree compare build
         if: github.event_name == 'pull_request'
@@ -80,34 +87,53 @@ jobs:
           git worktree remove --force "$main_tree" 2>/dev/null || true
           rm -rf "$main_tree"
           git worktree add --detach "$main_tree" FETCH_HEAD
-          uv run --locked scripts/ci-baseline-plan \
-            --repo "$GITHUB_REPOSITORY" \
-            --base-sha "${{ github.event.pull_request.base.sha }}" \
-            --artifact "smoke-results-${{ matrix.os }}" \
-            --out "$base/baseline.jsonl" \
-            --main-tree "$main_tree"
-          if [ ! -e "$base/baseline.jsonl" ]; then
-            echo "no baseline artifact (gate skipped upstream); nothing to compare"
-            exit 0
-          fi
-          if [ ! -s "$base/baseline.jsonl" ]; then
-            echo "::error::baseline artifact is empty; failing instead of silently passing"
+          compare_grid() {
+            grid="$1"
+            shift
+            if ! uv run --locked scripts/ci-baseline-plan \
+              --repo "$GITHUB_REPOSITORY" \
+              --base-sha "${{ github.event.pull_request.base.sha }}" \
+              --artifact "smoke-results-${{ matrix.os }}" \
+              --select "$grid" \
+              "$@" \
+              --out "$base/$grid.jsonl" \
+              --main-tree "$main_tree"; then
+              return 1
+            fi
+            if [ ! -e "$base/$grid.jsonl" ]; then
+              echo "no $grid baseline (gate skipped upstream or grid is new); nothing to compare"
+              return 0
+            fi
+            if [ ! -s "$base/$grid.jsonl" ]; then
+              echo "::error::$grid baseline artifact is empty; failing instead of silently passing"
+              return 1
+            fi
+            if [ ! -s "$RUNNER_TEMP/smoke/$grid.jsonl" ]; then
+              echo "::error::PR produced no $grid results; failing instead of silently passing"
+              return 1
+            fi
+            if uv run --project "$main_tree" --locked unmesh-harness compare \
+              "$base/$grid.jsonl" "$RUNNER_TEMP/smoke/$grid.jsonl"; then
+              echo "compare ($grid): no regressions"
+              return 0
+            fi
+            echo "compare ($grid): regressions found, checking for an approved waiver"
+            if uv run --project "$main_tree" --locked python "$main_tree/scripts/check-waiver" \
+              --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
+              --run-a "$base/$grid.jsonl" --run-b "$RUNNER_TEMP/smoke/$grid.jsonl"; then
+              echo "compare ($grid): regression waived"
+              return 0
+            fi
+            echo "compare ($grid): regressions without an approved waiver"
+            return 1
+          }
+          status_smoke=0
+          status_curved=0
+          compare_grid smoke || status_smoke=$?
+          compare_grid smoke_curved --allow-missing || status_curved=$?
+          if [ "$status_smoke" -ne 0 ] || [ "$status_curved" -ne 0 ]; then
             exit 1
           fi
-          if uv run --project "$main_tree" --locked unmesh-harness compare \
-            "$base/baseline.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
-            echo "compare: no regressions"
-            exit 0
-          fi
-          echo "compare: regressions found, checking for an approved waiver"
-          if uv run --project "$main_tree" --locked python "$main_tree/scripts/check-waiver" \
-            --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
-            --run-a "$base/baseline.jsonl" --run-b "$RUNNER_TEMP/smoke/smoke.jsonl"; then
-            echo "compare: regression waived"
-            exit 0
-          fi
-          echo "compare: regressions without an approved waiver"
-          exit 1
       - name: Wheel imports on Python 3.11 without OCP
         run: |
           uv build --wheel -o "$RUNNER_TEMP/wheels"
