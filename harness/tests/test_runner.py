@@ -34,7 +34,7 @@ def hang(stl_path):
 def hog(stl_path):
     import numpy as np
 
-    held = np.ones(200_000_000)
+    held = np.ones(125_000_000)
     time.sleep(600)
     return held
 """
@@ -126,6 +126,9 @@ def test_memory_cap_records_the_cell_and_keeps_the_pool(tmp_path, monkeypatch):
     (plugins / "broken_plugins.py").write_text(PLUGINS)
     monkeypatch.syspath_prepend(str(plugins))
     grid = small_grid(parts=1, cells=("identity",))
+    # The cap must clear a pool worker's idle RSS (~300 MB after imports) plus a
+    # normal cell's peak (~435 MB); the hog's 1 GB single-step block clears it
+    # from any baseline without pressuring the machine into swap.
     summary = run_grid(
         grid,
         ["broken_plugins:hog", "unmesh"],
@@ -134,16 +137,16 @@ def test_memory_cap_records_the_cell_and_keeps_the_pool(tmp_path, monkeypatch):
         sha="s",
         timeout=120,
         log=lambda *_: None,
-        memory_cap_mb=1200,
+        memory_cap_mb=700,
     )
     by_converter = {r["converter"]: r for r in read_results(summary.results_path)}
     hog = by_converter["broken_plugins:hog"]
     assert hog["status"] == "error", hog
     assert hog["error"].startswith("memory cap: worker RSS"), hog
-    assert hog["rss_peak_mb"] > 1200
+    assert hog["rss_peak_mb"] > 700
     ok = by_converter["unmesh"]
     assert ok["status"] == "ok", ok
-    assert 0 < ok["rss_peak_mb"] < 1200
+    assert 0 < ok["rss_peak_mb"] < 700
 
 
 def test_default_memory_cap_leaves_headroom():
