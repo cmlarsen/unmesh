@@ -78,7 +78,7 @@ def test_uv_sphere_is_closed_manifold(n_u, n_v):
     assert_closed_manifold(tris)
     e1 = tris[:, 1] - tris[:, 0]
     e2 = tris[:, 2] - tris[:, 0]
-    areas = np.linalg.norm(np.cross(e1, e2)) / 2.0
+    areas = np.linalg.norm(np.cross(e1, e2), axis=1) / 2.0
     assert np.all(areas >= 1e-12 * areas.mean())
 
 
