@@ -79,10 +79,22 @@ def apply(name: str, mesh: LabeledMesh, severity: float, seed: int) -> LabeledMe
     return out
 
 
-def apply_chain(mesh: LabeledMesh, steps: list[tuple[str, float]], seed: int) -> LabeledMesh:
+def chain(mesh: LabeledMesh, steps: list[tuple[str, float]], seed: int) -> LabeledMesh:
+    """Apply operators in order, deriving each step's seed from the chain seed.
+
+    Step ``i`` runs as ``apply(name, mesh, severity, seed + i)`` and appends its
+    own ``(op, severity, seed, params)`` entry to ``metadata["history"]``, so a
+    chain is fully described by its step list plus the single chain seed.
+    Per-step seeds overlap across chain seeds: step 1 at chain seed ``s`` uses
+    the same seed as step 0 at chain seed ``s + 1``.
+    """
     for i, (name, severity) in enumerate(steps):
         mesh = apply(name, mesh, severity, seed + i)
     return mesh
+
+
+def apply_chain(mesh: LabeledMesh, steps: list[tuple[str, float]], seed: int) -> LabeledMesh:
+    return chain(mesh, steps, seed)
 
 
 def to_original(mesh: LabeledMesh) -> np.ndarray:

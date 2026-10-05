@@ -217,13 +217,13 @@ def _score(
 def run_cell(task: dict[str, Any]) -> dict[str, Any]:
     import unmesh
 
-    from ..degrade import apply_chain
+    from ..degrade import chain
 
     phases: dict[str, float] = {}
     mark = time.perf_counter()
     clean, _ = _load_part(task["cache"], task["entry"]["id"])
     steps = [(name, float(sev)) for name, sev in task["steps"]]
-    degraded = apply_chain(clean, steps, task["seed"])
+    degraded = chain(clean, steps, task["seed"])
     work = Path(tempfile.mkdtemp(prefix="cell-", dir=task["work"]))
     try:
         stl_path = work / "input.stl"

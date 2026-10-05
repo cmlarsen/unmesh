@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..corpus import find_manifest, load_manifest, select
+from ..degrade.presets import PRESETS
 from .converters import plugin_hash
 
 Key = tuple[str, str, float, int, str, str, str, str]
@@ -31,7 +32,7 @@ FACE_LABEL_SENSITIVE_OPS = frozenset(
 def ambiguity_rejected_ops(cells: list[dict[str, Any]]) -> list[str]:
     rejected = []
     for spec in cells:
-        for name, _ in spec.get("steps", []):
+        for name, _ in steps_for(spec):
             if name in FACE_LABEL_SENSITIVE_OPS and name not in rejected:
                 rejected.append(name)
     return rejected
@@ -111,6 +112,19 @@ class Grid:
         return out
 
 
+def steps_for(spec: dict[str, Any]) -> list[list[Any]]:
+    if "preset" not in spec:
+        return spec["steps"]
+    if "steps" in spec:
+        raise ValueError("a grid cell takes either 'preset' or 'steps', not both")
+    name = spec["preset"]
+    try:
+        preset = PRESETS[name]
+    except KeyError:
+        raise ValueError(f"unknown degradation preset {name!r}") from None
+    return [[op, severity] for op, severity in preset.steps]
+
+
 def repo_root() -> Path:
     return find_manifest().parent.parent
 
@@ -124,6 +138,17 @@ def find_grid(name: str) -> Path:
 
 def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
     raw = json.loads(find_grid(name).read_text())
+    for spec in raw["cells"]:
+        steps_for(spec)
+        if "preset" in spec:
+            if "operator" not in spec:
+                spec["operator"] = spec["preset"]
+            elif spec["operator"] != spec["preset"]:
+                raise ValueError(
+                    f"grid cell preset {spec['preset']!r} disagrees with operator "
+                    f"{spec['operator']!r}: preset cells must be labeled with their "
+                    "preset name"
+                )
     if "ambiguity" in raw.get("categories", []):
         rejected = ambiguity_rejected_ops(raw["cells"])
         if rejected:
