@@ -11,6 +11,7 @@ from unmesh.ir import (
     Boundary,
     Cone,
     Cylinder,
+    Facets,
     Ir,
     Plane,
     Region,
@@ -301,3 +302,106 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
         adjacencies,
         vertices,
     )
+
+
+def _facets_dihedral(ir: Ir, analytic: int, bd: Boundary, normal_of) -> float:
+    from unmesh._writer import geometry as geo
+
+    surface = ir.regions[analytic].surface
+    pts = [np.asarray(p, dtype=float) for p in bd.points]
+    n = len(pts)
+    chords = [(i, (i + 1) % n) for i in range(n if bd.closed else n - 1)]
+    samples = [(pts[i], pts[j], 0.5 * (pts[i] + pts[j])) for i, j in chords]
+    if not bd.closed and n > 2:
+        samples = [(pts[max(i - 1, 0)], pts[i], pts[i]) for i in range(1, n)]
+    angles = []
+    for p, q, x in samples:
+        c = float(geo.outward(surface, x) @ normal_of(p, q))
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+    return float(np.median(angles))
+
+
+def force_facets(ir: Ir, region: int, tris: np.ndarray) -> Ir:
+    tris = np.asarray(tris, dtype=float)
+    out = Ir.loads(ir.dumps())
+    target = out.regions[region]
+    index: dict[tuple[float, ...], int] = {}
+    faces = []
+    for t in target.triangles:
+        faces.append(tuple(index.setdefault(tuple(map(float, p)), len(index)) for p in tris[t]))
+    vertices = list(index)
+    target.surface = Facets(vertices, faces)
+    target.residual = None
+    normals: dict[tuple, np.ndarray] = {}
+    for f in faces:
+        a, b, c = (np.asarray(vertices[i]) for i in f)
+        n = np.cross(b - a, c - a)
+        n = n / np.linalg.norm(n)
+        for i, j in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+            normals[(vertices[i], vertices[j])] = n
+            normals[(vertices[j], vertices[i])] = n
+
+    def normal_of(p, q):
+        return normals[(tuple(map(float, p)), tuple(map(float, q)))]
+
+    threshold = out.tolerances.tangent_threshold_deg
+    for adj in out.adjacencies:
+        if region not in adj.regions:
+            continue
+        other = adj.regions[0] if adj.regions[1] == region else adj.regions[1]
+        for bd in adj.boundaries:
+            bd.dihedral_deg = _facets_dihedral(out, other, bd, normal_of)
+            bd.kind = "tangent" if bd.dihedral_deg < threshold else "transversal"
+    return _merge_kind_changes(out)
+
+
+def _merge_kind_changes(ir: Ir) -> Ir:
+    while True:
+        ends: dict[int, list[tuple[Adjacency, Boundary]]] = defaultdict(list)
+        for adj in ir.adjacencies:
+            for bd in adj.boundaries:
+                if not bd.closed:
+                    ends[bd.start_vertex].append((adj, bd))
+                    ends[bd.end_vertex].append((adj, bd))
+        stale = next(
+            (
+                v.id
+                for v in ir.vertices
+                if v.role == "kind_change" and len({bd.kind for _, bd in ends[v.id]}) < 2
+            ),
+            None,
+        )
+        if stale is None:
+            return ir
+        (adj, first), (_, second) = ends[stale]
+        if first.end_vertex != stale:
+            first, second = second, first
+        adj.boundaries.remove(first)
+        if first is second:
+            first.closed, first.start_vertex, first.end_vertex = True, None, None
+            first.points = first.points[:-1]
+            adj.boundaries.append(first)
+        else:
+            adj.boundaries.remove(second)
+            joined = Boundary(
+                first.kind,
+                float(np.median([first.dihedral_deg, second.dihedral_deg])),
+                first.start_vertex == second.end_vertex,
+                first.start_vertex,
+                second.end_vertex,
+                [*first.points, *second.points[1:]],
+            )
+            if joined.closed:
+                joined.start_vertex = joined.end_vertex = None
+                joined.points = joined.points[:-1]
+            adj.boundaries.append(joined)
+        adj.boundaries.sort(key=lambda b: b.points[0])
+        renumber = {v.id: i for i, v in enumerate(x for x in ir.vertices if x.id != stale)}
+        ir.vertices = [v for v in ir.vertices if v.id != stale]
+        for v in ir.vertices:
+            v.id = renumber[v.id]
+        for a in ir.adjacencies:
+            for bd in a.boundaries:
+                if not bd.closed:
+                    bd.start_vertex = renumber[bd.start_vertex]
+                    bd.end_vertex = renumber[bd.end_vertex]
