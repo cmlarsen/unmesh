@@ -92,6 +92,40 @@ pub fn assemble(
                     max: fr.max.max(fr.sag),
                 }),
             ),
+            Surface::Sphere {
+                center,
+                radius,
+                reversed,
+            } => (
+                crate::ir::Surface::Sphere {
+                    center,
+                    radius,
+                    orientation: orientation(reversed),
+                },
+                Some(Residual {
+                    rms: fr.rms,
+                    max: fr.max.max(fr.sag),
+                }),
+            ),
+            Surface::Torus {
+                center,
+                axis,
+                major,
+                minor,
+                reversed,
+            } => (
+                crate::ir::Surface::Torus {
+                    center,
+                    axis,
+                    major_radius: major,
+                    minor_radius: minor,
+                    orientation: orientation(reversed),
+                },
+                Some(Residual {
+                    rms: fr.rms,
+                    max: fr.max.max(fr.sag),
+                }),
+            ),
             Surface::Facets => {
                 let mut local: FxHashMap<u32, u32> = FxHashMap::default();
                 let mut vertices = Vec::new();

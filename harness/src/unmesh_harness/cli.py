@@ -193,7 +193,7 @@ def _oracle_fit(args) -> int:
         seeds = {f: s[: args.seeds] for f, s in seeds.items()}
     operators = [o for arg in args.operator for o in arg.split(",")]
     records = run_oracle(
-        families, seeds, operators, tuple(args.deflection), args.jobs, args.automatic
+        families, seeds, operators, tuple(args.deflection), args.jobs, args.automatic, args.truth
     )
     print(format_table(summarize(records)))
     return 0
@@ -278,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         "--automatic",
         action="store_true",
         help="segment with unmesh.convert instead of the oracle labels",
+    )
+    oracle.add_argument(
+        "--truth",
+        action="store_true",
+        help="also judge the IR against a fine tessellation (0.001, 0.1) of the ground truth",
     )
 
     args = parser.parse_args(argv)

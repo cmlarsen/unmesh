@@ -2,6 +2,7 @@
 
 mod adjacency;
 mod curved;
+mod doubly;
 mod dsu;
 mod emit;
 mod fit;
