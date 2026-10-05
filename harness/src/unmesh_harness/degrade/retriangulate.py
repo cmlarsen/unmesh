@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from functools import partial
 
 import numpy as np
 
@@ -120,17 +121,25 @@ class _Segments:
 
 class _Holes:
     def __init__(self, hole_arrs: list[np.ndarray]):
-        sizes = [len(h) for h in hole_arrs]
-        self.starts = np.concatenate([[0], np.cumsum(sizes)[:-1]]).astype(np.int64)
-        edges = [_ring_edges(h) for h in hole_arrs]
-        self.ea = np.concatenate([e[0] for e in edges])
-        self.eb = np.concatenate([e[1] for e in edges])
+        self.rings = [_ring_edges(h) for h in hole_arrs]
+        self.lo = np.array([h.min(axis=0) for h in hole_arrs])
+        self.hi = np.array([h.max(axis=0) for h in hole_arrs])
+        self.ea = np.concatenate([e[0] for e in self.rings])
+        self.eb = np.concatenate([e[1] for e in self.rings])
 
     def inside_other(self, pts: np.ndarray, skip: int) -> np.ndarray:
-        hits = _parity_inside(pts, self.ea, self.eb).astype(np.int64)
-        odd = np.add.reduceat(hits, self.starts, axis=1) % 2 == 1
-        odd[:, skip] = False
-        return odd.any(axis=1)
+        boxed = np.all(
+            (pts[:, None, :] >= self.lo[None, :, :]) & (pts[:, None, :] <= self.hi[None, :, :]),
+            axis=2,
+        )
+        boxed[:, skip] = False
+        out = np.zeros(len(pts), dtype=bool)
+        for o in np.flatnonzero(boxed.any(axis=0)):
+            rows = np.flatnonzero(boxed[:, o] & ~out)
+            if len(rows):
+                hits = _parity_inside(pts[rows], *self.rings[o])
+                out[rows] = np.count_nonzero(hits, axis=1) % 2 == 1
+        return out
 
 
 def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, holes, k) -> np.ndarray:
@@ -149,6 +158,27 @@ def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, holes, k) -> np.ndarray:
     return ok
 
 
+def _nearest_valid(approx: np.ndarray, valid) -> float | None:
+    tested = np.zeros(len(approx), dtype=bool)
+    window = 256
+    while True:
+        if window < len(approx):
+            flats = np.argpartition(approx, window - 1)[:window]
+        else:
+            flats = np.arange(len(approx))
+        flats = flats[~tested[flats]]
+        flats = flats[np.argsort(approx[flats], kind="stable")]
+        tested[flats] = True
+        for at in range(0, len(flats), 256):
+            chunk = flats[at : at + 256]
+            ok = valid(chunk)
+            if ok.any():
+                return float(approx[chunk[ok]].min())
+        if window >= len(approx):
+            return None
+        window *= 4
+
+
 def _bridge(outer, holes) -> list | None:
     outer = list(outer)
     hole_arrs = [np.array(h, dtype=np.float64).reshape(-1, 2) for h in holes]
@@ -163,22 +193,21 @@ def _bridge(outer, holes) -> list | None:
             hole_arr[:, None, 0] - outer_arr[None, :, 0],
             hole_arr[:, None, 1] - outer_arr[None, :, 1],
         ).ravel()
-        found = None
-        window = 64
-        while found is None:
-            if window < len(approx):
-                flats = np.argpartition(approx, window - 1)[:window]
-            else:
-                flats = np.arange(len(approx))
-            ok = _pairs_ok(flats, n_outer, outer_arr, hole_arr, segs, all_holes, k)
-            if ok.any():
-                found = float(approx[flats[ok]].min())
-            elif window >= len(approx):
-                return None
-            window *= 8
+        valid = partial(
+            _pairs_ok,
+            n_outer=n_outer,
+            outer_arr=outer_arr,
+            hole_arr=hole_arr,
+            segs=segs,
+            holes=all_holes,
+            k=k,
+        )
+        found = _nearest_valid(approx, valid)
+        if found is None:
+            return None
         near = np.flatnonzero(approx <= found * (1.0 + 1e-9))
         best = None
-        for flat in near[_pairs_ok(near, n_outer, outer_arr, hole_arr, segs, all_holes, k)]:
+        for flat in near[valid(near)]:
             j, i = divmod(int(flat), n_outer)
             key = (math.dist(outer[i], h[j]), j, i)
             if best is None or key < best:

@@ -545,3 +545,19 @@ def test_fillet_rows_complex_assembly_does_not_fold():
         out = degrade.apply("fillet_rows", mesh, sev, SWEEP_SEED)
         assert _folded_count(out) == 0, (pid, sev)
         assert_sweep_clean(pid, "fillet_rows", sev, 0, _degenerate_count(mesh), out)
+
+
+def test_fillet_greedy_keep_matches_sequential_acceptance():
+    from unmesh_harness.degrade.fillets import _greedy_keep
+
+    strips = list(range(11))
+    bad = {3, 8}
+
+    def ok(sub):
+        return not bad & set(sub) and not {5, 6} <= set(sub)
+
+    kept, sequential = _greedy_keep(ok, strips), []
+    for s in strips:
+        if ok([*sequential, s]):
+            sequential.append(s)
+    assert list(kept) == sequential == [0, 1, 2, 4, 5, 7, 9, 10]

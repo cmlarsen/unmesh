@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from .core import register
-from .retriangulate import canonical_triangulate_loops
+from .retriangulate import _basis, canonical_triangulate_loops
 
 
 def segments_for(severity: float) -> int:
@@ -209,40 +209,54 @@ def fillet_rows(mesh, severity, rng, segments=None):
             edges_of.setdefault(adj.face_b, []).append(idx)
     plans = {}
     skipped = []
+    current = dict(polymap)
     for fid in sorted(by_face):
         if mesh.faces[fid].surface != "cylinder":
             continue
         plan = _plan_face(
             fid, mesh.faces, mesh.adjacency, polymap, k, [tris[ti] for ti in by_face[fid]]
         )
-        if plan is None:
+        if plan is None or _chords_cross(mesh, plan, edges_of, current):
             skipped.append(fid)
         else:
             plans[fid] = plan
-    accepted = sorted(plans)
+            current.update(plan["across"])
     cache: dict = {}
+
+    def neighbour_tris(other, strips):
+        key = (other, tuple(strips))
+        if key not in cache:
+            across = {idx: pts for f in strips for idx, pts in plans[f]["across"]}
+            cache[key] = _retriangulate_neighbour(mesh, other, edges_of, polymap, across)
+        return cache[key]
+
+    def adjacent(other, strips):
+        return [f for f in strips if other in plans[f]["neighbours"]]
+
+    accepted = sorted(plans)
     while True:
-        across = {idx: pts for f in accepted for idx, pts in plans[f]["across"]}
-        failed = None
-        for other in sorted({n for f in accepted for n in plans[f]["neighbours"]}):
-            key = (other, tuple(f for f in accepted if other in plans[f]["neighbours"]))
-            if key not in cache:
-                cache[key] = _retriangulate_neighbour(mesh, other, edges_of, polymap, across)
-            if cache[key] is None:
-                failed = other
-                break
-        if failed is None:
+        failing = [
+            other
+            for other in sorted({n for f in accepted for n in plans[f]["neighbours"]})
+            if neighbour_tris(other, adjacent(other, accepted)) is None
+        ]
+        if not failing:
             break
-        accepted = [f for f in accepted if failed not in plans[f]["neighbours"]]
+        hopeless = {other for other in failing if neighbour_tris(other, []) is None}
+        if hopeless:
+            accepted = [f for f in accepted if not hopeless & set(plans[f]["neighbours"])]
+            continue
+        strips = adjacent(failing[0], accepted)
+        kept = _greedy_keep(lambda sub, x=failing[0]: neighbour_tris(x, sub) is not None, strips)
+        accepted = [f for f in accepted if f not in strips or f in kept]
     skipped = sorted(skipped + [f for f in plans if f not in accepted])
     written: dict[int, list[tuple]] = {}
     for f in accepted:
         written.pop(f, None)
         written[f] = plans[f]["grid_tris"]
         for other in plans[f]["neighbours"]:
-            key = (other, tuple(g for g in accepted if other in plans[g]["neighbours"]))
             written.pop(other, None)
-            written[other] = cache[key]
+            written[other] = neighbour_tris(other, adjacent(other, accepted))
     out_tris = [t for t, f in zip(tris, fids, strict=True) if f not in written]
     out_fids = [f for f in fids if f not in written]
     for f, block in written.items():
@@ -264,6 +278,45 @@ def fillet_rows(mesh, severity, rng, segments=None):
         "triangles_before": len(tris),
         "triangles_after": len(out_tris),
     }
+
+
+def _chords_cross(mesh, plan, edges_of, polymap) -> bool:
+    replaced = {idx for idx, _ in plan["across"]}
+    for idx, pts in plan["across"]:
+        adj = mesh.adjacency[idx]
+        for other in {adj.face_a, adj.face_b} & set(plan["neighbours"]):
+            u, v = _basis(np.array(mesh.faces[other].params["normal"], dtype=np.float64))
+            frame = np.stack([u, v], axis=1)
+            new = np.array(pts, dtype=np.float64) @ frame
+            rest = [np.array(polymap[j], dtype=np.float64) @ frame for j in edges_of[other]]
+            rest = [r for j, r in zip(edges_of[other], rest, strict=True) if j not in replaced]
+            if not rest:
+                continue
+            a = np.concatenate([r[:-1] for r in rest])
+            b = np.concatenate([r[1:] for r in rest])
+            if _crossing(new[:-1], new[1:], a, b):
+                return True
+    return False
+
+
+def _crossing(p, q, a, b) -> bool:
+    def side(x, y, z):
+        return (y[..., 0] - x[..., 0]) * (z[..., 1] - x[..., 1]) - (y[..., 1] - x[..., 1]) * (
+            z[..., 0] - x[..., 0]
+        )
+
+    p, q, a, b = p[:, None], q[:, None], a[None], b[None]
+    return bool(np.any((side(p, q, a) * side(p, q, b) < 0) & (side(a, b, p) * side(a, b, q) < 0)))
+
+
+def _greedy_keep(ok, strips: list, base: tuple = ()) -> tuple:
+    if ok([*base, *strips]):
+        return tuple(strips)
+    if len(strips) == 1:
+        return ()
+    mid = len(strips) // 2
+    left = _greedy_keep(ok, strips[:mid], base)
+    return left + _greedy_keep(ok, strips[mid:], base + left)
 
 
 def _retriangulate_neighbour(mesh, other, edges_of, polymap, across):
