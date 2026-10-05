@@ -37,6 +37,10 @@ def convert_oracle(mesh: LabeledMesh, options: unmesh.ConvertOptions | None = No
     return unmesh.convert_from_labels(tris, np.asarray(mesh.face_id, dtype=np.int64), options)
 
 
+def convert_automatic(mesh: LabeledMesh, options: unmesh.ConvertOptions | None = None):
+    return unmesh.convert(np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3), options)
+
+
 def _truth_radius(face_type: str, params: dict[str, Any], centroid: np.ndarray) -> float:
     if face_type == "cylinder":
         return float(params["radius"])
@@ -49,11 +53,12 @@ def score_oracle(
     clean: LabeledMesh,
     degraded: LabeledMesh,
     tolerances: Tolerances = CURVED_ACCEPTANCE,
+    automatic: bool = False,
 ) -> dict[str, Any]:
     from .degrade import to_original
     from .metrics.recovery import _face_centroid
 
-    ir, report = convert_oracle(degraded)
+    ir, report = (convert_automatic if automatic else convert_oracle)(degraded)
     rec = score_recovery(clean, degraded.face_id, ir, to_original(degraded), tolerances)
     radius_ratio = 0.0
     radius_rel = 0.0
@@ -92,6 +97,7 @@ def oracle_cell(
     seed: int,
     operator: str = "identity",
     deflection: tuple[float, float] = DEFAULT_DEFLECTION,
+    automatic: bool = False,
 ) -> dict[str, Any]:
     from .degrade import chain
     from .groundtruth import generate
@@ -103,7 +109,7 @@ def oracle_cell(
         clean.metadata["face_tags"] = dict(gt.face_tags)
     degraded = chain(clean, OPERATORS[operator], seed)
     record = {"family": family, "seed": seed, "operator": operator}
-    record.update(score_oracle(clean, degraded))
+    record.update(score_oracle(clean, degraded, automatic=automatic))
     return record
 
 
@@ -117,9 +123,10 @@ def run_oracle(
     operators: list[str],
     deflection: tuple[float, float] = DEFAULT_DEFLECTION,
     jobs: int = 1,
+    automatic: bool = False,
 ) -> list[dict[str, Any]]:
     tasks = [
-        (family, seed, op, deflection)
+        (family, seed, op, deflection, automatic)
         for family in families
         for seed in seeds[family]
         for op in operators

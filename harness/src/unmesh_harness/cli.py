@@ -192,7 +192,9 @@ def _oracle_fit(args) -> int:
     if args.seeds is not None:
         seeds = {f: s[: args.seeds] for f, s in seeds.items()}
     operators = [o for arg in args.operator for o in arg.split(",")]
-    records = run_oracle(families, seeds, operators, tuple(args.deflection), args.jobs)
+    records = run_oracle(
+        families, seeds, operators, tuple(args.deflection), args.jobs, args.automatic
+    )
     print(format_table(summarize(records)))
     return 0
 
@@ -272,6 +274,11 @@ def main(argv: list[str] | None = None) -> int:
     oracle.add_argument("--seeds", type=int, default=None, help="first N corpus seeds per family")
     oracle.add_argument("--deflection", type=float, nargs=2, default=[0.01, 0.2])
     oracle.add_argument("--jobs", type=int, default=1)
+    oracle.add_argument(
+        "--automatic",
+        action="store_true",
+        help="segment with unmesh.convert instead of the oracle labels",
+    )
 
     args = parser.parse_args(argv)
     if args.group == "oracle-fit":

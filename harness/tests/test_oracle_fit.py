@@ -50,3 +50,20 @@ def test_curved_acceptance_over_the_corpus():
     families = list(CURVED_FAMILIES)
     records = run_oracle(families, corpus_seeds(families), ["identity", "float32"], jobs=2)
     _check(summarize(records))
+
+
+def test_curved_families_recover_on_automatic_segmentation():
+    families = list(CURVED_FAMILIES)
+    records = run_oracle(
+        families, {f: [0] for f in families}, ["identity", "float32"], automatic=True
+    )
+    _check(summarize(records), f1_floor=0.95)
+
+
+@pytest.mark.slow
+def test_automatic_acceptance_over_the_corpus():
+    families = list(CURVED_FAMILIES)
+    records = run_oracle(
+        families, corpus_seeds(families), ["identity", "float32"], jobs=2, automatic=True
+    )
+    _check(summarize(records), f1_floor=0.95)
