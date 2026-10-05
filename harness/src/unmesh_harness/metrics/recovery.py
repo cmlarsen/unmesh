@@ -23,6 +23,8 @@ SPLIT_SHARE = 0.95
 
 ANALYTIC_TYPES = ("plane", "cylinder", "cone", "sphere", "torus")
 
+CONFIDENCE_MASK = 0.9
+
 
 @dataclass(frozen=True)
 class Tolerances:
@@ -303,7 +305,9 @@ def _overlap(clean: LabeledMesh, face_id: np.ndarray, ir: Ir):
     return regions, owner
 
 
-def match_faces(clean: LabeledMesh, face_id: np.ndarray, ir: Ir) -> tuple[list[dict], np.ndarray]:
+def match_faces(
+    clean: LabeledMesh, face_id: np.ndarray, ir: Ir, confidence: np.ndarray | None = None
+) -> tuple[list[dict], np.ndarray]:
     face_id = np.asarray(face_id)
     for region in ir.regions:
         tris = np.asarray(region.triangles, dtype=np.int64)
@@ -312,10 +316,22 @@ def match_faces(clean: LabeledMesh, face_id: np.ndarray, ir: Ir) -> tuple[list[d
             raise ValueError(
                 f"region {region.id}: source triangle {bad} outside [0, {len(face_id)})"
             )
-    regions, owner = _overlap(clean, face_id, ir)
+    _, owner_full = _overlap(clean, face_id, ir)
+    owner = owner_full
+    keep: np.ndarray | None = None
+    if confidence is not None:
+        confidence = np.asarray(confidence, dtype=np.float64)
+        if len(confidence) != len(face_id):
+            raise ValueError(
+                f"confidence has {len(confidence)} entries for {len(face_id)} triangles"
+            )
+        keep = np.asarray(confidence) >= CONFIDENCE_MASK
+        owner = np.where(keep, owner_full, -1)
     matches = []
     for face in clean.faces:
         members = np.nonzero(face_id == face.id)[0]
+        if keep is not None:
+            members = members[keep[members]]
         if len(members) == 0:
             matches.append({"face": face.id, "region": None, "iou": 0.0, "overlap": 0})
             continue
@@ -326,9 +342,10 @@ def match_faces(clean: LabeledMesh, face_id: np.ndarray, ir: Ir) -> tuple[list[d
             matches.append({"face": face.id, "region": None, "iou": 0.0, "overlap": 0})
             continue
         inter = int(counts[best + 1])
-        iou = inter / (len(members) + len(regions[best]) - inter)
+        denom = len(members) + int((owner == best).sum()) - inter
+        iou = inter / denom if denom else 0.0
         matches.append({"face": face.id, "region": best, "iou": float(iou), "overlap": inter})
-    return matches, owner
+    return matches, owner_full
 
 
 def _masked_faces(clean: LabeledMesh) -> set[int]:
@@ -550,10 +567,11 @@ def score_recovery(
     ir: Ir,
     to_original: Any = None,
     tolerances: Tolerances = DEFAULT_TOLERANCES,
+    confidence: np.ndarray | None = None,
 ) -> dict[str, Any]:
     frame = _frame(to_original)
     face_id = np.asarray(face_id)
-    matches, owner = match_faces(clean, face_id, ir)
+    matches, owner = match_faces(clean, face_id, ir, confidence)
     masked = _masked_faces(clean)
     masked_regions = _masked_regions(face_id, masked, ir)
     matched_regions: set[int] = set()

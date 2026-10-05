@@ -18,9 +18,13 @@ STEP_TESSELLATION_ANGLE = 0.1
 
 
 def face_recovery(
-    clean: LabeledMesh, face_id: np.ndarray, ir: Ir, to_original: np.ndarray
+    clean: LabeledMesh,
+    face_id: np.ndarray,
+    ir: Ir,
+    to_original: np.ndarray,
+    confidence: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    result = score_recovery(clean, face_id, ir, to_original)
+    result = score_recovery(clean, face_id, ir, to_original, confidence=confidence)
     result.pop("faces_detail", None)
     edge = result.get("edge_error")
     if isinstance(edge, dict):
