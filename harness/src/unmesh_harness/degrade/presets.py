@@ -65,10 +65,13 @@ _register(
         ("flipped_facets", 0.2),
         ("duplicate_facets", 0.2),
     ],
-    "Imitates input headed for slicer-style repair, exercising the converter "
-    "REPAIR path. Single-precision coordinates plus defects the converter is "
-    "documented to repair: split vertices within the weld, inconsistent "
-    "winding fixed by flood fill, and duplicate facets dropped.",
+    "Approximate model of a slicer repair pass over single-precision input: "
+    "float32 rounding first, then split vertices, flipped winding, and "
+    "duplicate facets to exercise the converter REPAIR path. Approximate "
+    "only: flipped_facets REPAIR is planar-only, duplicate facets depress "
+    "the area score even when dropped, and unwelded_corners is unrecoverable "
+    "on its own — it only repairs after float32 snaps split vertices onto a "
+    "shared grid, so float32 must run first.",
 )
 
 _register(

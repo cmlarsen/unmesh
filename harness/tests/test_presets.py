@@ -195,6 +195,11 @@ def test_ambiguity_grid_rejects_label_sensitive_preset(tmp_path, monkeypatch):
         load_grid("amb")
 
 
+def test_slicer_repair_runs_float32_before_unwelded_corners():
+    ops = [op for op, _ in PRESETS["slicer-repair"].steps]
+    assert ops == ["float32", "unwelded_corners", "flipped_facets", "duplicate_facets"]
+
+
 def test_run_grid_resolves_preset_cell(tmp_path):
     grid = load_grid("smoke")
     grid = dataclasses.replace(
