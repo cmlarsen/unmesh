@@ -113,37 +113,40 @@ def waiver_approved(
     author, author_type = str(user.get("login") or ""), str(user.get("type") or "")
     author_is_bot = bool(author) and _is_bot(author, author_type)
     targets = _normalize_cells(regressed)
-    problems = []
-    for event in events or ():
-        if event.get("event") != "labeled":
-            continue
-        if (event.get("label") or {}).get("name") != label:
-            continue
-        actor = event.get("actor") or {}
-        login, actor_type = str(actor.get("login") or ""), str(actor.get("type") or "")
-        if not login or _is_bot(login, actor_type) or login.lower() not in allowed:
-            continue
-        if author_is_bot and login.lower() == author.lower():
-            continue
-        confirmed = head in {
-            sha
-            for c in comments or ()
-            if str((c.get("user") or {}).get("login") or "").lower() == login.lower()
-            for sha in parse_waived_sha(c.get("body"))
-        }
-        if not confirmed:
-            problems.append(f"@{login} did not confirm head {head[:12]} with a sha: line")
-            continue
-        named = _named_cells(comments, login, head)
-        missing = sorted(targets - named, key=str)
-        if missing:
-            problems.append(f"@{login} did not name waived cell(s) {missing} for head {head[:12]}")
-            continue
-        return (
-            True,
-            f"label {label!r} approved by @{login} for head {head[:12]} "
-            f"covering {len(targets)} cell(s)",
-        )
-    if problems:
-        return False, "; ".join(problems)
-    return False, f"label {label!r} has no qualifying approval from an approver"
+    label_events = [
+        e
+        for e in events or ()
+        if e.get("event") in ("labeled", "unlabeled")
+        and (e.get("label") or {}).get("name") == label
+    ]
+    if not label_events:
+        return False, f"label {label!r} has no label events on the PR"
+    label_events.sort(
+        key=lambda e: parse_time(e.get("created_at")) or datetime.min.replace(tzinfo=UTC)
+    )
+    latest = label_events[-1]
+    if latest.get("event") != "labeled":
+        return False, f"label {label!r} was removed after the last approval"
+    actor = latest.get("actor") or {}
+    login, actor_type = str(actor.get("login") or ""), str(actor.get("type") or "")
+    if not login or _is_bot(login, actor_type) or login.lower() not in allowed:
+        return False, f"most recent {label!r} approval is not by a waiver approver"
+    if author_is_bot and login.lower() == author.lower():
+        return False, f"@{login} cannot waive its own PR"
+    confirmed = head in {
+        sha
+        for c in comments or ()
+        if str((c.get("user") or {}).get("login") or "").lower() == login.lower()
+        for sha in parse_waived_sha(c.get("body"))
+    }
+    if not confirmed:
+        return False, f"@{login} did not confirm head {head[:12]} with a sha: line"
+    named = _named_cells(comments, login, head)
+    missing = sorted(targets - named, key=str)
+    if missing:
+        return False, f"@{login} did not name waived cell(s) {missing} for head {head[:12]}"
+    return (
+        True,
+        f"label {label!r} approved by @{login} for head {head[:12]} "
+        f"covering {len(targets)} cell(s)",
+    )

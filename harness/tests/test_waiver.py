@@ -36,6 +36,15 @@ def labeled(actor, actor_type="User", created_at=AFTER, label=LABEL):
     }
 
 
+def unlabeled(actor, actor_type="User", created_at=AFTER, label=LABEL):
+    return {
+        "event": "unlabeled",
+        "label": {"name": label},
+        "actor": {"login": actor, "type": actor_type},
+        "created_at": created_at,
+    }
+
+
 def comment(login, body, created_at=AFTER):
     return {"user": {"login": login}, "body": body, "created_at": created_at}
 
@@ -85,6 +94,52 @@ def test_label_event_time_is_ignored_when_sha_matches():
 def test_removed_label_is_not_a_waiver():
     ok, _ = decide([labeled("cmlarsen")], [approved_comment()], issue=issue(labels=()))
     assert not ok
+
+
+def test_unlabeled_after_approval_is_not_a_waiver():
+    ok, reason = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("cmlarsen", created_at="2026-10-02T12:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok and "removed" in reason
+
+
+def test_relabel_by_non_approver_after_removal_is_not_a_waiver():
+    ok, _ = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("cmlarsen", created_at="2026-10-02T12:00:00Z"),
+            labeled("mallory", created_at="2026-10-02T13:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok
+
+
+def test_latest_labeled_by_non_approver_is_not_a_waiver():
+    ok, _ = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            labeled("mallory", created_at="2026-10-02T12:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok
+
+
+def test_approver_relabel_after_removal_waives_again():
+    ok, _ = decide(
+        [
+            labeled("mallory", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("mallory", created_at="2026-10-02T12:00:00Z"),
+            labeled("cmlarsen", created_at="2026-10-02T13:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert ok
 
 
 def test_missing_comment_is_not_a_waiver():
