@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
 
 from unmesh.ir import Ir
+
+READBACK_RELATIVE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,19 @@ class ShellReport:
 
 
 @dataclass
+class ReadBack:
+    ok: bool
+    solids: int
+    shells: int
+    volume: float
+    expected_solids: int
+    expected_shells: int
+    expected_volume: float
+    volume_tolerance: float
+    issues: list[str] = field(default_factory=list)
+
+
+@dataclass
 class WriteReport:
     valid: bool
     solids: int
@@ -57,6 +73,10 @@ class WriteReport:
     issues: list[str] = field(default_factory=list)
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
+    open_shells: list[int] = field(default_factory=list)
+    readback: ReadBack | None = None
+    verified: bool = False
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -73,6 +93,9 @@ class _Group:
     mapping: list = field(default_factory=list)
     moved: float = 0.0
     deviation: float = 0.0
+    expected: float = 0.0
+    area: float = 0.0
+    shells: int = 1
 
 
 def _triangles(mesh) -> np.ndarray:
@@ -99,11 +122,13 @@ def _members(ir: Ir, outer: int) -> list[int]:
 
 def _check(g: _Group, occ, max_tol: float) -> None:
     g.tolerance = occ.tolerance_of(g.shape)
+    g.shells = occ.shell_count(g.shape)
     ok = occ.is_valid(g.shape)
     if not ok:
         g.issues.append("BRepCheck_Analyzer reports the shape invalid")
     if g.kind == "solid":
-        g.volume = occ.volume_of(g.shape)
+        g.volume = g.expected = occ.volume_of(g.shape)
+        g.area = occ.area_of(g.shape)
         if not g.volume > 0:
             ok = False
             g.issues.append(f"non-positive volume {g.volume:.6g}")
@@ -161,48 +186,154 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
     return groups, seams
 
 
-def _faceted(ir: Ir, tris: np.ndarray, options: WriteOptions, occ, topology):
+def _signed_volume(t: np.ndarray) -> float:
+    a, b, c = t[:, 0], t[:, 1], t[:, 2]
+    return float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
+
+
+def _orient_closed(
+    vertices: np.ndarray, raw: dict[int, np.ndarray], expect: dict[int, bool]
+) -> dict[int, np.ndarray]:
+    oriented = {}
+    for idx, f in raw.items():
+        if idx in expect and (_signed_volume(vertices[f]) < 0) == expect[idx]:
+            f = f[:, ::-1]
+        oriented[idx] = f
+    return oriented
+
+
+def _faceted(ir: Ir, tris: np.ndarray, topology, faceted):
+    from unmesh import weld
+
+    vertices, faces, source, _ = weld(tris, ir.tolerances.vertex_merge)
+    faces = faces.astype(np.int64)
+    welded = np.full(len(tris), -1, dtype=np.int64)
+    welded[source] = np.arange(len(faces))
+    shift = np.linalg.norm(tris[source] - vertices[faces], axis=2)
+    moved = float(shift.max(initial=0.0))
     groups: list[_Group] = []
     for outer, shell in enumerate(ir.shells):
         if shell.role != "outer":
             continue
-        g = _Group(outer, "solid" if shell.closed else "shell")
+        g = _Group(
+            outer, "solid" if shell.closed else "shell", moved=moved, tolerance=faceted.UNCERTAINTY
+        )
         groups.append(g)
         try:
-            shells = {}
+            raw = {}
             for idx in _members(ir, outer):
-                ids = sorted(t for r in ir.shells[idx].regions for t in ir.regions[r].triangles)
-                if ids and ids[-1] >= len(tris):
+                ids = np.array(
+                    sorted(t for r in ir.shells[idx].regions for t in ir.regions[r].triangles),
+                    dtype=np.int64,
+                )
+                if len(ids) and ids[-1] >= len(tris):
                     raise topology.BuildError("mesh has fewer triangles than the IR references")
-                t = tris[ids]
-                if ir.shells[idx].closed:
-                    a, b, c = t[:, 0], t[:, 1], t[:, 2]
-                    vol = float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
-                    if (vol < 0) == (ir.shells[idx].role == "outer"):
-                        t = t[:, ::-1]
-                shells[idx] = occ.build_triangle_shell(np.ascontiguousarray(t))
-            cavities = [sh for idx, sh in shells.items() if idx != outer]
-            _finish_group(g, occ, shells[outer], cavities, options)
-            if g.kind == "solid" and g.valid:
-                merged = occ.unify_exact(g.shape)
-                trial = _Group(outer, "solid", merged)
-                _check(trial, occ, options.max_shape_tolerance)
-                if trial.valid and abs(trial.volume - g.volume) <= 1e-9 * abs(g.volume):
-                    g.shape, g.tolerance, g.volume = merged, trial.tolerance, trial.volume
+                w = welded[ids]
+                raw[idx] = faces[w[w >= 0]]
+                if not len(raw[idx]):
+                    raise topology.BuildError(f"shell {idx} has no non-degenerate triangles")
+            if g.kind == "shell":
+                g.shape = faceted.open_faces(vertices, raw[outer])
+                g.shells = 1
+                g.valid = True
+                continue
+            if any(not ir.shells[idx].closed for idx in raw):
+                raise topology.BuildError("a cavity shell is open")
+            expect = {idx: ir.shells[idx].role == "outer" for idx in raw}
+            oriented = _orient_closed(vertices, raw, expect)
+            g.shape = faceted.Body(
+                faceted.shell_faces(vertices, oriented[outer], outer=True),
+                [
+                    faceted.shell_faces(vertices, f, outer=False)
+                    for idx, f in oriented.items()
+                    if idx != outer
+                ],
+            )
+            g.shells = len(oriented)
+            g.expected = sum(_signed_volume(vertices[f]) for f in oriented.values())
+            g.area = sum(_area(vertices[f]) for f in oriented.values())
+            g.valid = True
         except topology.BuildError as e:
             g.issues.append(str(e))
         except Exception as e:
             g.issues.append(f"{type(e).__name__}: {e}")
-    return groups
+    return groups, vertices
+
+
+def _area(t: np.ndarray) -> float:
+    return float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
+
+
+def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float) -> ReadBack:
+    solids_expected = [g for g in written if g.kind == "solid"]
+    rb = ReadBack(
+        ok=False,
+        solids=0,
+        shells=0,
+        volume=0.0,
+        expected_solids=len(solids_expected),
+        expected_shells=sum(g.shells for g in written),
+        expected_volume=sum(g.expected for g in solids_expected),
+        volume_tolerance=sum(_volume_tolerance(g) for g in solids_expected),
+    )
+    try:
+        solids, rb.shells = occ.read_back(path)
+    except Exception as e:
+        rb.issues.append(f"could not re-import the file: {type(e).__name__}: {e}")
+        return rb
+    rb.solids = len(solids)
+    rb.volume = sum(s.volume for s in solids)
+    if rb.solids != rb.expected_solids:
+        rb.issues.append(f"re-imported {rb.solids} solids, wrote {rb.expected_solids}")
+    if rb.shells != rb.expected_shells:
+        rb.issues.append(f"re-imported {rb.shells} shells, wrote {rb.expected_shells}")
+    if not abs(rb.volume - rb.expected_volume) <= rb.volume_tolerance:
+        rb.issues.append(
+            f"re-imported volume {rb.volume:.12g} differs from the written "
+            f"{rb.expected_volume:.12g} by more than {rb.volume_tolerance:.3g}"
+        )
+    if rb.solids == rb.expected_solids:
+        for g, s in zip(solids_expected, solids, strict=True):
+            bad = []
+            if not s.valid:
+                bad.append("the re-imported solid is invalid")
+            if s.tolerance > max_tol:
+                bad.append(f"re-imported shape tolerance {s.tolerance:.3g} exceeds {max_tol:.3g}")
+            if s.shells != g.shells:
+                bad.append(f"the re-imported solid has {s.shells} shells, wrote {g.shells}")
+            if not abs(s.volume - g.expected) <= _volume_tolerance(g):
+                bad.append(
+                    f"re-imported volume {s.volume:.12g}, wrote {g.expected:.12g} "
+                    f"(tolerance {_volume_tolerance(g):.3g})"
+                )
+            if faceted_path:
+                g.volume = s.volume
+                g.tolerance = s.tolerance
+            if bad:
+                g.valid = False
+                g.issues.extend(f"read-back: {b}" for b in bad)
+                rb.issues.extend(f"shell {g.outer}: {b}" for b in bad)
+    rb.ok = not rb.issues
+    return rb
+
+
+def _volume_tolerance(g: _Group) -> float:
+    return READBACK_RELATIVE * abs(g.expected) + g.area * g.tolerance
 
 
 def write(
-    ir: Ir, path: str | os.PathLike, options: WriteOptions | None = None, *, mesh=None
+    ir: Ir,
+    path: str | os.PathLike,
+    options: WriteOptions | None = None,
+    *,
+    mesh=None,
+    verify: bool = True,
 ) -> WriteReport:
+    started = time.perf_counter()
     ir.validate()
     options = options or WriteOptions()
     try:
-        from unmesh._writer import occ, topology
+        from unmesh._writer import faceted, occ, topology
     except ImportError as e:
         raise ImportError(
             "unmesh.step needs OCP; install it with `pip install unmesh[step]`"
@@ -212,27 +343,47 @@ def write(
     groups, seams = _analytic(ir, options, occ, topology)
     fallback = None
     reason = None
+    vertices = None
     if not all(g.valid for g in groups):
         reason = "; ".join(f"shell {g.outer}: {'; '.join(g.issues)}" for g in groups if not g.valid)
         if mesh is not None:
-            tris = _triangles(mesh)
-            groups = _faceted(ir, tris, options, occ, topology)
+            groups, vertices = _faceted(ir, _triangles(mesh), topology, faceted)
             fallback = "faceted"
         else:
             reason += "; no mesh given, so no faceted fallback"
     complete = all(g.valid for g in groups)
     written = groups if complete else []
     issues = []
+    readback = None
+    timings: dict[str, float] = {}
     if written:
-        occ.write_step(occ.compound_of([g.shape for g in written]), path)
+        if fallback == "faceted":
+            faceted.write(
+                path,
+                vertices,
+                [g.shape for g in written if g.kind == "solid"],
+                [g.shape for g in written if g.kind == "shell"],
+            )
+        else:
+            occ.write_step(occ.compound_of([g.shape for g in written]), path)
+        timings["write_s"] = time.perf_counter() - started
+        if verify:
+            mark = time.perf_counter()
+            readback = _verify(
+                path, written, occ, fallback == "faceted", options.max_shape_tolerance
+            )
+            timings["readback_s"] = time.perf_counter() - mark
+            if not readback.ok:
+                mismatch = "; ".join(readback.issues)
+                issues.append(f"read-back of the written file does not match: {mismatch}")
     else:
         issues.append("nothing was written")
     faces = [f for g in written for f in g.faces] if fallback is None else []
     if fallback is None and not complete and reason is not None:
         issues.append(reason)
     return WriteReport(
-        valid=complete and len(written) == n_outer,
-        solids=sum(occ.count_solids(g.shape) for g in written),
+        valid=complete and len(written) == n_outer and (readback is None or readback.ok),
+        solids=readback.solids if readback is not None else _solid_count(written, occ, fallback),
         max_shape_tolerance=max((g.tolerance for g in written), default=0.0),
         faces=faces,
         fallback=fallback,
@@ -247,4 +398,14 @@ def write(
         issues=issues,
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
+        open_shells=[g.outer for g in written if g.kind == "shell"],
+        readback=readback,
+        verified=readback is not None,
+        timings=timings,
     )
+
+
+def _solid_count(written: list[_Group], occ, fallback) -> int:
+    if fallback == "faceted":
+        return sum(1 for g in written if g.kind == "solid")
+    return sum(occ.count_solids(g.shape) for g in written)

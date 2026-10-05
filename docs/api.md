@@ -58,7 +58,7 @@ tolerance scales with the part's units) and a noisy one a tolerance that follows
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
 come back as `facets`.
 
-### `unmesh.step.write(ir, path, options=None, *, mesh=None) -> WriteReport`
+### `unmesh.step.write(ir, path, options=None, *, mesh=None, verify=True) -> WriteReport`
 
 An optional extra: `pip install unmesh[step]` installs OCP. `import unmesh` never imports OCP;
 `unmesh.step` imports it only when `write` runs, and raises `ImportError` with the install hint when
@@ -91,27 +91,50 @@ torus) is not supported yet and triggers the fallback.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
 `max_shape_tolerance`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
-solid: one planar face per source triangle, winding corrected per shell from its signed volume, merging
-only exactly coplanar faces, sewn at 1e-6.
+solid. The mesh is welded at `ir.tolerances.vertex_merge`. The IR's shell roles decide orientation: each
+`outer` shell's winding is flipped to positive signed volume and each `cavity` shell's to negative. No
+OCCT healing or classification touches it. The fallback STEP is
+emitted as text, without an OCCT transfer: `MANIFOLD_SOLID_BREP` (or `BREP_WITH_VOIDS` with
+`ORIENTED_CLOSED_SHELL(.F.)` voids) of `CLOSED_SHELL`s, `ADVANCED_FACE`s on `PLANE`s bounded by
+`EDGE_LOOP`s of straight `EDGE_CURVE`s, in an `ADVANCED_BREP_SHAPE_REPRESENTATION` (mm, uncertainty
+1e-7); open shells go in a `SHELL_BASED_SURFACE_MODEL` related to it. Points are shared, output is
+deterministic. One face per triangle, except that edge-connected exactly coplanar triangles whose union has
+one simple boundary loop become one polygon face, and zero-area triangles are absorbed into their neighbour
+across the long edge (repeated until none is left, so adjacent zero-area triangles chain). Faces on the convex hull are listed first in each outer shell: OCCT's reader re-orients
+every solid from the first face whose probe ray gives a decisive answer, and on a rough, locally folded
+mesh a probe from an arbitrary face can land on a fold and invert the solid; a hull face's probe cannot.
 
-`write` never produces an invalid solid and does not raise for a hard IR. It raises only for I/O errors
-and for an `ir` that fails `Ir.validate()`.
+After writing, `write` re-imports the file with OCCT's default STEP reader (healing on, as a consumer
+would read it) and compares the solid count, the shell count, and each solid's volume and validity with
+what it wrote. The volume tolerance is `1e-9 * |V| + area * shape tolerance`.
+Any mismatch makes the report invalid and is named in `readback.issues`, `issues` and the shell's
+`issues`; the file is left on disk. For the faceted fallback, `shells[*].volume` and
+`max_shape_tolerance` are the re-imported values. The read-back is on by default because OCCT-based
+consumers (OttoCAM, FreeCAD) read through the same healing that can invert a file; reading with healing
+off would miss exactly that. `verify=False` skips it for callers that accept unverified output: the
+report then has `verified=False`, `readback=None`, and `valid` covers construction only.
+
+`write` does not raise for a hard IR. It raises only for I/O errors and for an `ir` that fails
+`Ir.validate()`.
 
 `WriteReport`:
 
 | field | meaning |
 |---|---|
-| `valid` | Whether every outer shell was written and passed validation. |
-| `solids` | Number of solids in the written compound. |
+| `valid` | Whether every outer shell was written, passed validation, and read back as written. |
+| `solids` | Number of solids in the re-imported file (the written count when `verify=False`). |
 | `max_shape_tolerance` | Largest shape tolerance in the written shape. |
 | `faces` | `FaceReport(region, surface_type, max_shape_tolerance, max_vertex_displacement, max_boundary_deviation)` for each written region (empty after a fallback). Tolerances are measured on the final healed shape. |
-| `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. `0.0` for the faceted fallback, which uses source triangles as they are. |
+| `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. For the faceted fallback, the largest distance the weld moved a source vertex. |
 | `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built. |
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
 | `seams` | `SeamReport(regions, surface_type, points, max_gap)` for each facets/analytic boundary: the largest distance from the boundary points to the analytic surface. |
-| `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on. |
+| `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
+| `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
+| `verified` | Whether the written file was re-imported and checked. |
+| `timings` | Seconds: `write_s` (everything up to the written file) and `readback_s` (the verification), when they ran. |
 
 ### `unmesh.ir`
 
