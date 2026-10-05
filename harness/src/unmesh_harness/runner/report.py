@@ -154,16 +154,12 @@ def viewer_payload(
     steps: list[tuple[str, float]],
     seed: int,
     cache: Path,
-    converter: str = "unmesh",
     max_tris: int = VIEWER_MAX_TRIS,
 ) -> dict[str, Any] | None:
-    import tempfile
-
     import numpy as np
 
     from ..degrade import chain
     from ..labels import LabeledMesh
-    from .converters import get_converter
 
     labeled_path = cache / f"{part_id}.labeled.npz"
     if not labeled_path.is_file():
@@ -173,28 +169,8 @@ def viewer_payload(
         tris = np.asarray(degraded.tris, dtype=np.float64).reshape(-1, 3, 3)
     except Exception:
         return None
-    regions: list[list[int]] | None = None
-    try:
-        with tempfile.TemporaryDirectory(prefix="report-viewer-") as tmp:
-            stl_path = Path(tmp) / "input.stl"
-            degraded.write_stl(stl_path)
-            ir_json, _, _ = get_converter(converter)(stl_path)
-        if ir_json is not None:
-            from unmesh.ir import Ir
-
-            ir = Ir.loads(ir_json)
-            regions = [list(map(int, r.triangles)) for r in ir.regions]
-    except Exception:
-        regions = None
     n = len(tris)
-    owner = np.full(n, -1, dtype=np.int64)
-    if regions:
-        for i, members in enumerate(regions):
-            for t in members:
-                if 0 <= t < n and owner[t] == -1:
-                    owner[t] = i
-    if (owner < 0).all():
-        _, owner = np.unique(np.asarray(degraded.face_id).reshape(-1), return_inverse=True)
+    _, owner = np.unique(np.asarray(degraded.face_id).reshape(-1), return_inverse=True)
     stride = max(1, (n + max_tris - 1) // max_tris)
     take = np.arange(0, n, stride, dtype=np.int64)
     sub = tris[take]
@@ -596,7 +572,7 @@ function renderWorst() {
         drag = null;
       });
       const p = document.createElement("p");
-      p.textContent = "drag to rotate: region-colored output (" +
+      p.textContent = "drag to rotate: input mesh colored by ground-truth faces (" +
         mesh.r.length + " tris shown of " + mesh.ntris + ")";
       d.appendChild(p);
     } else {

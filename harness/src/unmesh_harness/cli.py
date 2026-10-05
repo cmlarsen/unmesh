@@ -85,6 +85,11 @@ def _report(args) -> int:
 
     target = args.results
     if target.is_dir():
+        if args.expect_plan is not None:
+            missing = _missing_shards(target, args.expect_plan)
+            if missing:
+                print(f"PARTIAL: missing shard results: {', '.join(missing)}")
+                return 2
         all_records = []
         for path in sorted(target.glob("*.jsonl")):
             all_records.extend(read_results(path))
@@ -92,7 +97,20 @@ def _report(args) -> int:
     else:
         all_records = read_results(target)
         cache = target.parent / "cache"
-    sha = args.git_sha or (all_records[-1]["git_sha"] if all_records else "")
+    if not all_records:
+        print("error: no records found")
+        return 2
+    shas = sorted({r.get("git_sha", "") for r in all_records})
+    if args.git_sha is not None:
+        if args.git_sha not in shas:
+            print(f"error: no records carry git sha {args.git_sha!r} (found: {shas})")
+            return 2
+        sha = args.git_sha
+    elif len(shas) != 1:
+        print(f"error: records carry {len(shas)} git shas {shas}; refusing to mix commits")
+        return 2
+    else:
+        sha = shas[0]
     records = list(latest(all_records, sha).values())
     converters = sorted({r["converter"] for r in records})
     grid = load_grid(args.grid)
@@ -100,6 +118,7 @@ def _report(args) -> int:
         from .runner.grid import steps_for
         from .runner.report import build_html, viewer_key, viewer_payload, worst_parts
 
+        _ensure_viewer_cache(grid, records, cache)
         viewers = {}
         for record in worst_parts(records):
             try:
@@ -108,9 +127,7 @@ def _report(args) -> int:
             except (KeyError, ValueError, TypeError):
                 continue
             try:
-                payload = viewer_payload(
-                    record["part"], steps, record["seed"], cache, record["converter"]
-                )
+                payload = viewer_payload(record["part"], steps, record["seed"], cache)
             except Exception:
                 continue
             if payload is not None:
@@ -119,6 +136,36 @@ def _report(args) -> int:
         print(f"wrote {args.output} ({args.output.stat().st_size} bytes)")
         return 0
     return _finish(records, args.gate, grid, converters, sha)
+
+
+def _missing_shards(target, plan_path) -> list[str]:
+    expected = json.loads(Path(plan_path).read_text())["shards"]
+    have = {p.stem for p in target.glob("*.jsonl")}
+    return [name for name in expected if name not in have]
+
+
+def _ensure_viewer_cache(grid, records, cache) -> None:
+    from .runner.execute import prep_part
+    from .runner.report import worst_parts
+
+    entries = {e["id"]: e for e in grid.entries}
+    cache.mkdir(parents=True, exist_ok=True)
+    for record in worst_parts(records):
+        part = record["part"]
+        if part not in entries or (cache / f"{part}.labeled.npz").is_file():
+            continue
+        try:
+            prep_part(
+                {
+                    "entry": entries[part],
+                    "cache": str(cache),
+                    "need_truth": False,
+                    "input_deflection": grid.input_deflection,
+                    "truth_deflection": grid.truth_deflection,
+                }
+            )
+        except Exception as e:
+            print(f"note: skipping viewer for {part}: {type(e).__name__}: {e}")
 
 
 def _compare(args) -> int:
@@ -182,6 +229,13 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--git-sha", default=None)
     report.add_argument("--grid", default="smoke")
     report.add_argument("--gate", action="store_true")
+    report.add_argument(
+        "--expect-plan",
+        type=Path,
+        default=None,
+        help="JSON file with a 'shards' list of expected <grid>-<category>-<i>-of-<n> "
+        "stems; when reporting on a directory, fail listing any missing shard",
+    )
     report.add_argument(
         "-o",
         "--output",
