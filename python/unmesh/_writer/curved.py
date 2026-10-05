@@ -8,6 +8,7 @@ from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepClass import BRepClass_FaceClassifier
+from OCP.BRepLib import BRepLib
 from OCP.Geom import (
     Geom_ConicalSurface,
     Geom_CylindricalSurface,
@@ -253,9 +254,16 @@ def polyline_seam_point(points, origin, axis, xdir) -> np.ndarray:
 
 
 def projected_curve(surfaces, nodes, closed: bool):
-    pts = [nodes[0]] + [geo.refine(surfaces, p) for p in nodes[1:-1]] + [nodes[-1]]
-    if closed:
-        pts = [nodes[0]] + [geo.refine(surfaces, p) for p in nodes[1:]]
+    inner = nodes[1:] if closed else nodes[1:-1]
+    fixed = [nodes[0], *(geo.refine(surfaces, p) for p in inner)]
+    if not closed:
+        fixed.append(nodes[-1])
+    ring = [*fixed, fixed[0]] if closed else fixed
+    pts = []
+    for p, q in zip(ring, ring[1:], strict=False):
+        pts.extend([p, geo.refine(surfaces, 0.5 * (p + q))])
+    if not closed:
+        pts.append(fixed[-1])
     arr = TColgp_HArray1OfPnt(1, len(pts))
     for i, p in enumerate(pts, start=1):
         arr.SetValue(i, _pnt(p))
@@ -285,6 +293,7 @@ class _Edge:
     curve: object = None
     curve_dev: float = 0.0
     fallback: str | None = None
+    approximate: bool = False
     seam_point: np.ndarray | None = None
     edges: list = field(default_factory=list)
     nodes: list = field(default_factory=list)
@@ -370,6 +379,7 @@ class _Builder:
         self.frames: dict[int, _Frame] = {}
         self.surfaces: dict[int, object] = {}
         self.edges: list[_Edge] = []
+        self.loose: list = []
         self.out = CurvedShell(TopoDS_Shell(), [])
 
     def surface(self, r):
@@ -394,6 +404,8 @@ class _Builder:
         for _, f in faces:
             self.builder.Add(self.out.shell, f)
         self.out.shell.Closed(self.shell.closed)
+        for edge in self.loose:
+            BRepLib.SameParameter_s(edge, EDGE_TOLERANCE)
         self.out.mapping = faces
         for r, f in faces:
             self.check_side(r, f)
@@ -451,16 +463,17 @@ class _Builder:
                 e.fallback = "surface intersection failed"
                 continue
             curve, dev = select_branch(curves, e.points)
-            if dev > self.limit:
-                e.fallback = (
-                    f"nearest intersection branch is {dev:.3g} from the boundary,"
-                    f" over the {self.limit:.3g} limit"
-                )
+            if dev <= self.limit and (curve.IsPeriodic() or not e.closed):
+                e.curve, e.curve_dev = curve, dev
                 continue
-            if e.closed and not curve.IsPeriodic():
-                e.fallback = "closed boundary on a non-periodic intersection curve"
+            cover = max(min(nearest(c, p)[1] for c in curves) for p in _samples(e.points))
+            if cover <= self.limit:
+                e.approximate = True
                 continue
-            e.curve, e.curve_dev = curve, dev
+            e.fallback = (
+                f"nearest intersection branch is {cover:.3g} from the boundary,"
+                f" over the {self.limit:.3g} limit"
+            )
 
     def axis_of(self, r) -> np.ndarray:
         frame = self.frames.get(r)
@@ -515,8 +528,8 @@ class _Builder:
         frame = self.frames[r]
         origin = geo.origin_of(self.surface(r))
         p = polyline_seam_point(e.points, origin, frame.axis, frame.xdir)
-        surfaces = [self.surface(e.a), self.surface(e.b)]
-        p = geo.refine(surfaces, p)
+        half = Plane(tuple(origin), tuple(np.cross(frame.axis, frame.xdir)))
+        p = geo.refine([self.surface(e.a), self.surface(e.b), half], p)
         if e.curve is not None:
             t, _ = nearest(e.curve, p)
             t = seam_parameter(e.curve, t, origin, frame.axis, frame.xdir)
@@ -531,12 +544,41 @@ class _Builder:
         ang = geo.angle_about(p, origin, frame.axis, frame.xdir)
         return abs(ang) * rho <= SEAM_TOLERANCE
 
+    def anchor(self, r) -> np.ndarray | None:
+        segs = []
+        for e in self.edges:
+            if r not in (e.a, e.b):
+                continue
+            seg = _Segment([], e.start, e.end, list(e.points))
+            segs.append(seg if r == e.a else _reverse_segment(seg))
+        s = self.surface(r)
+        try:
+            loops = _chain(segs, lambda p: geo.outward(s, p), r)
+        except BuildError:
+            return None
+        origin, axis = geo.origin_of(s), self.axis_of(r)
+        for lp in loops:
+            starts = [seg.start for seg in lp if seg.start is not None]
+            if not starts:
+                continue
+            if geo.winding(_loop_nodes(lp), origin, axis, geo.perpendicular(axis)) != 0:
+                return np.asarray(self.vpos[min(starts)], dtype=float)
+        return None
+
+    def fit_anchor(self, r, anchors):
+        if r in anchors and not self.on_seam(r, anchors[r]):
+            raise BuildError(f"region {r}: the seam cannot pass through both of its loop vertices")
+
     def choose_frames(self):
         periodic = sorted(r for r in self.shell.regions if geo.is_curved(self.surface(r)))
-        for start in periodic:
+        anchors = {r: a for r in periodic if (a := self.anchor(r)) is not None}
+        for start in sorted(periodic, key=lambda r: (r not in anchors, r)):
             if start in self.frames:
                 continue
-            self.frames[start] = self.initial_frame(start)
+            if start in anchors:
+                self.frames[start] = self.frame_through(start, anchors[start])
+            else:
+                self.frames[start] = self.initial_frame(start)
             queue = [start]
             while queue:
                 r = queue.pop(0)
@@ -554,6 +596,7 @@ class _Builder:
                     if self.winds(e, other):
                         if other not in self.frames:
                             self.frames[other] = self.frame_through(other, e.seam_point)
+                            self.fit_anchor(other, anchors)
                             queue.append(other)
                         elif not self.on_seam(other, e.seam_point):
                             raise BuildError(
@@ -649,14 +692,23 @@ class _Builder:
         edge = mk.Edge()
         tol = max(EDGE_TOLERANCE, 1.01 * dev)
         self.builder.UpdateEdge(edge, tol)
+        self.builder.SameParameter(edge, False)
+        self.loose.append(edge)
         for v in (v0, v1):
             self.builder.UpdateVertex(v, tol)
         e.edges = [edge]
         e.nodes = nodes + ([start] if e.closed else [])
-        e.deviation = dev
-        self.out.projected.append(
-            ProjectedEdge((e.a, e.b), e.fallback or "no intersection", float(dev))
-        )
+        lo, hi = curve.FirstParameter(), curve.LastParameter()
+        e.deviation = max(dev, _range_deviation(curve, lo, hi, e.points))
+        if e.deviation > self.limit:
+            raise BuildError(
+                f"regions {e.a}/{e.b}: boundary points are {e.deviation:.3g} from the built"
+                f" edge, over the {self.limit:.3g} limit"
+            )
+        if not e.approximate:
+            self.out.projected.append(
+                ProjectedEdge((e.a, e.b), e.fallback or "no intersection", float(e.deviation))
+            )
 
     def segments(self, r) -> list[_Segment]:
         out = []
@@ -817,8 +869,9 @@ class _Builder:
         if not mk.IsDone():
             raise BuildError(f"seam edge construction failed ({mk.Error()})")
         seam = mk.Edge()
-        right = Geom2d_Line(gp_Pnt2d(TWO_PI, 0.0), gp_Dir2d(0.0, 1.0))
-        left = Geom2d_Line(gp_Pnt2d(0.0, 0.0), gp_Dir2d(0.0, 1.0))
+        shift = BRep_Tool.Range_s(seam)[0] - lo
+        right = Geom2d_Line(gp_Pnt2d(TWO_PI, -shift), gp_Dir2d(0.0, 1.0))
+        left = Geom2d_Line(gp_Pnt2d(0.0, -shift), gp_Dir2d(0.0, 1.0))
         self.builder.UpdateEdge(seam, right, left, face, EDGE_TOLERANCE)
         return seam
 
@@ -927,7 +980,10 @@ class _UVLoop:
             if abs(u - TWO_PI * round(u / TWO_PI)) < 1e-6:
                 break
         else:
-            raise BuildError(f"region {self.region}: no vertex of a wrapping loop is on the seam")
+            us = [uv[0][0] + sh[0] for uv, sh in zip(self.uv, self.shifts, strict=True)]
+            raise BuildError(
+                f"region {self.region}: no vertex of a wrapping loop is on the seam {us}"
+            )
         order = list(range(k, n)) + list(range(k))
         self.edges = [self.edges[i] for i in order]
         self.pcurves = [self.pcurves[i] for i in order]
