@@ -3,6 +3,7 @@ use super::curved::{
     max_residual, solve_dense, valid_shape,
 };
 use super::linalg::{V3, add, cross, dot, norm, outer_add, scale, sub, sym_eigen};
+use super::noise::jacobi;
 
 const SPINE_GRID: usize = 48;
 const SPINE_GOLDEN: usize = 48;
@@ -151,6 +152,73 @@ pub fn init_torus(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, Vec<f64>)> {
     Some((Axis { a: axis, c: center }, vec![0.0, major, minor]))
 }
 
+/// Torus start from the axis of revolution: every normal line of a surface
+/// of revolution meets its axis, `a·(p × n) + n·(c × a) = 0`, which is linear
+/// in the axis' Plücker coordinates (smallest eigenvector over the facets);
+/// the vertices' (distance, height) about that axis then lie on the tube's
+/// meridian circle.
+pub fn init_torus_axis(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, Vec<f64>)> {
+    let (mean, _) = weighted_mean(tris.iter().map(|t| (t.centroid, t.area)))?;
+    let mut m = [[0.0; 6]; 6];
+    for t in tris {
+        let mm = cross(sub(t.centroid, mean), t.normal);
+        let row = [mm[0], mm[1], mm[2], t.normal[0], t.normal[1], t.normal[2]];
+        for i in 0..6 {
+            for j in 0..6 {
+                m[i][j] += t.area * row[i] * row[j];
+            }
+        }
+    }
+    let (vals, vecs) = jacobi(m);
+    let k = (0..6).min_by(|&i, &j| vals[i].total_cmp(&vals[j]))?;
+    let x: [f64; 6] = std::array::from_fn(|r| vecs[r][k]);
+    let a = [x[0], x[1], x[2]];
+    let la = norm(a);
+    if la.is_nan() || la <= 1e-9 {
+        return None;
+    }
+    let a = scale(a, 1.0 / la);
+    let moment = scale([x[3], x[4], x[5]], 1.0 / la);
+    let c = add(mean, cross(a, moment));
+    let mut sw = 0.0;
+    let mut cr = 0.0;
+    let mut ch = 0.0;
+    let prof: Vec<(f64, f64, f64)> = pts
+        .iter()
+        .map(|&(p, w)| {
+            let q = sub(p, c);
+            let h = dot(q, a);
+            (norm(sub(q, scale(a, h))), h, w)
+        })
+        .collect();
+    for &(r, h, w) in &prof {
+        sw += w;
+        cr += w * r;
+        ch += w * h;
+    }
+    if sw <= 0.0 {
+        return None;
+    }
+    let (cr, ch) = (cr / sw, ch / sw);
+    let mut mm = vec![vec![0.0; 3]; 3];
+    let mut b = vec![0.0; 3];
+    for &(r, h, w) in &prof {
+        let (x, y) = (r - cr, h - ch);
+        let row = [x, y, 1.0];
+        let rhs = -(x * x + y * y);
+        for i in 0..3 {
+            b[i] += w * rhs * row[i];
+            for j in 0..3 {
+                mm[i][j] += w * row[i] * row[j];
+            }
+        }
+    }
+    let sol = solve_dense(mm, b)?;
+    let (ox, oy) = (-sol[0] / 2.0, -sol[1] / 2.0);
+    let r2 = ox * ox + oy * oy - sol[2];
+    (r2 > 0.0).then(|| (Axis { a, c }, vec![oy + ch, ox + cr, r2.sqrt()]))
+}
+
 fn bounds(pts: &[(V3, f64)]) -> (V3, V3) {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
@@ -209,9 +277,13 @@ pub fn fit_doubly_with(
             return Ok(f);
         }
     }
-    if pts.len() >= 8
-        && let Some((axis, shape)) = init_torus(pts, tris)
-    {
+    if pts.len() < 8 {
+        return Err(best);
+    }
+    for start in [init_torus(pts, tris), init_torus_axis(pts, tris)] {
+        let Some((axis, shape)) = start else {
+            continue;
+        };
         let r = max_residual(Kind::Torus, &axis, &shape, pts);
         best = best.min(r);
         if r <= gate

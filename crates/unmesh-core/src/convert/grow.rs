@@ -16,6 +16,8 @@ const INIT_GATE: f64 = 5.0;
 const ESCALATE: f64 = 500.0;
 const SAG_RATIO: f64 = 16.0;
 const SEED_POINTS: [usize; 3] = [12, 24, 48];
+const DOUBLY_POINTS: [usize; 3] = [16, 32, 64];
+const PEEL_MAX: usize = 64;
 const RETRY_ROUNDS: usize = 3;
 const SLICE_SHARE: f64 = 0.15;
 const DOUBLY_AREA: f64 = 4.0;
@@ -94,8 +96,8 @@ impl Pool<'_> {
     /// Every vertex of region `r` within `tol` of the surface, and its plane
     /// normal within the spread of the surface normals over its vertices (a
     /// facet inscribed in the surface is parallel to it somewhere inside),
-    /// measured from the normal at its centroid. Returns the region's largest
-    /// chord sagitta.
+    /// measured from the normal at its centroid (see `tilt`). Returns the
+    /// region's largest chord sagitta.
     fn fits(&self, r: u32, kind: Kind, axis: &Axis, shape: &[f64], tol: f64) -> Option<f64> {
         let reg = &self.regions[r as usize];
         let (n, _) = reg.surface.as_plane()?;
@@ -119,19 +121,46 @@ impl Pool<'_> {
             .filter_map(|&(v, _)| surf.normal_at(self.vc[v as usize]))
             .map(|m| dot(m, normal).min(1.0).acos())
             .fold(0.0, f64::max);
-        let allow = (2.0 * tol).atan2(reg.width.max(1e-300)) + spread + 1e-9;
-        if dot(n, normal).abs().min(1.0).acos() > allow {
-            return None;
+        let sag = reg
+            .faces
+            .iter()
+            .map(|&f| {
+                let t = self.faces[f as usize];
+                curved::sagitta(&surf, t.map(|v| self.vc[v as usize]))
+            })
+            .fold(0.0, f64::max);
+        (dot(n, normal).abs().min(1.0).acos() <= tilt(kind, tol, sag, reg.width, spread))
+            .then_some(sag)
+    }
+
+    /// `fits` for the single triangle `f`, its chord sagitta at most `limit`.
+    fn face_fits(&self, f: u32, fit: &Single, surf: &Surface, limit: f64, tol: f64) -> bool {
+        let t = self.faces[f as usize].map(|v| self.vc[v as usize]);
+        let pts = t.map(|p| (p, 1.0));
+        if curved::max_residual(fit.0, &fit.1, &fit.2, &pts) > tol {
+            return false;
         }
-        Some(
-            reg.faces
+        let ti = &self.info[f as usize];
+        if ti.area > 0.0 {
+            let c = scale(add(add(t[0], t[1]), t[2]), 1.0 / 3.0);
+            let Some(normal) = surf.normal_at(c) else {
+                return false;
+            };
+            let spread = t
                 .iter()
-                .map(|&f| {
-                    let t = self.faces[f as usize];
-                    curved::sagitta(&surf, t.map(|v| self.vc[v as usize]))
-                })
-                .fold(0.0, f64::max),
-        )
+                .filter_map(|&p| surf.normal_at(p))
+                .map(|m| dot(m, normal).min(1.0).acos())
+                .fold(0.0, f64::max);
+            let longest = (0..3)
+                .map(|i| super::linalg::norm(sub(t[(i + 1) % 3], t[i])))
+                .fold(0.0, f64::max);
+            let width = 2.0 * ti.area / longest.max(f64::MIN_POSITIVE);
+            let sag = curved::sagitta(surf, t);
+            if dot(ti.normal, normal).abs().min(1.0).acos() > tilt(fit.0, tol, sag, width, spread) {
+                return false;
+            }
+        }
+        curved::sagitta(surf, t) <= limit
     }
 
     /// `fits` for every member, and no member's chord sagitta more than
@@ -288,7 +317,12 @@ fn extend_chain(
 /// else a refit started from `start`, each kept only if every member fits.
 fn final_fit(pool: &mut Pool<'_>, members: &[u32], start: &Single, tol: f64) -> Option<Single> {
     let (pts, tris) = pool.union(members);
-    curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
+    let fresh = if doubly(start.0) {
+        super::doubly::fit_doubly(&pts, &tris, tol, f64::INFINITY)
+    } else {
+        curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
+    };
+    fresh
         .filter(|f| pool.all_fit(members, f, tol).is_some())
         .or_else(|| {
             curved::refit(&pts, start.0, start.1, &start.2, tol)
@@ -410,10 +444,13 @@ fn merge_groups(
             };
             let mut members = groups[big].members.clone();
             members.extend_from_slice(&groups[small].members);
-            let lead = groups[big].fit.clone();
-            if pool.all_fit(&members, &lead, tol).is_none() {
+            let Some(lead) = [&groups[big].fit, &groups[small].fit]
+                .into_iter()
+                .find(|f| pool.all_fit(&members, f, tol).is_some())
+                .cloned()
+            else {
                 continue;
-            }
+            };
             let fit = curved::refit_quick(&pool.union(&members).0, lead.0, lead.1, &lead.2, tol)
                 .filter(|f| pool.all_fit(&members, f, tol).is_some())
                 .or(Some(lead));
@@ -434,6 +471,55 @@ fn merge_groups(
         .zip(alive)
         .filter_map(|(grp, a)| a.then_some(grp))
         .collect()
+}
+
+/// How far a facet's normal may tilt from the surface normal at its
+/// centroid: the noise allowance across its width, plus the spread of the
+/// surface normals over its corners. On a sphere or a torus a facet whose
+/// corners sit on different rings tilts beyond the normals at its corners,
+/// and a sliver's normal is set by how far its middle bows off the line of
+/// the other two corners, so there the allowance is twice the spread and
+/// the noise term includes the chord sagitta.
+fn tilt(kind: Kind, tol: f64, sag: f64, width: f64, spread: f64) -> f64 {
+    let (reach, bow) = if doubly(kind) { (2.0, sag) } else { (1.0, 0.0) };
+    (2.0 * tol + bow).atan2(width.max(1e-300)) + reach * spread + 1e-9
+}
+
+fn doubly(kind: Kind) -> bool {
+    matches!(kind, Kind::Sphere | Kind::Torus)
+}
+
+/// The free regions nearest `s` across smooth creases (breadth first, whole
+/// regions) until they hold `min_points` vertices.
+fn patch(
+    pool: &mut Pool<'_>,
+    g: &Graph,
+    s: u32,
+    free: &dyn Fn(u32) -> bool,
+    min_points: usize,
+) -> Option<Vec<u32>> {
+    let mut members = vec![s];
+    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    seen.insert(s);
+    let mut verts: FxHashSet<u32> = FxHashSet::default();
+    let mut head = 0;
+    loop {
+        for &(v, _) in &pool.regions[members[head] as usize].verts {
+            verts.insert(v);
+        }
+        if verts.len() >= min_points {
+            return Some(members);
+        }
+        for &x in &g.adj[members[head] as usize] {
+            if free(x) && seen.insert(x) {
+                members.push(x);
+            }
+        }
+        head += 1;
+        if head == members.len() {
+            return None;
+        }
+    }
 }
 
 fn find(root: &mut [u32], mut x: u32) -> u32 {
@@ -481,6 +567,36 @@ pub fn run(
     };
     let doubly_region = doubly_curved(vc, faces, nbr, label, &regions, &g);
     let spent = doubly_region.clone();
+    for s in 0..n as u32 {
+        if owner[s as usize] != NONE || !doubly_region[s as usize] {
+            continue;
+        }
+        let free = |r: u32| owner[r as usize] == NONE && doubly_region[r as usize];
+        let mut last = 0;
+        for k in DOUBLY_POINTS {
+            let Some(seed) = patch(&mut pool, &g, s, &free, k) else {
+                break;
+            };
+            if seed.len() == last {
+                break;
+            }
+            let (pts, tris) = pool.union(&seed);
+            if curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol).is_ok() {
+                break;
+            }
+            match super::doubly::fit_doubly_with(&pts, &tris, tol, f64::INFINITY, true) {
+                Ok(fit) if pool.all_fit(&seed, &fit, tol).is_some() => {
+                    let gid = groups.len() as u32;
+                    let grp = grow_group(&mut pool, &g, seed, fit, &mut owner, gid, tol);
+                    groups.push(grp);
+                    break;
+                }
+                Err(init) if init > ESCALATE * tol => break,
+                _ => {}
+            }
+            last = seed.len();
+        }
+    }
     for s in 0..n as u32 {
         if owner[s as usize] != NONE || spent[s as usize] || g.adj[s as usize].is_empty() {
             continue;
@@ -546,71 +662,343 @@ pub fn run(
         })
         .collect();
 
-    let mut new_id = vec![NONE; n];
-    let mut group_id = vec![NONE; groups.len()];
-    let mut next = 0u32;
-    for r in 0..n {
-        let gi = group_of[r];
-        if gi == NONE {
-            new_id[r] = next;
-            next += 1;
-        } else {
-            if group_id[gi as usize] == NONE {
-                group_id[gi as usize] = next;
-                next += 1;
-            }
-            new_id[r] = group_id[gi as usize];
-        }
-    }
-    let new_label: Vec<u32> = label
-        .iter()
-        .map(|&l| if l == NONE { NONE } else { new_id[l as usize] })
-        .collect();
-
-    let mut slots: Vec<Option<Region>> = (0..next).map(|_| None).collect();
-    let mut prefit = Vec::new();
-    let mut scratch = super::fit::Scratch::new(vc.len());
-    for (gi, grp) in groups.into_iter().enumerate() {
-        let id = group_id[gi] as usize;
-        let mut fl: Vec<u32> = Vec::new();
-        let mut area = 0.0;
-        for &r in &grp.members {
-            fl.extend_from_slice(&regions[r as usize].faces);
-            area += regions[r as usize].area;
-        }
-        fl.sort_unstable();
-        let verts = collect_verts(faces, info, &fl, &mut scratch);
-        let max = if sliced[gi] { f64::INFINITY } else { grp.fit.4 };
-        slots[id] = Some(Region {
-            faces: fl,
-            surface: Surface::Facets,
-            area,
-            width: 0.0,
-            verts,
-            rms: grp.fit.3,
-            max,
-            sag: 0.0,
-        });
-        if !sliced[gi] {
-            prefit.push((id, grp.fit));
-        }
-    }
-    for (r, (reg, is_lone)) in regions.into_iter().zip(lone).enumerate() {
-        if group_of[r] != NONE {
+    let mut face_group = vec![NONE; faces.len()];
+    for (gi, grp) in groups.iter().enumerate() {
+        if sliced[gi] {
             continue;
         }
-        let mut reg = reg;
-        if is_lone {
-            reg.surface = Surface::Facets;
-            reg.max = f64::INFINITY;
+        for &r in &grp.members {
+            for &f in &regions[r as usize].faces {
+                face_group[f as usize] = gi as u32;
+            }
         }
-        slots[new_id[r] as usize] = Some(reg);
+    }
+    let candidates: Vec<u32> = (0..n as u32)
+        .filter(|&r| group_of[r as usize] == NONE && regions[r as usize].faces.len() <= PEEL_MAX)
+        .collect();
+    let (mut extra, mut groups) = peel(
+        &mut pool,
+        nbr,
+        &candidates,
+        &mut face_group,
+        groups,
+        &sliced,
+        tol,
+    );
+    join_touching(
+        &mut pool,
+        nbr,
+        &mut face_group,
+        &mut group_of,
+        &mut groups,
+        &mut extra,
+        &sliced,
+        tol,
+    );
+
+    let mut out: Vec<Region> = Vec::new();
+    let mut out_label = vec![NONE; faces.len()];
+    let mut prefit = Vec::new();
+    let mut scratch = super::fit::Scratch::new(vc.len());
+    let mut emitted = vec![false; groups.len()];
+    let mut groups: Vec<Option<Group>> = groups.into_iter().map(Some).collect();
+    for r in 0..n {
+        let gi = group_of[r];
+        if gi != NONE {
+            if emitted[gi as usize] {
+                continue;
+            }
+            emitted[gi as usize] = true;
+            let grp = groups[gi as usize].take().unwrap();
+            let mut fl: Vec<u32> = std::mem::take(&mut extra[gi as usize]);
+            for &m in &grp.members {
+                fl.extend_from_slice(&regions[m as usize].faces);
+            }
+            fl.sort_unstable();
+            let area = fl.iter().map(|&f| info[f as usize].area).sum();
+            let verts = collect_verts(faces, info, &fl, &mut scratch);
+            let id = out.len();
+            for &f in &fl {
+                out_label[f as usize] = id as u32;
+            }
+            let cut = sliced[gi as usize];
+            let fit = if cut {
+                grp.fit
+            } else {
+                refreshed(vc, &verts, grp.fit)
+            };
+            out.push(Region {
+                faces: fl,
+                surface: Surface::Facets,
+                area,
+                width: 0.0,
+                verts,
+                rms: fit.3,
+                max: if cut { f64::INFINITY } else { fit.4 },
+                sag: 0.0,
+            });
+            if !cut {
+                prefit.push((id, fit));
+            }
+            continue;
+        }
+        let reg = &regions[r];
+        let left: Vec<u32> = reg
+            .faces
+            .iter()
+            .copied()
+            .filter(|&f| face_group[f as usize] == NONE)
+            .collect();
+        let pieces = if left.len() == reg.faces.len() {
+            vec![left]
+        } else {
+            components(nbr, &left)
+        };
+        let whole = pieces.len() == 1 && pieces[0].len() == reg.faces.len();
+        for piece in pieces {
+            let mut part = if whole {
+                Region {
+                    faces: reg.faces.clone(),
+                    surface: reg.surface,
+                    area: reg.area,
+                    width: reg.width,
+                    verts: reg.verts.clone(),
+                    rms: reg.rms,
+                    max: reg.max,
+                    sag: reg.sag,
+                }
+            } else {
+                super::fit::build_region(vc, faces, info, piece, tol, &mut scratch)
+            };
+            if lone_smooth(nbr, info, &part) || (whole && lone[r]) {
+                part.surface = Surface::Facets;
+                part.max = f64::INFINITY;
+            }
+            let id = out.len() as u32;
+            for &f in &part.faces {
+                out_label[f as usize] = id;
+            }
+            out.push(part);
+        }
     }
     Grown {
-        label: new_label,
-        regions: slots.into_iter().map(|s| s.unwrap()).collect(),
+        label: out_label,
+        regions: out,
         prefit,
     }
+}
+
+/// Moves single triangles of small ungrouped regions into an adjacent
+/// curved group when the triangle fits it as the group's members do (corners
+/// within `tol`, facet normal, chord sagitta). The planar stage can join a
+/// strip of one curved face with a sliver of the next where they meet
+/// tangentially, or keep a few nearly coplanar triangles of a sphere or a
+/// torus together, and such a region fits neither surface as a whole.
+fn peel(
+    pool: &mut Pool<'_>,
+    nbr: &[[u32; 3]],
+    candidates: &[u32],
+    face_group: &mut [u32],
+    groups: Vec<Group>,
+    sliced: &[bool],
+    tol: f64,
+) -> (Vec<Vec<u32>>, Vec<Group>) {
+    let mut extra: Vec<Vec<u32>> = vec![Vec::new(); groups.len()];
+    let limits: Vec<f64> = groups
+        .iter()
+        .zip(sliced)
+        .map(|(grp, &cut)| {
+            if cut {
+                return 0.0;
+            }
+            let sags = pool
+                .all_fit(&grp.members, &grp.fit, tol)
+                .unwrap_or_default();
+            SAG_RATIO * median(&sags).max(tol)
+        })
+        .collect();
+    let surfaces: Vec<Surface> = groups
+        .iter()
+        .map(|grp| {
+            curved::surface_of(
+                &grp.fit.1,
+                &grp.fit.2,
+                &Member {
+                    pts: Vec::new(),
+                    kind: grp.fit.0,
+                    slot: 0,
+                },
+            )
+        })
+        .collect();
+    let mut open: FxHashSet<u32> = FxHashSet::default();
+    let mut queue: VecDeque<u32> = VecDeque::new();
+    for &r in candidates {
+        for &f in &pool.regions[r as usize].faces {
+            open.insert(f);
+            queue.push_back(f);
+        }
+    }
+    while let Some(f) = queue.pop_front() {
+        if !open.contains(&f) {
+            continue;
+        }
+        let mut near: Vec<u32> = nbr[f as usize]
+            .iter()
+            .filter(|&&h| h != NONE)
+            .map(|&h| face_group[h as usize])
+            .filter(|&gi| gi != NONE && !sliced[gi as usize])
+            .collect();
+        near.sort_unstable();
+        near.dedup();
+        for gi in near {
+            let grp = &groups[gi as usize];
+            if pool.face_fits(
+                f,
+                &grp.fit,
+                &surfaces[gi as usize],
+                limits[gi as usize],
+                tol,
+            ) {
+                face_group[f as usize] = gi;
+                extra[gi as usize].push(f);
+                open.remove(&f);
+                for &h in &nbr[f as usize] {
+                    if h != NONE && open.contains(&h) {
+                        queue.push_back(h);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    (extra, groups)
+}
+
+/// Joins groups that touch once peeled triangles fill the gap between them
+/// (pieces of one face that separate seeds grew), when one surface refitted
+/// to their union still holds every vertex within `tol`.
+#[allow(clippy::too_many_arguments)]
+fn join_touching(
+    pool: &mut Pool<'_>,
+    nbr: &[[u32; 3]],
+    face_group: &mut [u32],
+    group_of: &mut [u32],
+    groups: &mut [Group],
+    extra: &mut [Vec<u32>],
+    sliced: &[bool],
+    tol: f64,
+) {
+    loop {
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for (f, nb) in nbr.iter().enumerate() {
+            let a = face_group[f];
+            if a == NONE {
+                continue;
+            }
+            for &h in nb {
+                if h == NONE {
+                    continue;
+                }
+                let b = face_group[h as usize];
+                if b != NONE && a < b {
+                    pairs.push((a, b));
+                }
+            }
+        }
+        pairs.sort_unstable();
+        pairs.dedup();
+        let mut merged = false;
+        for (a, b) in pairs {
+            let (a, b) = (a as usize, b as usize);
+            if sliced[a]
+                || sliced[b]
+                || groups[a].members.is_empty()
+                || groups[b].members.is_empty()
+            {
+                continue;
+            }
+            let (big, small) = if groups[a].members.len() >= groups[b].members.len() {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            let mut members = groups[big].members.clone();
+            members.extend_from_slice(&groups[small].members);
+            let (mut pts, _) = pool.union(&members);
+            let mut seen: FxHashSet<u32> = members
+                .iter()
+                .flat_map(|&r| pool.regions[r as usize].verts.iter().map(|x| x.0))
+                .collect();
+            for &f in extra[big].iter().chain(&extra[small]) {
+                for v in pool.faces[f as usize] {
+                    if seen.insert(v) {
+                        pts.push((pool.vc[v as usize], 0.0));
+                    }
+                }
+            }
+            let lead = &groups[big].fit;
+            let Some(fit) = curved::refit_quick(&pts, lead.0, lead.1, &lead.2, tol) else {
+                continue;
+            };
+            let small_members = std::mem::take(&mut groups[small].members);
+            for &r in &small_members {
+                group_of[r as usize] = big as u32;
+            }
+            groups[big].members.extend(small_members);
+            groups[big].fit = fit;
+            let moved = std::mem::take(&mut extra[small]);
+            extra[big].extend(moved);
+            for g in face_group.iter_mut() {
+                if *g == small as u32 {
+                    *g = big as u32;
+                }
+            }
+            merged = true;
+        }
+        if !merged {
+            break;
+        }
+    }
+}
+
+fn components(nbr: &[[u32; 3]], list: &[u32]) -> Vec<Vec<u32>> {
+    let set: FxHashSet<u32> = list.iter().copied().collect();
+    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    let mut out = Vec::new();
+    for &f in list {
+        if !seen.insert(f) {
+            continue;
+        }
+        let mut comp = vec![f];
+        let mut head = 0;
+        while head < comp.len() {
+            let g = comp[head];
+            head += 1;
+            for &h in &nbr[g as usize] {
+                if h != NONE && set.contains(&h) && seen.insert(h) {
+                    comp.push(h);
+                }
+            }
+        }
+        comp.sort_unstable();
+        out.push(comp);
+    }
+    out
+}
+
+fn refreshed(vc: &[V3], verts: &[(u32, f64)], fit: Single) -> Single {
+    let pts: Vec<(V3, f64)> = verts.iter().map(|&(v, w)| (vc[v as usize], w)).collect();
+    let (rms, max) = curved::member_residual(
+        &fit.1,
+        &fit.2,
+        &Member {
+            pts,
+            kind: fit.0,
+            slot: 0,
+        },
+    );
+    (fit.0, fit.1, fit.2, rms, max, fit.5)
 }
 
 /// Groups sandwiched between curved neighbours: at least two other groups
@@ -643,9 +1031,12 @@ fn slices(
                 .members
                 .iter()
                 .flat_map(|&r| g.adj[r as usize].iter().copied())
-                .filter(|&x| group_of[x as usize] != NONE && group_of[x as usize] != gi as u32)
+                .filter(|&x| {
+                    let o = group_of[x as usize];
+                    o != NONE && o != gi as u32 && !doubly(groups[o as usize].fit.0)
+                })
                 .collect();
-            if smooth_to.len() < 2 {
+            if doubly(grp.fit.0) || smooth_to.len() < 2 {
                 return false;
             }
             let mut perimeter = 0.0;
@@ -808,7 +1199,7 @@ fn lone_smooth(nbr: &[[u32; 3]], info: &[TriInfo], r: &Region) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::linalg::{V3, add, dot, scale};
+    use super::super::linalg::V3;
     use super::super::tests::{Frame, washer};
     use crate::api::{ConvertOptions, ConvertOutput};
     use crate::convert::convert_soup;
@@ -961,16 +1352,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn torus_strips_stay_facets() {
-        let (big, small, nu, nv) = (20.0, 4.0, 96, 32);
+    fn torus_soup(big: f64, small: f64, nu: usize, nv: usize, frame: &Frame) -> TriangleSoup {
         let at = |i: usize, j: usize| -> V3 {
             let (u, v) = (
                 std::f64::consts::TAU * (i % nu) as f64 / nu as f64,
                 std::f64::consts::TAU * (j % nv) as f64 / nv as f64,
             );
             let rho = big + small * v.cos();
-            [rho * u.cos(), rho * u.sin(), small * v.sin()]
+            frame.map([rho * u.cos(), rho * u.sin(), small * v.sin()])
         };
         let mut tris = Vec::new();
         for i in 0..nu {
@@ -979,18 +1368,43 @@ mod tests {
                 tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
             }
         }
-        let out = auto(&TriangleSoup { triangles: tris });
-        let analytic = out
-            .ir
-            .regions
-            .iter()
-            .filter(|r| !r.surface.is_facets())
-            .count();
-        assert!(
-            analytic * 20 < out.ir.regions.len().max(1) * 20 && analytic <= 8,
-            "{:?}",
-            out.report.region_counts
-        );
-        let _ = (add, dot, scale);
+        TriangleSoup { triangles: tris }
+    }
+
+    #[test]
+    fn torus_becomes_one_torus() {
+        for frame in [Frame::identity(), Frame::tilted()] {
+            let out = auto(&torus_soup(20.0, 4.0, 96, 32, &frame));
+            assert_eq!(out.ir.regions.len(), 1, "{:?}", out.report.region_counts);
+            let Surface::Torus {
+                major_radius,
+                minor_radius,
+                ..
+            } = out.ir.regions[0].surface
+            else {
+                panic!("{:?}", out.report.region_counts)
+            };
+            assert!((major_radius - 20.0).abs() < 1e-9 && (minor_radius - 4.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn dome_on_a_stem_becomes_a_sphere_and_a_cylinder() {
+        let r = 8.0;
+        let mut profile = vec![(r, 0.0)];
+        for k in 0..12 {
+            let phi = std::f64::consts::FRAC_PI_2 * k as f64 / 12.0;
+            profile.push((r * phi.cos(), 10.0 + r * phi.sin()));
+        }
+        profile.push((r * 0.13, 10.0 + r * (1.0 - 0.13f64 * 0.13).sqrt()));
+        let soup = revolved(&profile, 64, false, &Frame::tilted());
+        let out = auto(&soup);
+        assert_eq!(count(&out, "sphere"), 1, "{:?}", out.report.region_counts);
+        assert_eq!(count(&out, "cylinder"), 1);
+        for reg in &out.ir.regions {
+            if let Surface::Sphere { radius, .. } = reg.surface {
+                assert!((radius - r).abs() < 1e-9);
+            }
+        }
     }
 }
