@@ -148,10 +148,15 @@ def _exact_votes(
         idx = _canonical_knn(tree, flat[todo], use)
         cand = owner[idx]
         rows = np.repeat(todo, use)
-        raw = _point_tri_dist2(
-            flat[rows], src[cand.ravel(), 0], src[cand.ravel(), 1], src[cand.ravel(), 2]
-        )
-        raw = raw.reshape(len(todo), use)
+        order = np.argsort(cand, axis=1, kind="stable")
+        ranked = np.take_along_axis(cand, order, axis=1)
+        first = np.ones(cand.shape, dtype=bool)
+        first[:, 1:] = ranked[:, 1:] != ranked[:, :-1]
+        r, c = np.nonzero(first)
+        tri = ranked[r, c]
+        dist = _point_tri_dist2(flat[todo[r]], src[tri, 0], src[tri, 1], src[tri, 2])
+        raw = np.empty(cand.shape)
+        np.put_along_axis(raw, order, dist[np.cumsum(first).reshape(cand.shape) - 1], axis=1)
         d2 = raw
         if src_n is not None:
             facing = (src_n[cand.ravel()] * normals[rows]).sum(axis=1) > 0.0
