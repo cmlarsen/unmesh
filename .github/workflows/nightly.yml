@@ -26,7 +26,41 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --locked
       - run: scripts/check.sh
-      - run: uv run --locked pytest harness/tests --slow -q -n auto --dist worksteal
+
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Slow tier, group ${{ matrix.group }} of 4
+        run: |
+          uv run --locked pytest harness/tests --slow -m "slow and not benchmark" -q \
+            -n auto --dist worksteal \
+            --splits 4 --group ${{ matrix.group }} \
+            --splitting-algorithm least_duration \
+            --durations-path harness/tests/.test_durations
+
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Wall-clock benchmarks, one worker
+        run: uv run --locked pytest harness/tests --slow -m benchmark -q -p no:xdist
 
   standard:
     runs-on: ubuntu-latest

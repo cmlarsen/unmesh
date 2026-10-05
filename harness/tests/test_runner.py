@@ -29,6 +29,14 @@ def no_ir(stl_path):
 
 def hang(stl_path):
     time.sleep(600)
+
+
+def hog(stl_path):
+    import numpy as np
+
+    held = np.ones(200_000_000)
+    time.sleep(600)
+    return held
 """
 
 
@@ -110,6 +118,41 @@ def test_broken_converters_are_reported_not_fatal(tmp_path, monkeypatch):
     assert by_converter["broken_plugins:hang"]["status"] == "timeout"
     assert by_converter["nonexistent_module:fn"]["status"] == "error"
     assert "broken_plugins:boom" in summarize(summary.records)
+
+
+def test_memory_cap_records_the_cell_and_keeps_the_pool(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "broken_plugins.py").write_text(PLUGINS)
+    monkeypatch.syspath_prepend(str(plugins))
+    grid = small_grid(parts=1, cells=("identity",))
+    summary = run_grid(
+        grid,
+        ["broken_plugins:hog", "unmesh"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=120,
+        log=lambda *_: None,
+        memory_cap_mb=1200,
+    )
+    by_converter = {r["converter"]: r for r in read_results(summary.results_path)}
+    hog = by_converter["broken_plugins:hog"]
+    assert hog["status"] == "error", hog
+    assert hog["error"].startswith("memory cap: worker RSS"), hog
+    assert hog["rss_peak_mb"] > 1200
+    ok = by_converter["unmesh"]
+    assert ok["status"] == "ok", ok
+    assert 0 < ok["rss_peak_mb"] < 1200
+
+
+def test_default_memory_cap_leaves_headroom():
+    import psutil
+
+    from unmesh_harness.runner.run import MEMORY_HEADROOM_MB, default_memory_cap_mb
+
+    total = psutil.virtual_memory().total / 2**20
+    assert default_memory_cap_mb(4) * 4 <= max(total - MEMORY_HEADROOM_MB, 4 * 1024)
 
 
 ADVERSARIES = """

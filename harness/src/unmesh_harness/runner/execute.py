@@ -274,6 +274,7 @@ JUDGE_FIELDS = (
     "under_report",
 )
 READY = "__ready__"
+RECYCLE_FRACTION = 0.5
 SINGLE_THREAD_ENV = (
     "OMP_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -293,6 +294,15 @@ def _serve(conn) -> None:
         conn.send(execute(task))
 
 
+def rss_mb(pid: int) -> float | None:
+    import psutil
+
+    try:
+        return psutil.Process(pid).memory_info().rss / 2**20
+    except psutil.Error:
+        return None
+
+
 class _Slot:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
@@ -300,8 +310,15 @@ class _Slot:
         self.conn = None
         self.task: tuple[Any, dict[str, Any]] | None = None
         self.started = 0.0
+        self.peak = 0.0
         self.ready = False
         self.start()
+
+    def sample(self) -> float:
+        rss = rss_mb(self.proc.pid)
+        if rss is not None:
+            self.peak = max(self.peak, rss)
+        return self.peak
 
     def start(self) -> None:
         parent, child = self.ctx.Pipe()
@@ -321,6 +338,7 @@ def run_pool(
     jobs: list[tuple[Any, dict[str, Any]]],
     workers: int,
     timeout: float,
+    memory_cap_mb: float | None = None,
 ) -> Iterator[tuple[Any, dict[str, Any]]]:
     if not jobs:
         return
@@ -335,6 +353,8 @@ def run_pool(
                 if slot.ready and slot.task is None and pending:
                     slot.task = pending.popleft()
                     slot.started = time.monotonic()
+                    slot.peak = 0.0
+                    slot.sample()
                     slot.conn.send(slot.task[1])
             live = {s.conn: s for s in slots if s.task or not s.ready}
             for conn in wait(list(live), timeout=0.2):
@@ -354,10 +374,35 @@ def run_pool(
                     continue
                 key, _ = slot.task
                 slot.task = None
+                if isinstance(message, dict):
+                    message["rss_peak_mb"] = round(slot.peak, 1)
+                if memory_cap_mb is not None and (rss_mb(slot.proc.pid) or 0.0) > (
+                    memory_cap_mb * RECYCLE_FRACTION
+                ):
+                    slot.kill()
+                    slot.start()
                 yield key, message
             now = time.monotonic()
             for slot in slots:
-                if slot.task and now - slot.started > timeout:
+                if not slot.task:
+                    continue
+                peak = slot.sample()
+                if memory_cap_mb is not None and peak > memory_cap_mb:
+                    key, _ = slot.task
+                    slot.kill()
+                    slot.start()
+                    slot.task = None
+                    yield (
+                        key,
+                        {
+                            "status": "error",
+                            "error": f"memory cap: worker RSS {peak:.0f} MB exceeded "
+                            f"{memory_cap_mb:g} MB",
+                            "rss_peak_mb": round(peak, 1),
+                        },
+                    )
+                    continue
+                if now - slot.started > timeout:
                     key, _ = slot.task
                     slot.kill()
                     slot.start()

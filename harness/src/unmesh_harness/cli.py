@@ -67,7 +67,13 @@ def _run(args) -> int:
         return 2
     try:
         summary = run_grid(
-            grid, converters, args.out, args.jobs, timeout=args.timeout, hidden=args.hidden
+            grid,
+            converters,
+            args.out,
+            args.jobs,
+            timeout=args.timeout,
+            hidden=args.hidden,
+            memory_cap_mb=args.memory_cap_mb,
         )
     except ValueError as e:
         print(f"error: {e}")
@@ -220,6 +226,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--out", type=Path, default=Path("harness-results"))
     run.add_argument("--jobs", type=int, default=None)
     run.add_argument("--timeout", type=float, default=None)
+    run.add_argument(
+        "--memory-cap-mb",
+        type=float,
+        default=None,
+        help="kill a worker whose RSS exceeds this and record its cell as a 'memory cap' "
+        "error (default: the share of total RAM left after headroom, divided by --jobs)",
+    )
     run.add_argument("--gate", action="store_true", help="exit 1 on any gate violation")
     run.add_argument(
         "--category",

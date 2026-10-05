@@ -14,6 +14,7 @@ dependencies = [
     "build123d>=0.10,<0.11",
     "cadquery-ocp>=7.8,<7.9",
     "ocp-gordon>=0.1.17,<0.2",
+    "psutil>=5.9",
 ]
 
 [project.scripts]
