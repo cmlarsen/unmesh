@@ -310,7 +310,7 @@ pub fn init_torus_local(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, Vec<f6
             }
             let rho = cv / k2;
             let major = rho - minor * cv;
-            if !(major > minor) {
+            if major.is_nan() || major <= minor {
                 continue;
             }
             let a = add(scale(nat, sv), scale(e1, cv));
