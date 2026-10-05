@@ -896,6 +896,7 @@ def _flip_pass(
         val = np.bincount(F.ravel(), minlength=len(V))
         starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
         touch = np.zeros(len(F), dtype=bool)
+        made: set[tuple[int, int]] = set()
         swap: list[tuple[int, tuple[int, int, int], tuple[int, tuple[int, int, int]]]] = []
         for e in cand.tolist():
             a, b = int(uniq[e, 0]), int(uniq[e, 1])
@@ -906,6 +907,8 @@ def _flip_pass(
             if len(opp) != 2:
                 continue
             c, d = opp
+            if (min(c, d), max(c, d)) in made:
+                continue
             if d in set(F[tri_of[starts[c] : starts[c] + vcounts[c]]].ravel().tolist()):
                 continue
             before = (
@@ -943,6 +946,7 @@ def _flip_pass(
             val[d] += 1
             touch[r0] = True
             touch[r1] = True
+            made.add((min(c, d), max(c, d)))
             flips += 1
         if not swap:
             break

@@ -561,6 +561,8 @@ def test_oracle_on_degraded_labels_scores_one(name, smoke_parts):
             out = degrade.apply(name, mesh, severity, SEED)
             result = oracle_score(mesh, out)
             key = (pid, severity)
+            if OPERATORS[name].preserves_watertight:
+                assert closed_manifold_problems(out.tris)[0] == [], key
             assert result["recall"] == 1.0, key
             assert result["precision"] == 1.0, key
             assert result["f1"] == 1.0, key
