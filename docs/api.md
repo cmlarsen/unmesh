@@ -102,7 +102,11 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
 - **Vertices** touching a curved region are moved onto every analytic surface that meets there
   (iterated least squares on the tangent planes, pulled toward the IR position). A direction in
   which the surfaces' normals do not constrain the point (they are within about 1.6 degrees of
-  each other, as at a tangent junction) keeps the IR position instead of drifting along it.
+  each other, as at a tangent junction) keeps the IR position instead of drifting along it. A
+  junction on a `tangent` boundary is then solved for the point on every surface where each tangent
+  pair's outward normals agree, and a vertex on planes is put back on them exactly. Once the edge
+  curves are built, a vertex where two or more of them meet settles on their common point (when
+  that is closer to all of them and within the deviation limit).
 - **Transversal edges** are the OCCT intersection of the two surfaces (`GeomAPI_IntSS`). The branch
   nearest the boundary polyline is kept and trimmed at the IR vertices in the polyline's direction;
   every boundary point must lie within the deviation limit of the trimmed edge. When OCCT returns
@@ -125,11 +129,14 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   and their midpoints are interpolated as a B-spline. A tangent run that ends at a `kind_change`
   vertex is the grazing part of a transversal intersection (an equal-radius tee), so its points are
   moved onto the intersection instead and interpolated. Both faces share the one edge; its
-  tolerance covers the largest distance of the curve from either surface. Each is reported in
+  tolerance covers the largest distance of the curve from either surface, and a vertex's tolerance
+  twice its distance from each curve end that meets it. Each is reported in
   `tangent_edges`.
 - **A sphere region with no closed boundary** (a corner blend) takes its axis through a vertex
   where two great-circle edges meet, so that vertex is the pole, those edges are meridians, and the
-  face closes there with a degenerate edge, as OCCT's own fillets do.
+  face closes there with a degenerate edge, as OCCT's own fillets do. Tangent circles on a sphere
+  are moved onto it (onto a great circle when within the deviation limit of one), the pole is the
+  exact intersection of the two meridians, and tangent edges ending there are refitted to it.
 - **`facets` regions next to a curved region** are not supported yet: the shell fails with the
   reason `facets regions next to curved surfaces are not supported yet (#34)`.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
