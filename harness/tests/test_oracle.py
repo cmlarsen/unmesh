@@ -405,7 +405,9 @@ def split_points(segs):
 
 
 def run_key(segs, threshold=3.0):
-    return sorted((s.dihedral < threshold, s.dihedral, sorted(s.points)) for s in segs)
+    return sorted(
+        (s.dihedral < threshold, s.dihedral, sorted({tuple(p) for p in s.points})) for s in segs
+    )
 
 
 def test_split_runs_short_run_merge_direction_independent():
@@ -434,16 +436,17 @@ def test_split_runs_direction_independent_fuzz():
         if closed:
             samples[-1] = samples[0]
             m = n - 1
-            pts = [
+            cyc = [
                 (10.0 * math.cos(2 * math.pi * i / m), 10.0 * math.sin(2 * math.pi * i / m), 0.0)
-                for i in range(n)
+                for i in range(m)
             ]
+            pts = cyc + [cyc[0]]
             fwd = _split_runs(make_directed(pts, samples, True, closed=True), 3.0, (0, 1))
             rev = _split_runs(make_directed(pts, samples, False, closed=True), 3.0, (0, 1))
             assert split_points(fwd) == split_points(rev), trial
             assert run_key(fwd) == run_key(rev), trial
             k = rng.randint(1, n - 2)
-            cyc, cyc_samples = pts[:-1], samples[:-1]
+            cyc_samples = samples[:-1]
             rpts, rsamples = cyc[k:] + cyc[:k], cyc_samples[k:] + cyc_samples[:k]
             rot = _split_runs(
                 make_directed(rpts + [rpts[0]], rsamples + [rsamples[0]], True, closed=True),

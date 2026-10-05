@@ -205,10 +205,14 @@ stored in the IR and `kind` is authoritative; a validator checks the two agree.
 Where `kind` changes partway along one edge, the edge is split with hysteresis around the threshold:
 a crossing counts only if the per-node dihedral samples fall below `threshold - 0.5°` on one side and
 above `threshold + 0.5°` on the other, and every resulting run spans at least two polyline segments.
-The split lands on the in-band polyline node nearest the threshold, ties broken towards the
-lexicographically smaller node coordinate so the choice does not depend on walk direction, so every `kind_change` vertex
-and boundary point stays a mesh vertex position. An edge that only touches the threshold, or hovers
-inside the band, keeps a single boundary classified by its median dihedral.
+The split lands on the polyline node between the two out-of-band samples that is nearest the
+threshold (either sample itself if they are adjacent). Ties go to the lexicographically smaller node
+coordinate, so the choice does not depend on walk direction, and every `kind_change` vertex and
+boundary point stays a mesh vertex position. Short runs merge away in a canonical order, shortest
+first with ties broken by node coordinate, by dropping the lexicographically smaller bounding joint;
+same-kind neighbours merge the same way. Closed loops are therefore independent of walk direction
+and of where the loop starts. An edge that only touches the threshold, or hovers inside the band,
+keeps a single boundary classified by its median dihedral.
 
 How the default of 3.0 degrees was chosen:
 
