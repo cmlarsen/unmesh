@@ -12,6 +12,7 @@ from .groundtruth import fingerprint, generate
 MANIFEST_VERSION = 0
 GRID_SIZES = {"smoke": 50, "standard": 619}
 GRID_ORDER = ["smoke", "standard"]
+IMPORTED_TIER_CANDIDATE_CAP = 233
 
 PLANAR_GRID_COUNTS = {"smoke": 20, "standard": 100}
 CURVED_GRID_COUNTS = {"smoke": 10, "standard": 80}
@@ -223,7 +224,20 @@ def imported_candidates(cache_dir=None) -> list[dict[str, Any]]:
                 continue
             out.append({"dataset": dataset, "file_id": item["id"], "sha256": step["sha256"]})
     out.sort(key=lambda s: (s["dataset"], s["file_id"]))
-    return out
+    return out[:IMPORTED_TIER_CANDIDATE_CAP]
+
+
+def rejected_reasons(manifest_path: Path | None = None) -> dict[str, str]:
+    path = (manifest_path or find_manifest()).parent / "imported_rejected.json"
+    if not path.is_file():
+        return {}
+    record = json.loads(path.read_text())
+    if record.get("candidate_cap") != IMPORTED_TIER_CANDIDATE_CAP:
+        raise RuntimeError(
+            f"{path}: candidate_cap {record.get('candidate_cap')} != "
+            f"IMPORTED_TIER_CANDIDATE_CAP {IMPORTED_TIER_CANDIDATE_CAP}"
+        )
+    return {item["file_id"]: item["reason"] for item in record.get("rejected", [])}
 
 
 def probe_imported_candidate(payload: dict[str, Any]) -> dict[str, Any]:
@@ -260,19 +274,26 @@ _PROBE_CODE = (
 )
 
 
-def sync_imported(manifest: dict[str, Any], cache_dir=None) -> dict[str, Any]:
+def sync_imported(
+    manifest: dict[str, Any], cache_dir=None, rejected: dict[str, str] | None = None
+) -> dict[str, Any]:
     import subprocess
     import sys
 
     from .imported import IMPORTED_FAMILY, datasets_root
 
     have = {e["source"]["file_id"] for e in manifest["entries"] if e.get("tier") == "imported"}
+    known_bad = rejected if rejected is not None else {}
     new = [c for c in imported_candidates(cache_dir) if c["file_id"] not in have]
     if not new:
         return manifest
     start = sum(1 for e in manifest["entries"] if e.get("tier") == "imported")
     kept, skipped = 0, 0
     for i, source in enumerate(new):
+        if source["file_id"] in known_bad:
+            print(f"skip {source['file_id']}: previously rejected ({known_bad[source['file_id']]})")
+            skipped += 1
+            continue
         payload = json.dumps({"source": source, "cache_dir": str(cache_dir) if cache_dir else None})
         try:
             run = subprocess.run(
