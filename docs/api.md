@@ -142,7 +142,9 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
   surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
   on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
-  surface parameters of the curve sampled at its own parameters, whichever is closer to the edge.
+  surface parameters of the curve sampled twice per knot span at its own parameters, whichever is
+  closer to the edge. (Denser sampling gave pcurves of ~4000 intervals, on which OCCT's area and
+  volume integration silently lost accuracy: 1.3e-5 relative on a boss meeting a pipe.)
   On a periodic surface the seam is an isoparametric
   line: through the vertex of a wrapping loop made of open edges when there is one, otherwise placed
   away from the face's other boundaries; closed loops get their vertex where the seam crosses them,

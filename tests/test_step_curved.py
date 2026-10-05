@@ -380,6 +380,7 @@ def test_kind_change_edges_follow_the_intersection(make, tmp_path):
     assert {t.curve for t in report.tangent_edges} == {"bspline"}
     assert all(e.intersection_distance < 1e-6 for e in report.edge_fallbacks)
     assert report.max_shape_tolerance <= 1e-6
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-9)
     assert union_distance(occ.read_step(path), shape) < 1e-6
 
 
@@ -494,3 +495,36 @@ def test_without_a_mesh_the_volume_is_reported_unchecked(tmp_path):
     report = step.write(ir, tmp_path / "p.step")
     assert report.valid and report.fallback is None
     assert not report.volume_checked_against_input
+
+
+def test_tangent_fit_prefers_a_line_on_a_straight_tangency():
+    wall = plane((5.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    fillet_ = cylinder((0.0, 0.0, 0.0), Z, 5.0)
+    wobble = 1e-6 * (np.sin(np.arange(11)) + 0.3 * np.linspace(-1.0, 1.0, 11) ** 2)
+    pts = [np.array([5.0, w, z]) for w, z in zip(wobble, np.linspace(0.0, 10.0, 11), strict=True)]
+    circle = curved.fit_circle(pts, False)
+    line_error = curved.curve_error(curved.fit_line(pts), [wall, fillet_], pts, False)[0]
+    assert curved.curve_error(circle, [wall, fillet_], pts, False)[0] < line_error
+    kind, curve, err, _ = curved.tangent_curve([wall, fillet_], pts, False, 5e-3)
+    assert kind == "line" and err == pytest.approx(line_error)
+
+
+def test_tangent_fit_prefers_a_circle_over_a_line_within_the_limit():
+    top = plane((0.0, 0.0, 4.0), Z)
+    tube = uir.Torus((0.0, 0.0, 2.0), Z, 20.0, 2.0, "same")
+    pts = [np.array([20.0 * math.cos(a), 20.0 * math.sin(a), 4.0]) for a in np.linspace(0, 0.03, 7)]
+    line = curved.fit_line(pts)
+    assert curved.curve_error(line, [top, tube], pts, False)[0] < 5e-3
+    kind, curve, err, _ = curved.tangent_curve([top, tube], pts, False, 5e-3)
+    assert kind == "circle" and err < 1e-9
+    assert curve.Radius() == pytest.approx(20.0, abs=1e-9)
+
+
+def test_tangent_fit_gives_up_when_neither_fits():
+    sa = cylinder((0.0, 0.0, 0.0), Z, 5.0)
+    sb = cylinder((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 5.0)
+    pts = [
+        np.array([5 * math.cos(a), 5 * math.sin(a), abs(5 * math.cos(a))])
+        for a in np.linspace(1.2, 1.9, 9)
+    ]
+    assert curved.tangent_curve([sa, sb], pts, False, 1e-4) is None
