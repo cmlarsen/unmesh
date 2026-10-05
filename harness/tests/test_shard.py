@@ -77,8 +77,8 @@ def test_cli_rejects_bad_shard_and_category_without_running(tmp_path, capsys):
     rc = main(
         [
             "run",
-                "--converter",
-                "unmesh",
+            "--converter",
+            "unmesh",
             "--grid",
             "smoke",
             "--out",
@@ -90,3 +90,32 @@ def test_cli_rejects_bad_shard_and_category_without_running(tmp_path, capsys):
     assert rc == 2
     assert "selects no parts" in capsys.readouterr().out
     assert list(tmp_path.iterdir()) == []
+
+
+def _fake_entries():
+    return [
+        {"id": f"part-{i:02d}", "strata": {"category": "planar" if i < 2 else "complex"}}
+        for i in range(6)
+    ]
+
+
+def test_assign_shard_balances_cost_not_counts():
+    from unmesh_harness.runner.shards import assign_shard
+
+    table = {"planar": 100.0, "complex": 1.0}
+    shards = [assign_shard(_fake_entries(), i, 2, 10, table) for i in range(2)]
+    loads = [
+        sum(10 * table[e["strata"]["category"]] for e in shard) for shard in shards
+    ]
+    assert sorted(loads) == [1020.0, 1020.0]
+    got = sorted(e["id"] for shard in shards for e in shard)
+    assert got == sorted(e["id"] for e in _fake_entries())
+
+
+def test_assign_shard_falls_back_without_cost_table():
+    from unmesh_harness.runner.shards import assign_shard
+
+    shards = [assign_shard(_fake_entries(), i, 3, 10, {}) for i in range(3)]
+    assert [len(s) for s in shards] == [2, 2, 2]
+    got = sorted(e["id"] for shard in shards for e in shard)
+    assert got == sorted(e["id"] for e in _fake_entries())

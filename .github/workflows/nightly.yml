@@ -41,24 +41,15 @@ jobs:
           - category: curved
             index: 0
             count: 1
+          - category: chamfer_fillet
+            index: 0
+            count: 1
           - category: complex
             index: 0
             count: 2
           - category: complex
             index: 1
             count: 2
-          - category: chamfer_fillet
-            index: 0
-            count: 4
-          - category: chamfer_fillet
-            index: 1
-            count: 4
-          - category: chamfer_fillet
-            index: 2
-            count: 4
-          - category: chamfer_fillet
-            index: 3
-            count: 4
           - category: imported
             index: 0
             count: 3

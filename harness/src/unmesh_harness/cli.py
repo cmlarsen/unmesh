@@ -48,8 +48,10 @@ def select_run_entries(grid, category: list[str] | None, shard: str | None):
             raise ValueError(f"--shard must look like 0/3, got {shard!r}") from None
         if not 0 <= index < count or count < 1:
             raise ValueError(f"--shard must look like 0/3, got {shard!r}")
-        ordered = sorted(grid.entries, key=lambda e: e["id"])
-        grid = dataclasses.replace(grid, entries=ordered[index::count])
+        from .runner.shards import assign_shard, cells_per_part
+
+        picked = assign_shard(grid.entries, index, count, cells_per_part(grid))
+        grid = dataclasses.replace(grid, entries=picked)
     return grid
 
 
