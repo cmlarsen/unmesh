@@ -258,30 +258,14 @@ def _polygon_params(poly, count: int) -> list[float] | None:
 
 
 def _edge_dihedral_profile(edge, face_a, face_b, params: list[float]) -> list[float] | None:
-    samplers = []
-    for face in (face_a, face_b):
-        curve2d = BRep_Tool.CurveOnSurface_s(edge, face, 0.0, 1.0)
-        if curve2d is None:
-            return None
-        samplers.append(
-            (
-                curve2d,
-                BRep_Tool.Surface_s(face),
-                face.Orientation() == TopAbs_REVERSED,
-            )
-        )
     angles = []
     try:
         for t in params:
-            normals = []
-            for curve2d, surf, reversed_face in samplers:
-                uv = curve2d.Value(t)
-                props = GeomLProp_SLProps(surf, uv.X(), uv.Y(), 1, 1e-9)
-                if not props.IsNormalDefined():
-                    return None
-                n = np.array(_vec(props.Normal()))
-                normals.append(-n if reversed_face else n)
-            cos = float(np.clip(normals[0] @ normals[1], -1.0, 1.0))
+            na = _face_normal(face_a, edge, t)
+            nb = _face_normal(face_b, edge, t)
+            if na is None or nb is None:
+                return None
+            cos = float(np.clip(na @ nb, -1.0, 1.0))
             angles.append(math.acos(cos))
     except Exception:
         return None

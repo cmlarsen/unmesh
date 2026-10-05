@@ -282,7 +282,7 @@ def test_boss_part_loop_kind_change():
     assert any(b.kind == "tangent" for a in ir.adjacencies for b in a.boundaries if not b.closed)
 
 
-def make_directed(points, samples_deg):
+def make_directed(points, samples_deg, forward=True):
     adj = EdgeAdjacency(
         edge_id=0,
         face_a=0,
@@ -295,7 +295,7 @@ def make_directed(points, samples_deg):
         points=[[float(x), 0.0, 0.0] for x in points],
         start_vertex=0,
         end_vertex=1,
-        forward_in_a=True,
+        forward_in_a=forward,
         dihedral_samples=[math.radians(s) for s in samples_deg],
     )
     return _Directed(adj)
@@ -330,3 +330,34 @@ def test_split_runs_no_crossing_keeps_whole_edge():
     (seg,) = _split_runs(d, 3.0, (0, 1))
     assert seg.points == d.points and seg.dihedral == d.dihedral
     assert (seg.start, seg.end) == (0, 1)
+
+
+def test_split_runs_reversed_edge_keeps_samples_on_points():
+    d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0, 50.0], [1.0, 1.0, 1.0, 10.0, 10.0, 10.0], False)
+    segs = _split_runs(d, 3.0, (0, 1))
+    assert len(segs) == 2
+    assert (segs[0].start, segs[1].end) == (1, 0)
+    assert segs[0].dihedral == pytest.approx(10.0)
+    assert segs[1].dihedral == pytest.approx(1.0)
+    assert segs[0].end.point == segs[1].points[0] == (20.0, 0.0, 0.0)
+
+
+def test_directed_samples_follow_reversed_points():
+    mesh = tessellate(mirror(equal_tee(), Plane.YZ), 0.01, 0.2)
+    adj = next(
+        a
+        for a in mesh.adjacency
+        if not a.forward_in_a
+        and len(a.dihedral_samples) == len(a.points)
+        and max(math.degrees(s) for s in a.dihedral_samples)
+        - min(math.degrees(s) for s in a.dihedral_samples)
+        > 5.0
+    )
+    d = _Directed(adj)
+    assert [tuple(p) for p in d.points] == [tuple(p) for p in adj.points[::-1]]
+    by_point = {
+        tuple(p): math.degrees(s) for p, s in zip(adj.points, adj.dihedral_samples, strict=True)
+    }
+    assert len(by_point) == len(adj.points)
+    for p, s in zip(d.points, d.samples, strict=True):
+        assert s == pytest.approx(by_point[tuple(p)])
