@@ -630,7 +630,38 @@ class _Builder:
         for e in self.edges:
             if e.closed and r in (e.a, e.b):
                 return geo.plane_normal(e.points)
+        if isinstance(s, Sphere):
+            c = np.asarray(s.center, dtype=float)
+            pole = self.pole_vertex(r)
+            if pole is not None:
+                return geo.unit(np.asarray(self.vpos[pole], dtype=float) - c)
+            d = sum(
+                (geo.unit(p - c) for e in self.edges if r in (e.a, e.b) for p in e.points),
+                np.zeros(3),
+            )
+            if np.linalg.norm(d) > 0:
+                return geo.perpendicular(d)
         return np.array([0.0, 0.0, 1.0])
+
+    def pole_vertex(self, r) -> int | None:
+        s = self.surface(r)
+        c = np.asarray(s.center, dtype=float)
+        ends: dict[int, list[_Edge]] = {}
+        for e in self.edges:
+            if r in (e.a, e.b) and not e.closed:
+                for v in {e.start, e.end}:
+                    ends.setdefault(v, []).append(e)
+        for v in sorted(ends):
+            meridians = [
+                e
+                for e in ends[v]
+                if isinstance(e.curve, Geom_Circle)
+                and float(np.linalg.norm(_xyz(e.curve.Location()) - c)) <= 1e-6 * s.radius
+                and abs(e.curve.Radius() - s.radius) <= 1e-6 * s.radius
+            ]
+            if len(ends[v]) == 2 and len(meridians) == 2:
+                return v
+        return None
 
     def winds(self, e: _Edge, r: int) -> bool:
         s = self.surface(r)
@@ -650,7 +681,10 @@ class _Builder:
         angles = []
         for e in self.edges:
             if r in (e.a, e.b) and not (e.closed and self.winds(e, r)):
-                angles.extend(geo.angle_about(p, origin, axis, xdir) for p in e.points)
+                for p in e.points:
+                    q = p - origin
+                    if np.linalg.norm(q - (q @ axis) * axis) > 1e-9 * max(1.0, np.linalg.norm(q)):
+                        angles.append(geo.angle_about(p, origin, axis, xdir))
         if angles:
             ang = np.sort(np.mod(np.asarray(angles), TWO_PI))
             gaps = np.diff(np.append(ang, ang[0] + TWO_PI))
@@ -1024,7 +1058,7 @@ class _Builder:
             raise BuildError(f"region {r}: {len(wraps)} boundary loops wind around the axis")
         for lp in holes:
             lp.center_u()
-            wires.append(lp.edges)
+            wires.append(self.close_poles(face, lp))
         for edges in wires:
             self.builder.Add(face, self.wire(edges))
         for lp in uv_loops:
@@ -1056,6 +1090,35 @@ class _Builder:
         left = Geom2d_Line(gp_Pnt2d(0.0, -shift), gp_Dir2d(0.0, 1.0))
         self.builder.UpdateEdge(seam, right, left, face, EDGE_TOLERANCE)
         return seam
+
+    def close_poles(self, face, lp) -> list:
+        out = []
+        n = len(lp.edges)
+        for i in range(n):
+            out.append(lp.edges[i])
+            j = (i + 1) % n
+            u0 = lp.uv[i][1][0] + lp.shifts[i][0]
+            u1 = lp.uv[j][0][0] + lp.shifts[j][0]
+            v = lp.uv[i][1][1] + lp.shifts[i][1]
+            if abs(u1 - u0) <= 1e-9:
+                continue
+            if not (isinstance(lp.ir_surface, Sphere) and abs(abs(v) - math.pi / 2) <= 1e-9):
+                raise BuildError(f"region {lp.region}: a boundary loop jumps in u off a pole")
+            vertex = TopExp.LastVertex_s(lp.edges[i], True)
+            out.append(self.pole_edge(face, vertex, v, u0, u1))
+        return out
+
+    def pole_edge(self, face, vertex, v, u0, u1):
+        edge = TopoDS_Edge()
+        self.builder.MakeEdge(edge)
+        self.builder.Add(edge, vertex.Oriented(TopAbs_FORWARD))
+        self.builder.Add(edge, vertex.Oriented(TopAbs_REVERSED))
+        self.builder.Degenerated(edge, True)
+        sign = 1.0 if u1 > u0 else -1.0
+        line = Geom2d_Line(gp_Pnt2d(0.0, v), gp_Dir2d(sign, 0.0))
+        self.builder.UpdateEdge(edge, line, face, EDGE_TOLERANCE)
+        self.builder.Range(edge, sign * u0, sign * u1)
+        return edge
 
     def degenerate_edge(self, face, vertex, v):
         edge = TopoDS_Edge()
@@ -1155,6 +1218,7 @@ class _UVLoop:
         self.surf = surf
         self.edges = list(edges)
         self.v_periodic = isinstance(ir_surface, Torus)
+        self.ir_surface = ir_surface
         self.pcurves = []
         uv = []
         for e in self.edges:

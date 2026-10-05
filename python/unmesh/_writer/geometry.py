@@ -132,6 +132,8 @@ def angle_about(p, origin, axis, xdir) -> float:
 def winding(points, origin, axis, xdir) -> int:
     pts = np.asarray(points, dtype=float)
     q = pts - origin
+    _, _, rho = _radial(pts, origin, axis)
+    q = q[rho > 1e-9 * np.maximum(1.0, np.linalg.norm(q, axis=1))]
     y = np.cross(axis, xdir)
     ang = np.arctan2(q @ y, q @ xdir)
     d = np.diff(np.append(ang, ang[0]))
