@@ -212,7 +212,7 @@ fn frame(n: V3) -> (V3, V3) {
     (t1, cross(n, t1))
 }
 
-pub fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
+fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
     let (t1, t2) = frame(n);
     let mut local: Vec<(f64, f64, f64)> = pts
         .iter()
@@ -238,7 +238,7 @@ pub fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
         let (coef, rank) = solve(&local, &all, 3)?;
         let dof = local.len().checked_sub(rank).filter(|&d| d > 0)?;
         let ss: f64 = local.iter().map(|p| resid(&coef, *p).powi(2)).sum();
-        return Some((ss / dof as f64).sqrt());
+        return Some(median_unbiased_rms(ss, dof));
     }
     let keep = ((KEEP_FRACTION * local.len() as f64).ceil() as usize)
         .max(rank + MIN_DOF)
@@ -262,7 +262,12 @@ pub fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
     res.sort_by(f64::total_cmp);
     let ss: f64 = res[..keep].iter().sum();
     let dof = keep.checked_sub(rank).filter(|&d| d >= MIN_DOF)?;
-    Some(TRIM_CONSISTENCY * (ss / dof as f64).sqrt())
+    Some(TRIM_CONSISTENCY * median_unbiased_rms(ss, dof))
+}
+
+fn median_unbiased_rms(ss: f64, dof: usize) -> f64 {
+    let k = dof as f64;
+    (ss / k).sqrt() * (1.0 - 2.0 / (9.0 * k)).powf(-1.5)
 }
 
 fn basis(x: f64, y: f64) -> [f64; NP] {
