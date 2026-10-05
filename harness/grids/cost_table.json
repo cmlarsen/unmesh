@@ -1,0 +1,19 @@
+{
+  "measured": {
+    "date": "2026-10-05",
+    "machine": "darwin arm64 (M-series), 4 jobs",
+    "method": "200 random (part, row, seed) cells from standard.expand(), 40 per category, seed 12345, 60 s cell timeout; cost = mean record wall + timeouts at cap + cold-prep share, in worker-seconds per cell",
+    "cells": 200,
+    "cells_per_part": 99,
+    "cell_timeout_s": 60,
+    "jobs": 4,
+    "note": "CI ubuntu-latest (4 vCPUs) is slower; shard plans target half the cap so a ~1.5x slowdown still fits"
+  },
+  "categories": {
+    "planar": {"worker_s_per_cell": 0.067, "n": 40, "ok": 35, "timeout": 0, "error": 5},
+    "curved": {"worker_s_per_cell": 2.659, "n": 40, "ok": 36, "timeout": 0, "error": 4},
+    "chamfer_fillet": {"worker_s_per_cell": 9.336, "n": 40, "ok": 34, "timeout": 3, "error": 3},
+    "complex": {"worker_s_per_cell": 13.241, "n": 40, "ok": 29, "timeout": 5, "error": 6},
+    "imported": {"worker_s_per_cell": 25.579, "n": 40, "ok": 17, "timeout": 14, "error": 9}
+  }
+}

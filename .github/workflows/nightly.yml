@@ -21,8 +21,115 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
       - run: uv sync --locked
       - run: scripts/check.sh
       - run: uv run --locked pytest harness/tests --slow -q
+
+  standard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - category: planar
+            index: 0
+            count: 1
+          - category: curved
+            index: 0
+            count: 1
+          - category: chamfer_fillet
+            index: 0
+            count: 1
+          - category: complex
+            index: 0
+            count: 2
+          - category: complex
+            index: 1
+            count: 2
+          - category: imported
+            index: 0
+            count: 3
+          - category: imported
+            index: 1
+            count: 3
+          - category: imported
+            index: 2
+            count: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Restore dataset cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/unmesh/datasets
+          key: datasets-${{ hashFiles('corpus/v0.json') }}
+          restore-keys: |
+            datasets-
+      - name: Fetch imported-tier datasets
+        env:
+          UV_LOCKED: "1"
+        run: uv run scripts/fetch-datasets --manifest corpus/v0.json
+      - name: Run standard grid shard
+        env:
+          UV_LOCKED: "1"
+        run: |
+          out="$RUNNER_TEMP/nightly/${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}"
+          uv run unmesh-harness run --converter unmesh --grid standard \
+            --category "${{ matrix.category }}" \
+            --shard "${{ matrix.index }}/${{ matrix.count }}" \
+            --out "$out"
+          mv "$out/standard.jsonl" \
+            "$out/standard-${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}.jsonl"
+      - name: Upload shard results
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-standard-${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}
+          path: ${{ runner.temp }}/nightly/${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}/standard-${{ matrix.category }}-${{ matrix.index }}-of-${{ matrix.count }}.jsonl
+          retention-days: 30
+
+  report:
+    if: always()
+    needs: standard
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Download shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-standard-*
+          merge-multiple: true
+          path: merged
+      - name: Build HTML report
+        env:
+          UV_LOCKED: "1"
+        run: |
+          uv run unmesh-harness report merged --grid standard \
+            --expect-plan harness/grids/shards_standard.json \
+            -o merged/report.html
+      - name: Upload report and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: |
+            merged/report.html
+            merged/standard-*.jsonl
+          retention-days: 30

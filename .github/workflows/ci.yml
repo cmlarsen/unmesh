@@ -57,16 +57,27 @@ jobs:
           name: smoke-results-${{ matrix.os }}
           path: ${{ runner.temp }}/smoke/smoke.jsonl
           if-no-files-found: ignore
+      - name: Cache Rust target for the main-tree compare build
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cargo-target-main
+          key: compare-target-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'crates/**/Cargo.toml', 'crates/**/*.rs') }}
+          restore-keys: |
+            compare-target-${{ matrix.os }}-
       - name: Compare against main baseline
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target-main
         run: |
           main_tree="$RUNNER_TEMP/unmesh-main"
           base="$RUNNER_TEMP/baseline"
           mkdir -p "$base"
           git fetch origin main --depth 1
+          git worktree remove --force "$main_tree" 2>/dev/null || true
+          rm -rf "$main_tree"
           git worktree add --detach "$main_tree" FETCH_HEAD
           uv run --locked scripts/ci-baseline-plan \
             --repo "$GITHUB_REPOSITORY" \
@@ -74,8 +85,13 @@ jobs:
             --artifact "smoke-results-${{ matrix.os }}" \
             --out "$base/baseline.jsonl" \
             --main-tree "$main_tree"
-          if [ ! -s "$base/baseline.jsonl" ]; then
+          if [ ! -e "$base/baseline.jsonl" ]; then
+            echo "no baseline artifact (gate skipped upstream); nothing to compare"
             exit 0
+          fi
+          if [ ! -s "$base/baseline.jsonl" ]; then
+            echo "::error::baseline artifact is empty; failing instead of silently passing"
+            exit 1
           fi
           if uv run --project "$main_tree" --locked unmesh-harness compare \
             "$base/baseline.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then

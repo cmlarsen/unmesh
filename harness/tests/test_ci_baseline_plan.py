@@ -108,6 +108,27 @@ def test_untrusted_base_falls_back_to_trusted_latest(module):
     assert (d.action, d.run_id) == ("use", 12)
 
 
+def test_validate_baseline_rejects_empty_or_missing(tmp_path, module):
+    missing = tmp_path / "missing.jsonl"
+    with pytest.raises(ValueError, match="missing|unreadable|empty"):
+        module.validate_baseline(missing)
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    with pytest.raises(ValueError, match="empty"):
+        module.validate_baseline(empty)
+    blank = tmp_path / "blank.jsonl"
+    blank.write_text("  \n\n")
+    with pytest.raises(ValueError, match="empty"):
+        module.validate_baseline(blank)
+    garbage = tmp_path / "garbage.jsonl"
+    garbage.write_text("not json\n")
+    with pytest.raises(ValueError, match="no JSON records"):
+        module.validate_baseline(garbage)
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"part": "box", "status": "ok"}\n')
+    module.validate_baseline(good)
+
+
 def test_main_entrypoint_bootstraps_without_touching_gh(tmp_path, monkeypatch, capsys):
     module = load_module("ci_baseline_bootstrap")
 

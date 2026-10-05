@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 
@@ -32,12 +33,49 @@ def _finish(records: list[dict], gate_enabled: bool, grid, converters, sha) -> i
     return 0
 
 
+def select_run_entries(grid, category: list[str] | None, shard: str | None):
+    if category:
+        wanted = set(category)
+        entries = [e for e in grid.entries if e["strata"].get("category") in wanted]
+        if not entries:
+            raise ValueError(f"--category {sorted(wanted)} selects no parts")
+        grid = dataclasses.replace(grid, entries=entries)
+    if shard is not None:
+        try:
+            index, _, count = shard.partition("/")
+            index, count = int(index), int(count)
+        except ValueError:
+            raise ValueError(f"--shard must look like 0/3, got {shard!r}") from None
+        if not 0 <= index < count or count < 1:
+            raise ValueError(f"--shard must look like 0/3, got {shard!r}")
+        from .runner.shards import assign_shard, cells_per_part
+
+        picked = assign_shard(grid.entries, index, count, cells_per_part(grid))
+        grid = dataclasses.replace(grid, entries=picked)
+    return grid
+
+
 def _run(args) -> int:
     from .runner import load_grid, run_grid
 
     converters = [c for arg in args.converter for c in arg.split(",")]
     grid = load_grid(args.grid)
-    summary = run_grid(grid, converters, args.out, args.jobs, timeout=args.timeout)
+    try:
+        grid = select_run_entries(grid, args.category, args.shard)
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
+    try:
+        summary = run_grid(
+            grid, converters, args.out, args.jobs, timeout=args.timeout, hidden=args.hidden
+        )
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
+    if args.hidden:
+        print(f"hidden run: {summary.ran} cells aggregated (no per-part data written)")
+        print(f"results: {summary.results_path}")
+        return 0
     print(f"{summary.ran} ran, {summary.skipped} skipped, {summary.seconds:.1f} s")
     print(f"results: {summary.results_path}")
     return _finish(summary.records, args.gate, grid, converters, summary.sha)
@@ -47,11 +85,89 @@ def _report(args) -> int:
     from .runner import load_grid
     from .runner.results import latest, read_results
 
-    all_records = read_results(args.results)
-    sha = args.git_sha or (all_records[-1]["git_sha"] if all_records else "")
+    target = args.results
+    if target.is_dir():
+        if args.expect_plan is not None:
+            missing = _missing_shards(target, args.expect_plan)
+            if missing:
+                print(f"PARTIAL: missing shard results: {', '.join(missing)}")
+                return 2
+        all_records = []
+        for path in sorted(target.glob("*.jsonl")):
+            all_records.extend(read_results(path))
+        cache = target / "cache"
+    else:
+        all_records = read_results(target)
+        cache = target.parent / "cache"
+    if not all_records:
+        print("error: no records found")
+        return 2
+    shas = sorted({r.get("git_sha", "") for r in all_records})
+    if args.git_sha is not None:
+        if args.git_sha not in shas:
+            print(f"error: no records carry git sha {args.git_sha!r} (found: {shas})")
+            return 2
+        sha = args.git_sha
+    elif len(shas) != 1:
+        print(f"error: records carry {len(shas)} git shas {shas}; refusing to mix commits")
+        return 2
+    else:
+        sha = shas[0]
     records = list(latest(all_records, sha).values())
     converters = sorted({r["converter"] for r in records})
-    return _finish(records, args.gate, load_grid(args.grid), converters, sha)
+    grid = load_grid(args.grid)
+    if args.output is not None:
+        from .runner.grid import steps_for
+        from .runner.report import build_html, viewer_key, viewer_payload, worst_parts
+
+        _ensure_viewer_cache(grid, records, cache)
+        viewers = {}
+        for record in worst_parts(records):
+            try:
+                spec = grid.row(record["operator"], float(record["severity"]))
+                steps = [(name, float(sev)) for name, sev in steps_for(spec)]
+            except (KeyError, ValueError, TypeError):
+                continue
+            try:
+                payload = viewer_payload(record["part"], steps, record["seed"], cache)
+            except Exception:
+                continue
+            if payload is not None:
+                viewers[viewer_key(record)] = payload
+        args.output.write_text(build_html(records, grid.name, viewers))
+        print(f"wrote {args.output} ({args.output.stat().st_size} bytes)")
+        return 0
+    return _finish(records, args.gate, grid, converters, sha)
+
+
+def _missing_shards(target, plan_path) -> list[str]:
+    expected = json.loads(Path(plan_path).read_text())["shards"]
+    have = {p.stem for p in target.glob("*.jsonl")}
+    return [name for name in expected if name not in have]
+
+
+def _ensure_viewer_cache(grid, records, cache) -> None:
+    from .runner.execute import prep_part
+    from .runner.report import worst_parts
+
+    entries = {e["id"]: e for e in grid.entries}
+    cache.mkdir(parents=True, exist_ok=True)
+    for record in worst_parts(records):
+        part = record["part"]
+        if part not in entries or (cache / f"{part}.labeled.npz").is_file():
+            continue
+        try:
+            prep_part(
+                {
+                    "entry": entries[part],
+                    "cache": str(cache),
+                    "need_truth": False,
+                    "input_deflection": grid.input_deflection,
+                    "truth_deflection": grid.truth_deflection,
+                }
+            )
+        except Exception as e:
+            print(f"note: skipping viewer for {part}: {type(e).__name__}: {e}")
 
 
 def _compare(args) -> int:
@@ -90,12 +206,45 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--jobs", type=int, default=None)
     run.add_argument("--timeout", type=float, default=None)
     run.add_argument("--gate", action="store_true", help="exit 1 on any gate violation")
+    run.add_argument(
+        "--category",
+        action="append",
+        default=None,
+        help="run only parts whose strata category is listed (repeatable; "
+        "used to split the nightly grid into a per-category matrix)",
+    )
+    run.add_argument(
+        "--shard",
+        default=None,
+        help="run every COUNT-th part starting at INDEX, e.g. 0/3 "
+        "(deterministic by part id; used to split large nightly categories)",
+    )
+    run.add_argument(
+        "--hidden",
+        action="store_true",
+        help="hidden-seed mode: seeds come from UNMESH_HIDDEN_SEEDS and only "
+        "aggregate metrics per operator family are written (no per-part data)",
+    )
 
     report = sub.add_parser("report", help="summarize a results file")
     report.add_argument("results", type=Path)
     report.add_argument("--git-sha", default=None)
     report.add_argument("--grid", default="smoke")
     report.add_argument("--gate", action="store_true")
+    report.add_argument(
+        "--expect-plan",
+        type=Path,
+        default=None,
+        help="JSON file with a 'shards' list of expected <grid>-<category>-<i>-of-<n> "
+        "stems; when reporting on a directory, fail listing any missing shard",
+    )
+    report.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="write a self-contained HTML report instead of the text table",
+    )
 
     compare = sub.add_parser("compare", help="compare two results files with noise bands")
     compare.add_argument("run_a", type=Path)

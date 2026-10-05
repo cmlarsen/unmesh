@@ -61,10 +61,11 @@ scripts/check.sh
   one with a warning), verified to be a push to `main` of this repo and not a fork. While
   origin/main has no compare module the gate skips with a warning; a missing baseline
   artifact for an existing main run fails the job. No main run at all skips compare with
-  a warning. Compare and check-waiver run from a worktree of origin/main via
-  `uv run --project`, never from PR code — but the step that decides that is the PR's own
-  ci.yml, so a PR can edit or neuter its own gate (including fabricating the results it
-  compares). Likewise agents share the owner's credentials, so anything acting with an
+  a warning.   Compare and check-waiver run from a worktree of origin/main via
+  `uv run --project`, never from PR code — but the baseline-picking script
+  (`scripts/ci-baseline-plan`) itself runs from PR code, as does the step that decides
+  all of this (the PR's own ci.yml), so a PR can edit or neuter its own gate
+  (including fabricating the results it compares). Likewise agents share the owner's credentials, so anything acting with an
   approver's credentials can label and comment a waiver. These are residual risks until the
   gate moves to a `workflow_run` workflow on main that never executes PR code and agents
   get their own identity.

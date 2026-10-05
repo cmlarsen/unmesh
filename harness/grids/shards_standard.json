@@ -1,0 +1,23 @@
+{
+ "grid": "standard",
+ "grid_hash": "6d32ed5b1125",
+ "workers": 4,
+ "max_shard_s": 5400,
+ "counts": {
+  "chamfer_fillet": 1,
+  "complex": 2,
+  "curved": 1,
+  "imported": 3,
+  "planar": 1
+ },
+ "shards": [
+  "standard-chamfer_fillet-0-of-1",
+  "standard-complex-0-of-2",
+  "standard-complex-1-of-2",
+  "standard-curved-0-of-1",
+  "standard-imported-0-of-3",
+  "standard-imported-1-of-3",
+  "standard-imported-2-of-3",
+  "standard-planar-0-of-1"
+ ]
+}
