@@ -818,6 +818,99 @@ def _split_pass(
     return V, F2, np.concatenate(labels), len(edges)
 
 
+def _stars(
+    verts: np.ndarray, starts: np.ndarray, vcounts: np.ndarray, tri_of: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    cnt = vcounts[verts]
+    row = np.repeat(np.arange(len(verts)), cnt)
+    offset = np.arange(len(row)) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    return row, tri_of[np.repeat(starts[verts], cnt) + offset]
+
+
+def _first_independent(n: int, row: np.ndarray, res: np.ndarray, n_res: int, valid) -> np.ndarray:
+    chosen = np.zeros(n, dtype=bool)
+    taken = np.zeros(n_res, dtype=bool)
+    while len(row):
+        low = np.full(n_res, n, dtype=np.int64)
+        np.minimum.at(low, res, row)
+        head = np.flatnonzero(np.r_[True, row[1:] != row[:-1]])
+        lowest = np.logical_and.reduceat(low[res] == row, head)
+        win = row[head[lowest]]
+        good = valid(win)
+        chosen[win[good]] = True
+        taken[res[np.isin(row, win[good])]] = True
+        done = np.zeros(n, dtype=bool)
+        done[win] = True
+        done[row[head[np.logical_or.reduceat(taken[res], head)]]] = True
+        keep = ~done[row]
+        row, res = row[keep], res[keep]
+    return chosen
+
+
+class _CollapseCheck:
+    def __init__(self, V, F, L, proj, ab, r0, r1, targets, free, keys):
+        self.V, self.F, self.L, self.proj = V, F, L, proj
+        self.ab, self.r0, self.r1 = ab, r0, r1
+        self.targets, self.free, self.keys = targets, free, keys
+        self.starts, self.vcounts, self.tri_of = _vertex_tri_map(F, len(V))
+
+    def __call__(self, idx: np.ndarray) -> np.ndarray:
+        V, F, L, proj = self.V, self.F, self.L, self.proj
+        n = len(idx)
+        a, b = self.ab[idx, 0], self.ab[idx, 1]
+        r0, r1 = self.r0[idx], self.r1[idx]
+        free = np.nonzero(self.free[idx])[0]
+        if len(free):
+            self.targets[idx[free]] = proj(
+                self.targets[idx[free]], self.ab[idx[free]], self.keys, require_all=False
+            )
+        targets = self.targets[idx]
+        both = np.concatenate([F[r0], F[r1]], axis=1)
+        other = (both != a[:, None]) & (both != b[:, None])
+        ok = (r0 >= 0) & (other.sum(axis=1) == 2)
+        first = np.argsort(~other, axis=1, kind="stable")[:, :2]
+        cd = np.take_along_axis(both, first, axis=1)
+        a_row, a_tri = _stars(a, self.starts, self.vcounts, self.tri_of)
+        b_row, b_tri = _stars(b, self.starts, self.vcounts, self.tri_of)
+        has_b = (F[a_tri] == b[a_row, None]).any(axis=1)
+        shared = np.unique(a_row[has_b] * len(F) + a_tri[has_b]) // len(F)
+        ok &= np.bincount(shared, minlength=n) == 1 + (r0 != r1)
+        ring_a = np.unique(np.repeat(a_row, 3) * len(V) + F[a_tri].ravel())
+        ring_a = ring_a[ring_a % len(V) != a[ring_a // len(V)]]
+        ring_b = np.unique(np.repeat(b_row, 3) * len(V) + F[b_tri].ravel())
+        ring_b = ring_b[ring_b % len(V) != b[ring_b // len(V)]]
+        common = np.intersect1d(ring_a, ring_b, assume_unique=True) // len(V)
+        ok &= np.bincount(common, minlength=n) == 1 + (cd[:, 0] != cd[:, 1])
+        key = np.unique(np.concatenate([a_row, b_row]) * len(F) + np.concatenate([a_tri, b_tri]))
+        row, tri = key // len(F), key % len(F)
+        old_rows = F[tri]
+        hit_a = old_rows == a[row, None]
+        hit_b = old_rows == b[row, None]
+        use = ~(hit_a.any(axis=1) & hit_b.any(axis=1))
+        row, tri, old_rows = row[use], tri[use], old_rows[use]
+        old = V[old_rows]
+        moved = (hit_a | hit_b)[use]
+        new = np.where(moved[:, :, None], targets[row][:, None, :], old)
+        n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
+        n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
+        S = L[tri]
+        bad = (np.linalg.norm(n_new, axis=1) <= 1e-14) | ((n_old * n_new).sum(axis=1) <= 0.0)
+        bad |= (n_new * proj.normals[S]).sum(axis=1) <= 0.0
+        ok &= np.bincount(row, weights=bad, minlength=n) == 0
+        curved = np.bincount(row, weights=~proj.planar[proj.labels[S]], minlength=n) > 0
+        probe = np.nonzero((ok & curved)[row])[0]
+        if len(probe):
+            want = proj.labels[S[probe]]
+
+            def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
+                return proj.labels[flat] == want[rows]
+
+            local = proj.search(new[probe].mean(axis=1), accept)[1]
+            away = (n_new[probe] * proj.normals[local]).sum(axis=1) <= 0.0
+            ok &= np.bincount(row[probe], weights=away, minlength=n) == 0
+        return ok
+
+
 def _collapse_pass(
     V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
@@ -846,71 +939,31 @@ def _collapse_pass(
         both = (fa > 0) & (fb > 0)
         allowed = ~both | (flag[cand] & ((fa == 2) | (fb == 2)))
         cand, fa, fb = cand[allowed], fa[allowed], fb[allowed]
-        targets = (V[uniq[cand, 0]] + V[uniq[cand, 1]]) / 2.0
+        ab = uniq[cand]
+        targets = (V[ab[:, 0]] + V[ab[:, 1]]) / 2.0
         free = (fa == 0) & (fb == 0)
-        if free.any():
-            targets[free] = proj(
-                targets[free], uniq[cand[free]], proj.incidence(F, L), require_all=False
-            )
         keep_a = ~free & ((fb == 0) | ((fa > 0) & (fa != 2)) | ((fa == 2) & (fb == 2)))
         keep_b = ~free & ~keep_a
-        targets[keep_a] = V[uniq[cand[keep_a], 0]]
-        targets[keep_b] = V[uniq[cand[keep_b], 1]]
+        targets[keep_a] = V[ab[keep_a, 0]]
+        targets[keep_b] = V[ab[keep_b, 1]]
         t0, t1 = _manifold_owners(len(F), counts, inverse)
-        starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
-        touch = np.zeros(len(F), dtype=bool)
-        remap = np.arange(len(V), dtype=np.int64)
-        new_pts: list[np.ndarray] = []
-        accepted = 0
-        for slot, e in enumerate(cand.tolist()):
-            a, b = int(uniq[e, 0]), int(uniq[e, 1])
-            if remap[a] != a or remap[b] != b:
-                continue
-            r0, r1 = int(t0[e]), int(t1[e])
-            if r0 < 0 or touch[r0] or touch[r1]:
-                continue
-            opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
-            if len(opp) != 2:
-                continue
-            ta = tri_of[starts[a] : starts[a] + vcounts[a]]
-            tb = tri_of[starts[b] : starts[b] + vcounts[b]]
-            if set(ta.tolist()) & set(tb.tolist()) != {r0, r1}:
-                continue
-            na = set(np.unique(F[ta]).tolist()) - {a}
-            nb = set(np.unique(F[tb]).tolist()) - {b}
-            if na & nb != set(opp):
-                continue
-            aff = np.unique(np.concatenate([ta, tb]))
-            aff = aff[~((F[aff] == a).any(axis=1) & (F[aff] == b).any(axis=1))]
-            if touch[aff].any():
-                continue
-            w = targets[slot]
-            old = V[F[aff]]
-            new = old.copy()
-            new[F[aff] == a] = w
-            new[F[aff] == b] = w
-            n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
-            n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
-            if (np.linalg.norm(n_new, axis=1) <= 1e-14).any():
-                continue
-            if ((n_old * n_new).sum(axis=1) <= 0.0).any():
-                continue
-            if not proj.facing(new, L[aff]).all():
-                continue
-            nv = len(V) + len(new_pts)
-            new_pts.append(w)
-            remap[a] = nv
-            remap[b] = nv
-            touch[aff] = True
-            accepted += 1
-        if accepted == 0:
+        check = _CollapseCheck(
+            V, F, L, proj, ab, t0[cand], t1[cand], targets, free, proj.incidence(F, L)
+        )
+        row, res = _stars(ab.ravel(), check.starts, check.vcounts, check.tri_of)
+        chosen = _first_independent(len(cand), row // 2, res, len(F), check)
+        if not chosen.any():
             break
-        V = np.concatenate([V, np.array(new_pts)])
+        win = np.nonzero(chosen)[0]
+        remap = np.arange(len(V), dtype=np.int64)
+        remap[ab[win, 0]] = len(V) + np.arange(len(win))
+        remap[ab[win, 1]] = len(V) + np.arange(len(win))
+        V = np.concatenate([V, check.targets[win]])
         F = remap[F]
         alive = ~((F[:, 0] == F[:, 1]) | (F[:, 1] == F[:, 2]) | (F[:, 2] == F[:, 0]))
         F = F[alive]
         L = L[alive]
-        collapses += accepted
+        collapses += len(win)
     return V, F, L, collapses
 
 
