@@ -42,27 +42,32 @@ scripts/check.sh
   deduplicates each file to its latest run (`results.latest()` semantics: keep the last
   record per key, filtered to the file's own git sha and grid hash), then aggregates each
   (part, operator, severity) cell over seeds. A cell present in A but missing in B is a
-  REGRESSION; an empty B, or a B with no records for the converter, is an error (exit 2).
+  REGRESSION; an empty A or B, or a file with no records for the converter, is an error (exit 2).
   B's seed set must cover A's per cell. f1 and the deviation metrics flag a
   REGRESSION/IMPROVEMENT when run B moves by more than max(2σ of run A, floor) (floors:
   F1 0.01, deviation 1 µm); a metric sampled in A but not in B is a REGRESSION.
   `valid`/`fallback`/`under_report` have no noise band: any per-seed good→bad move is a
   REGRESSION. It exits 1 on any regression. A regression is waived only by
   the `waiver:approved` label: `uv run scripts/check-waiver --repo o/r --pr N --run-a A --run-b B`
-  accepts it only if the labeling actor's login is in `.github/waiver-approvers` as read from
-  main, the labeling event is newer than the PR head commit's committer date, the label is
-  still present, and a comment by the same actor, also newer than the head commit, names every
-  regressed cell (`waive: <part> <operator> <severity>` lines); only named cells are waived.
-  Events and comments are read through the paginated GitHub API. While agents share the
-  owner's credentials this check is NOT agent-proof (residual risk): anything acting with an
-  approver's credentials can waive. The planned identity split gives agents their own
-  credentials so the allowlist and timing rules bind them.
-  CI uploads each main push's smoke JSONL as the `smoke-baseline-<os>` artifact. PR runs pin
-  `harness/grids/smoke.json` to main's copy, then compare the PR results against the baseline
-  from the run for the PR base sha (falling back to the latest successful main run with a
-  warning). Compare and check-waiver always execute from a worktree of origin/main, never
-  from PR code. No main run at all skips compare with a warning; a main run whose artifact
-  cannot be downloaded fails the job.
+  accepts it only if the allowlist in `.github/waiver-approvers` as read from
+  main lists the acting login, the most recent `labeled`/`unlabeled` event for the label
+  is a `labeled` by that login, and a comment by the same login names every regressed cell
+  (`waive: <part> <operator> <severity>` lines) and confirms the current head with a
+  `sha: <head sha>` line (exact match); only named cells are waived.
+  Events and comments are read through the paginated GitHub API.
+  CI uploads each run's smoke JSONL as the `smoke-results-<os>` artifact. PR runs pin
+  `harness/grids/smoke.json` to main's copy, then `scripts/ci-baseline-plan` picks the
+  baseline: the successful push-to-main run for the PR base sha (falling back to the latest
+  one with a warning), verified to be a push to `main` of this repo and not a fork. While
+  origin/main has no compare module the gate skips with a warning; a missing baseline
+  artifact for an existing main run fails the job. No main run at all skips compare with
+  a warning. Compare and check-waiver run from a worktree of origin/main via
+  `uv run --project`, never from PR code — but the step that decides that is the PR's own
+  ci.yml, so a PR can edit or neuter its own gate (including fabricating the results it
+  compares). Likewise agents share the owner's credentials, so anything acting with an
+  approver's credentials can label and comment a waiver. These are residual risks until the
+  gate moves to a `workflow_run` workflow on main that never executes PR code and agents
+  get their own identity.
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions
