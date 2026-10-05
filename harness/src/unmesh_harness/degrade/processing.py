@@ -28,6 +28,7 @@ the confidence of the source triangle under its centroid.
 
 from __future__ import annotations
 
+import functools
 import heapq
 
 import numpy as np
@@ -50,11 +51,14 @@ def bbox_diagonal(tris: np.ndarray) -> float:
     return float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
 
 
+@functools.cache
 def _lattice(n: int) -> np.ndarray:
-    return np.array(
+    out = np.array(
         [(i / n, j / n, (n - i - j) / n) for i in range(n + 1) for j in range(n + 1 - i)],
         dtype=np.float64,
     )
+    out.flags.writeable = False
+    return out
 
 
 def sample_source(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -144,10 +148,15 @@ def _exact_votes(
         idx = _canonical_knn(tree, flat[todo], use)
         cand = owner[idx]
         rows = np.repeat(todo, use)
-        raw = _point_tri_dist2(
-            flat[rows], src[cand.ravel(), 0], src[cand.ravel(), 1], src[cand.ravel(), 2]
-        )
-        raw = raw.reshape(len(todo), use)
+        order = np.argsort(cand, axis=1, kind="stable")
+        ranked = np.take_along_axis(cand, order, axis=1)
+        first = np.ones(cand.shape, dtype=bool)
+        first[:, 1:] = ranked[:, 1:] != ranked[:, :-1]
+        r, c = np.nonzero(first)
+        tri = ranked[r, c]
+        dist = _point_tri_dist2(flat[todo[r]], src[tri, 0], src[tri, 1], src[tri, 2])
+        raw = np.empty(cand.shape)
+        np.put_along_axis(raw, order, dist[np.cumsum(first).reshape(cand.shape) - 1], axis=1)
         d2 = raw
         if src_n is not None:
             facing = (src_n[cand.ravel()] * normals[rows]).sum(axis=1) > 0.0
@@ -174,11 +183,12 @@ def _exact_votes(
 
 def _canonical_knn(tree: cKDTree, points: np.ndarray, k: int) -> np.ndarray:
     wide = min(2 * k, len(tree.data))
-    dist, idx = tree.query(points, k=wide)
-    dist = np.asarray(dist).reshape(len(points), wide).astype(np.float32)
-    idx = np.asarray(idx).reshape(len(points), wide)
-    order = np.lexsort((idx, dist), axis=1)
-    return np.take_along_axis(idx, order, axis=1)[:, :k]
+    dist, idx = tree.query(points, k=wide, workers=-1 if len(points) >= 512 else 1)
+    dist = np.asarray(dist, dtype=np.float32).reshape(len(points), wide)
+    key = dist.view(np.int32).astype(np.int64) << 32
+    key |= np.asarray(idx, dtype=np.int64).reshape(len(points), wide)
+    key.sort(axis=1)
+    return key[:, :k] & 0xFFFFFFFF
 
 
 def confidence_summary(conf) -> dict:
@@ -191,7 +201,7 @@ def confidence_summary(conf) -> dict:
     }
 
 
-def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
+def transfer_labels(mesh, src_tris, src_ids, src_conf=None, samples=None) -> dict:
     src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3)
     out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
     src_ids = np.asarray(src_ids)
@@ -202,8 +212,10 @@ def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
         return {"mean_confidence": 1.0, "fraction_below_0_9": 0.0}
     diagonal = bbox_diagonal(src)
     tol2 = (diagonal * _EXACT_TOL_REL) ** 2
-    pts, owner = sample_source(src)
-    tree = cKDTree(pts)
+    if samples is None:
+        pts, owner = sample_source(src)
+        samples = (pts, owner, cKDTree(pts))
+    _, owner, tree = samples
     centroid = out.mean(axis=1)
     mids = np.stack(
         [
@@ -286,10 +298,7 @@ def carry_confidence(
         if len(src) and known.any():
             proj = _Projector(src, labels)
 
-            def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
-                return labels[flat] == want[rows]
-
-            tri = proj.search(out[fresh].mean(axis=1), accept)[1]
+            tri = proj.nearest(out[fresh].mean(axis=1), want)
             near = np.where(labels[tri] == want, conf[tri], 0.0)
         else:
             near = np.zeros(len(fresh))
@@ -542,27 +551,22 @@ def _compact(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return V[used], remap[F]
 
 
-def _unique_edges(F: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _edges(F: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     raw = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
-    key = np.sort(raw, axis=1)
-    uniq, _, inverse, counts = np.unique(
-        key, axis=0, return_index=True, return_inverse=True, return_counts=True
-    )
-    return uniq, inverse, counts
-
-
-def _manifold_owners(
-    n_tris: int, counts: np.ndarray, inverse: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    order = np.argsort(inverse, kind="stable")
-    starts = np.cumsum(counts) - counts
-    tri_of = np.tile(np.arange(n_tris), 3)[order]
+    width = int(F.max()) + 1 if len(F) else 1
+    key = raw.min(axis=1) * width + raw.max(axis=1)
+    order = np.argsort(key, kind="stable")
+    ordered = key[order]
+    starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]])
+    counts = np.diff(np.r_[starts, len(ordered)])
+    uniq = np.stack([ordered[starts] // width, ordered[starts] % width], axis=1)
+    tri_of = order % len(F)
     t0 = np.full(len(counts), -1, dtype=np.int64)
     t1 = np.full(len(counts), -1, dtype=np.int64)
     pair = np.nonzero(counts == 2)[0]
     t0[pair] = tri_of[starts[pair]]
     t1[pair] = tri_of[starts[pair] + 1]
-    return t0, t1
+    return uniq, counts, t0, t1
 
 
 def _vertex_tri_map(F: np.ndarray, n_verts: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -633,6 +637,7 @@ class _Projector:
         self.pts, self.owner = sample_source(self.src)
         self.tree = cKDTree(self.pts)
         self.tie2 = (bbox_diagonal(self.src) * _EXACT_TOL_REL) ** 2
+        self.memo: dict[bytes, int] = {}
 
     def incidence(self, F: np.ndarray, S: np.ndarray) -> np.ndarray:
         return np.unique(F.ravel() * self.n_labels + np.repeat(self.labels[S], 3))
@@ -642,13 +647,24 @@ class _Projector:
         ok = (n * self.normals[S]).sum(axis=1) > 0.0
         if not ok.all() or self.planar[self.labels[S]].all():
             return ok
-        want = self.labels[S]
-
-        def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
-            return self.labels[flat] == want[rows]
-
-        local = self.search(tris.mean(axis=1), accept)[1]
+        local = self.nearest(tris.mean(axis=1), self.labels[S])
         return ok & ((n * self.normals[local]).sum(axis=1) > 0.0)
+
+    def nearest(self, P: np.ndarray, want: np.ndarray) -> np.ndarray:
+        P = np.ascontiguousarray(P, dtype=np.float64).reshape(-1, 3)
+        rec = np.concatenate([P.view(np.int64), np.asarray(want, dtype=np.int64)[:, None]], axis=1)
+        keys = rec.view(np.dtype((np.void, 32))).ravel().tolist()
+        tri = np.array([self.memo.get(k, -1) for k in keys], dtype=np.int64)
+        miss = np.nonzero(tri < 0)[0]
+        if len(miss):
+            label = want[miss]
+
+            def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
+                return self.labels[flat] == label[rows]
+
+            tri[miss] = self.search(P[miss], accept)[1]
+            self.memo.update(zip([keys[i] for i in miss.tolist()], tri[miss].tolist(), strict=True))
+        return tri
 
     def search(self, P: np.ndarray, accept) -> tuple[np.ndarray, np.ndarray]:
         P = np.asarray(P, dtype=np.float64).reshape(-1, 3)
@@ -659,19 +675,26 @@ class _Projector:
         while len(pending):
             use = min(k, len(self.pts))
             idx = _canonical_knn(self.tree, P[pending], use)
-            cand = self.owner[idx]
-            rows = np.repeat(pending, use)
-            flat = cand.ravel()
+            cand = np.sort(self.owner[idx], axis=1)
+            first = np.ones(cand.shape, dtype=bool)
+            first[:, 1:] = cand[:, 1:] != cand[:, :-1]
+            r, c = np.nonzero(first)
+            rows = pending[r]
+            flat = cand[r, c]
             q = _closest_on_tri(P[rows], self.src[flat, 0], self.src[flat, 1], self.src[flat, 2])
-            d2 = ((P[rows] - q) ** 2).sum(axis=1).reshape(len(pending), use)
+            dist = ((P[rows] - q) ** 2).sum(axis=1)
             if not (use >= len(self.pts) or k >= _PROJECT_KNN_CAP):
-                d2 = np.where(accept(rows, flat).reshape(len(pending), use), d2, np.inf)
+                dist = np.where(accept(rows, flat), dist, np.inf)
+            d2 = np.full(cand.shape, np.inf)
+            d2[r, c] = dist
+            slot = np.zeros(cand.shape, dtype=np.int64)
+            slot[r, c] = np.arange(len(r))
             floor = d2.min(axis=1, keepdims=True)
             tied = d2 <= floor * (1.0 + 1e-9) + self.tie2
             pick = np.where(tied, cand, len(self.src)).argmin(axis=1)
             here = np.arange(len(pending))
             found = np.isfinite(d2[here, pick])
-            out[pending[found]] = q.reshape(len(pending), use, 3)[here, pick][found]
+            out[pending[found]] = q[slot[here, pick][found]]
             tri[pending[found]] = cand[here, pick][found]
             pending = pending[~found]
             k *= 8
@@ -691,14 +714,13 @@ class _Projector:
 
         return self.search(P, accept)[0]
 
-    def rebase(self, V: np.ndarray, F: np.ndarray, S: np.ndarray) -> np.ndarray:
-        want = self.labels[S]
-
-        def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
-            return self.labels[flat] == want[rows]
-
-        tri = self.search(V[F].mean(axis=1), accept)[1]
-        return np.where(self.labels[tri] == want, tri, S)
+    def rebase(self, V: np.ndarray, F: np.ndarray, S: np.ndarray, settled: np.ndarray):
+        todo = np.nonzero(~settled)[0]
+        want = self.labels[S[todo]]
+        tri = self.nearest(V[F[todo]].mean(axis=1), want)
+        S = S.copy()
+        S[todo] = np.where(self.labels[tri] == want, tri, S[todo])
+        return S, np.ones(len(F), dtype=bool)
 
 
 _PROJECT_KNN = 16
@@ -716,8 +738,7 @@ REMESH_FEATURE_DEG = 30.0
 def _features(
     F: np.ndarray, L: np.ndarray, proj: _Projector, n_verts: int, edges=None
 ) -> tuple[np.ndarray, np.ndarray]:
-    uniq, inverse, counts = edges if edges is not None else _unique_edges(F)
-    t0, t1 = _manifold_owners(len(F), counts, inverse)
+    uniq, counts, t0, t1 = edges if edges is not None else _edges(F)
     flag = counts != 2
     pair = np.nonzero(counts == 2)[0]
     s0, s1 = L[t0[pair]], L[t1[pair]]
@@ -729,13 +750,13 @@ def _features(
 
 
 def _split_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
     lengths = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
     long_mask = lengths > limit
     if not long_mask.any():
-        return V, F, L, 0
+        return V, F, L, settled, 0
     edges = np.unique(np.sort(E[long_mask], axis=1), axis=0)
     raw = (V[edges[:, 0]] + V[edges[:, 1]]) / 2.0
     mids = proj(raw, edges, proj.incidence(F, L), require_all=True)
@@ -815,15 +836,121 @@ def _split_pass(
         undo = np.unique(F2[bad])
         undo = undo[undo >= base]
         V[undo] = raw[undo - base]
-    return V, F2, np.concatenate(labels), len(edges)
+    settled = np.concatenate([settled[plain], np.zeros(len(F2) - len(plain), dtype=bool)])
+    return V, F2, np.concatenate(labels), settled, len(edges)
+
+
+def _stars(
+    verts: np.ndarray, starts: np.ndarray, vcounts: np.ndarray, tri_of: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    cnt = vcounts[verts]
+    row = np.repeat(np.arange(len(verts)), cnt)
+    offset = np.arange(len(row)) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    return row, tri_of[np.repeat(starts[verts], cnt) + offset]
+
+
+def _first_independent(n: int, row: np.ndarray, res: np.ndarray, n_res: int, valid) -> np.ndarray:
+    chosen = np.zeros(n, dtype=bool)
+    taken = np.zeros(n_res, dtype=bool)
+    while len(row):
+        low = np.full(n_res, n, dtype=np.int64)
+        np.minimum.at(low, res, row)
+        head = np.flatnonzero(np.r_[True, row[1:] != row[:-1]])
+        win = row[head[np.logical_and.reduceat(low[res] == row, head)]]
+        good = win[valid(win)]
+        chosen[good] = True
+        mark = np.zeros(n, dtype=bool)
+        mark[good] = True
+        taken[res[mark[row]]] = True
+        done = np.zeros(n, dtype=bool)
+        done[win] = True
+        done[row[head[np.logical_or.reduceat(taken[res], head)]]] = True
+        keep = ~done[row]
+        row, res = row[keep], res[keep]
+    return chosen
+
+
+class _CollapseCheck:
+    def __init__(self, V, F, L, proj, ab, r0, r1, targets, free, keys):
+        self.V, self.F, self.L, self.proj = V, F, L, proj
+        self.ab, self.r0, self.r1 = ab, r0, r1
+        self.targets, self.free, self.keys = targets, free, keys
+        self.starts, self.vcounts, self.tri_of = _vertex_tri_map(F, len(V))
+        self.known = np.zeros(len(ab), dtype=bool)
+        self.verdict = np.zeros(len(ab), dtype=bool)
+        self.fresh = np.zeros(len(ab), dtype=bool)
+
+    def __call__(self, idx: np.ndarray) -> np.ndarray:
+        todo = idx[~self.known[idx]]
+        if len(todo):
+            self.verdict[todo] = self.check(todo)
+            self.known[todo] = True
+            self.fresh[todo] = True
+        return self.verdict[idx]
+
+    def check(self, idx: np.ndarray) -> np.ndarray:
+        V, F, L, proj = self.V, self.F, self.L, self.proj
+        n = len(idx)
+        a, b = self.ab[idx, 0], self.ab[idx, 1]
+        r0, r1 = self.r0[idx], self.r1[idx]
+        free = np.nonzero(self.free[idx])[0]
+        if len(free):
+            self.targets[idx[free]] = proj(
+                self.targets[idx[free]], self.ab[idx[free]], self.keys, require_all=False
+            )
+        targets = self.targets[idx]
+        both = np.concatenate([F[r0], F[r1]], axis=1)
+        other = (both != a[:, None]) & (both != b[:, None])
+        ok = (r0 >= 0) & (other.sum(axis=1) == 2)
+        first = np.argsort(~other, axis=1, kind="stable")[:, :2]
+        cd = np.take_along_axis(both, first, axis=1)
+        a_row, a_tri = _stars(a, self.starts, self.vcounts, self.tri_of)
+        b_row, b_tri = _stars(b, self.starts, self.vcounts, self.tri_of)
+        has_b = (F[a_tri] == b[a_row, None]).any(axis=1)
+        shared = np.unique(a_row[has_b] * len(F) + a_tri[has_b]) // len(F)
+        ok &= np.bincount(shared, minlength=n) == 1 + (r0 != r1)
+        ring_a = np.unique(np.repeat(a_row, 3) * len(V) + F[a_tri].ravel())
+        ring_a = ring_a[ring_a % len(V) != a[ring_a // len(V)]]
+        ring_b = np.unique(np.repeat(b_row, 3) * len(V) + F[b_tri].ravel())
+        ring_b = ring_b[ring_b % len(V) != b[ring_b // len(V)]]
+        common = np.intersect1d(ring_a, ring_b, assume_unique=True) // len(V)
+        ok &= np.bincount(common, minlength=n) == 1 + (cd[:, 0] != cd[:, 1])
+        key = np.unique(np.concatenate([a_row, b_row]) * len(F) + np.concatenate([a_tri, b_tri]))
+        row, tri = key // len(F), key % len(F)
+        old_rows = F[tri]
+        hit_a = old_rows == a[row, None]
+        hit_b = old_rows == b[row, None]
+        use = ~(hit_a.any(axis=1) & hit_b.any(axis=1))
+        row, tri, old_rows = row[use], tri[use], old_rows[use]
+        old = V[old_rows]
+        moved = (hit_a | hit_b)[use]
+        new = np.where(moved[:, :, None], targets[row][:, None, :], old)
+        n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
+        n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
+        S = L[tri]
+        bad = (np.linalg.norm(n_new, axis=1) <= 1e-14) | ((n_old * n_new).sum(axis=1) <= 0.0)
+        bad |= (n_new * proj.normals[S]).sum(axis=1) <= 0.0
+        ok &= np.bincount(row, weights=bad, minlength=n) == 0
+        curved = np.bincount(row, weights=~proj.planar[proj.labels[S]], minlength=n) > 0
+        probe = np.nonzero((ok & curved)[row])[0]
+        if len(probe):
+            local = proj.nearest(new[probe].mean(axis=1), proj.labels[S[probe]])
+            away = (n_new[probe] * proj.normals[local]).sum(axis=1) <= 0.0
+            ok &= np.bincount(row[probe], weights=away, minlength=n) == 0
+        return ok
 
 
 def _collapse_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     collapses = 0
-    for _ in range(8):
-        uniq, inverse, counts = _unique_edges(F)
+    memo_key = np.zeros(0, dtype=np.int64)
+    memo_at = np.zeros(0, dtype=np.int64)
+    memo_ok = np.zeros(0, dtype=bool)
+    memo_target = np.zeros((0, 3))
+    dirty = np.full(len(V), -1, dtype=np.int64)
+    for step in range(8):
+        uniq, counts, t0, t1 = _edges(F)
         lengths = np.linalg.norm(V[uniq[:, 0]] - V[uniq[:, 1]], axis=1)
         cand = np.nonzero((lengths < limit) & (counts == 2))[0]
         if len(cand) == 0:
@@ -840,86 +967,65 @@ def _collapse_pass(
             )
         )
         cand = cand[ordered]
-        flag, fcount = _features(F, L, proj, len(V), (uniq, inverse, counts))
+        flag, fcount = _features(F, L, proj, len(V), (uniq, counts, t0, t1))
         fa = fcount[uniq[cand, 0]]
         fb = fcount[uniq[cand, 1]]
         both = (fa > 0) & (fb > 0)
         allowed = ~both | (flag[cand] & ((fa == 2) | (fb == 2)))
         cand, fa, fb = cand[allowed], fa[allowed], fb[allowed]
-        targets = (V[uniq[cand, 0]] + V[uniq[cand, 1]]) / 2.0
+        ab = uniq[cand]
+        targets = (V[ab[:, 0]] + V[ab[:, 1]]) / 2.0
         free = (fa == 0) & (fb == 0)
-        if free.any():
-            targets[free] = proj(
-                targets[free], uniq[cand[free]], proj.incidence(F, L), require_all=False
-            )
         keep_a = ~free & ((fb == 0) | ((fa > 0) & (fa != 2)) | ((fa == 2) & (fb == 2)))
         keep_b = ~free & ~keep_a
-        targets[keep_a] = V[uniq[cand[keep_a], 0]]
-        targets[keep_b] = V[uniq[cand[keep_b], 1]]
-        t0, t1 = _manifold_owners(len(F), counts, inverse)
-        starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
-        touch = np.zeros(len(F), dtype=bool)
-        remap = np.arange(len(V), dtype=np.int64)
-        new_pts: list[np.ndarray] = []
-        accepted = 0
-        for slot, e in enumerate(cand.tolist()):
-            a, b = int(uniq[e, 0]), int(uniq[e, 1])
-            if remap[a] != a or remap[b] != b:
-                continue
-            r0, r1 = int(t0[e]), int(t1[e])
-            if r0 < 0 or touch[r0] or touch[r1]:
-                continue
-            opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
-            if len(opp) != 2:
-                continue
-            ta = tri_of[starts[a] : starts[a] + vcounts[a]]
-            tb = tri_of[starts[b] : starts[b] + vcounts[b]]
-            if set(ta.tolist()) & set(tb.tolist()) != {r0, r1}:
-                continue
-            na = set(np.unique(F[ta]).tolist()) - {a}
-            nb = set(np.unique(F[tb]).tolist()) - {b}
-            if na & nb != set(opp):
-                continue
-            aff = np.unique(np.concatenate([ta, tb]))
-            aff = aff[~((F[aff] == a).any(axis=1) & (F[aff] == b).any(axis=1))]
-            if touch[aff].any():
-                continue
-            w = targets[slot]
-            old = V[F[aff]]
-            new = old.copy()
-            new[F[aff] == a] = w
-            new[F[aff] == b] = w
-            n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
-            n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
-            if (np.linalg.norm(n_new, axis=1) <= 1e-14).any():
-                continue
-            if ((n_old * n_new).sum(axis=1) <= 0.0).any():
-                continue
-            if not proj.facing(new, L[aff]).all():
-                continue
-            nv = len(V) + len(new_pts)
-            new_pts.append(w)
-            remap[a] = nv
-            remap[b] = nv
-            touch[aff] = True
-            accepted += 1
-        if accepted == 0:
+        targets[keep_a] = V[ab[keep_a, 0]]
+        targets[keep_b] = V[ab[keep_b, 1]]
+        check = _CollapseCheck(
+            V, F, L, proj, ab, t0[cand], t1[cand], targets, free, proj.incidence(F, L)
+        )
+        key = (ab[:, 0] << 32) | ab[:, 1]
+        pos = np.clip(np.searchsorted(memo_key, key), 0, max(len(memo_key) - 1, 0))
+        if len(memo_key):
+            hit = (memo_key[pos] == key) & (memo_at[pos] > dirty[ab].max(axis=1))
+            check.known[hit] = True
+            check.verdict[hit] = memo_ok[pos[hit]]
+            check.targets[hit] = memo_target[pos[hit]]
+        row, res = _stars(ab.ravel(), check.starts, check.vcounts, check.tri_of)
+        row //= 2
+        live = ~(check.known & ~check.verdict)[row]
+        chosen = _first_independent(len(cand), row[live], res[live], len(F), check)
+        fresh = np.nonzero(check.fresh)[0]
+        merged = np.concatenate([memo_key, key[fresh]])
+        last = len(merged) - 1 - np.unique(merged[::-1], return_index=True)[1]
+        memo_key = merged[last]
+        memo_at = np.concatenate([memo_at, np.full(len(fresh), step)])[last]
+        memo_ok = np.concatenate([memo_ok, check.verdict[fresh]])[last]
+        memo_target = np.concatenate([memo_target, check.targets[fresh]])[last]
+        if not chosen.any():
             break
-        V = np.concatenate([V, np.array(new_pts)])
+        win = np.nonzero(chosen)[0]
+        dirty[F[res[chosen[row]]]] = step
+        remap = np.arange(len(V), dtype=np.int64)
+        remap[ab[win, 0]] = len(V) + np.arange(len(win))
+        remap[ab[win, 1]] = len(V) + np.arange(len(win))
+        V = np.concatenate([V, check.targets[win]])
+        dirty = np.concatenate([dirty, np.full(len(win), step)])
+        settled = settled & (remap[F] == F).all(axis=1)
         F = remap[F]
         alive = ~((F[:, 0] == F[:, 1]) | (F[:, 1] == F[:, 2]) | (F[:, 2] == F[:, 0]))
         F = F[alive]
         L = L[alive]
-        collapses += accepted
-    return V, F, L, collapses
+        settled = settled[alive]
+        collapses += len(win)
+    return V, F, L, settled, collapses
 
 
 def _flip_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     flips = 0
     for _ in range(3):
-        uniq, inverse, counts = _unique_edges(F)
+        uniq, counts, t0, t1 = _edges(F)
         cand = np.nonzero(counts == 2)[0]
         if len(cand) == 0:
             break
@@ -934,70 +1040,69 @@ def _flip_pass(
             )
         )
         cand = cand[ordered]
-        t0, t1 = _manifold_owners(len(F), counts, inverse)
-        val = np.bincount(F.ravel(), minlength=len(V))
-        starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
-        touch = np.zeros(len(F), dtype=bool)
+        a, b = uniq[cand, 0], uniq[cand, 1]
+        r0, r1 = t0[cand], t1[cand]
+        both = np.concatenate([F[r0], F[r1]], axis=1)
+        other = (both != a[:, None]) & (both != b[:, None])
+        cd = np.take_along_axis(both, np.argsort(~other, axis=1, kind="stable")[:, :2], axis=1)
+        c, d = cd[:, 0], cd[:, 1]
+        ok = (r0 >= 0) & (proj.labels[L[r0]] == proj.labels[L[r1]]) & (other.sum(axis=1) == 2)
+        ekey = uniq[:, 0] * len(V) + uniq[:, 1]
+        ok &= (c != d) & ~_has_key(ekey, np.minimum(c, d) * len(V) + np.maximum(c, d))
+        row0 = np.where(F[r0] == b[:, None], d[:, None], F[r0])
+        row1 = np.where(F[r1] == a[:, None], c[:, None], F[r1])
+
+        def normal(rows: np.ndarray) -> np.ndarray:
+            return np.cross(V[rows[:, 1]] - V[rows[:, 0]], V[rows[:, 2]] - V[rows[:, 0]])
+
+        n_old0, n_old1 = normal(F[r0]), normal(F[r1])
+        n_new0, n_new1 = normal(row0), normal(row1)
+        ok &= np.minimum(np.linalg.norm(n_new0, axis=1), np.linalg.norm(n_new1, axis=1)) > 1e-14
+        ok &= ((n_new0 * n_old0).sum(axis=1) > 0.0) & ((n_new1 * n_old1).sum(axis=1) > 0.0)
+        ok &= (n_new0 * proj.normals[L[r0]]).sum(axis=1) > 0.0
+        ok &= (n_new1 * proj.normals[L[r1]]).sum(axis=1) > 0.0
+        live = np.nonzero(ok)[0]
+        val = np.bincount(F.ravel(), minlength=len(V)).tolist()
+        touch = bytearray(len(F))
         made: set[tuple[int, int]] = set()
-        swap: list[tuple[int, tuple[int, int, int], tuple[int, tuple[int, int, int]]]] = []
-        for e in cand.tolist():
-            a, b = int(uniq[e, 0]), int(uniq[e, 1])
-            r0, r1 = int(t0[e]), int(t1[e])
-            if r0 < 0 or touch[r0] or touch[r1] or proj.labels[L[r0]] != proj.labels[L[r1]]:
+        swap: list[int] = []
+        for i, va, vb, vc, vd, s0, s1 in zip(
+            live.tolist(),
+            a[live].tolist(),
+            b[live].tolist(),
+            c[live].tolist(),
+            d[live].tolist(),
+            r0[live].tolist(),
+            r1[live].tolist(),
+            strict=True,
+        ):
+            if touch[s0] or touch[s1]:
                 continue
-            opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
-            if len(opp) != 2:
+            pair = (min(vc, vd), max(vc, vd))
+            if pair in made:
                 continue
-            c, d = opp
-            if (min(c, d), max(c, d)) in made:
-                continue
-            if d in set(F[tri_of[starts[c] : starts[c] + vcounts[c]]].ravel().tolist()):
-                continue
-            before = (
-                abs(int(val[a]) - 6)
-                + abs(int(val[b]) - 6)
-                + abs(int(val[c]) - 6)
-                + abs(int(val[d]) - 6)
-            )
-            after = (
-                abs(int(val[a]) - 7)
-                + abs(int(val[b]) - 7)
-                + abs(int(val[c]) - 5)
-                + abs(int(val[d]) - 5)
-            )
+            before = abs(val[va] - 6) + abs(val[vb] - 6) + abs(val[vc] - 6) + abs(val[vd] - 6)
+            after = abs(val[va] - 7) + abs(val[vb] - 7) + abs(val[vc] - 5) + abs(val[vd] - 5)
             if after >= before:
                 continue
-            n_old0 = np.cross(V[F[r0, 1]] - V[F[r0, 0]], V[F[r0, 2]] - V[F[r0, 0]])
-            n_old1 = np.cross(V[F[r1, 1]] - V[F[r1, 0]], V[F[r1, 2]] - V[F[r1, 0]])
-            row0 = np.where(F[r0] == b, d, F[r0])
-            row1 = np.where(F[r1] == a, c, F[r1])
-            n_new0 = np.cross(V[row0[1]] - V[row0[0]], V[row0[2]] - V[row0[0]])
-            n_new1 = np.cross(V[row1[1]] - V[row1[0]], V[row1[2]] - V[row1[0]])
-            if min(float(np.linalg.norm(n_new0)), float(np.linalg.norm(n_new1))) <= 1e-14:
-                continue
-            if float(n_new0 @ n_old0) <= 0.0 or float(n_new1 @ n_old1) <= 0.0:
-                continue
-            if float(n_new0 @ proj.normals[L[r0]]) <= 0.0:
-                continue
-            if float(n_new1 @ proj.normals[L[r1]]) <= 0.0:
-                continue
-            swap.append((r0, tuple(int(v) for v in row0), (r1, tuple(int(v) for v in row1))))
-            val[a] -= 1
-            val[b] -= 1
-            val[c] += 1
-            val[d] += 1
-            touch[r0] = True
-            touch[r1] = True
-            made.add((min(c, d), max(c, d)))
-            flips += 1
+            swap.append(i)
+            val[va] -= 1
+            val[vb] -= 1
+            val[vc] += 1
+            val[vd] += 1
+            touch[s0] = 1
+            touch[s1] = 1
+            made.add(pair)
         if not swap:
             break
+        flips += len(swap)
         F = F.copy()
-        for r0, tri0, rest in swap:
-            r1, tri1 = rest
-            F[r0] = tri0
-            F[r1] = tri1
-    return V, F, flips
+        F[r0[swap]] = row0[swap]
+        F[r1[swap]] = row1[swap]
+        settled = settled.copy()
+        settled[r0[swap]] = False
+        settled[r1[swap]] = False
+    return V, F, settled, flips
 
 
 def _relax_pass(V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector) -> np.ndarray:
@@ -1065,23 +1170,32 @@ def isotropic_remesh(mesh, severity, rng):
     V, F = _weld(src_tris)
     passes = remesh_passes(severity)
     splits = collapses = flips = 0
+    settled = np.zeros(len(F), dtype=bool)
     for _ in range(passes):
-        V, F, L, n = _split_pass(V, F, L, 4.0 / 3.0 * h, proj)
+        V, F, L, settled, n = _split_pass(V, F, L, 4.0 / 3.0 * h, proj, settled)
         splits += n
         V, F = _compact(V, F)
-        L = proj.rebase(V, F, L)
-        V, F, L, n = _collapse_pass(V, F, L, 4.0 / 5.0 * h, proj)
+        L, settled = proj.rebase(V, F, L, settled)
+        V, F, L, settled, n = _collapse_pass(V, F, L, 4.0 / 5.0 * h, proj, settled)
         collapses += n
         V, F = _compact(V, F)
-        L = proj.rebase(V, F, L)
-        V, F, n = _flip_pass(V, F, L, proj)
+        L, settled = proj.rebase(V, F, L, settled)
+        V, F, settled, n = _flip_pass(V, F, L, proj, settled)
         flips += n
-        L = proj.rebase(V, F, L)
-        V = _relax_pass(V, F, L, proj)
-        L = proj.rebase(V, F, L)
+        L, settled = proj.rebase(V, F, L, settled)
+        moved = _relax_pass(V, F, L, proj)
+        settled &= ~(moved != V).any(axis=1)[F].any(axis=1)
+        V = moved
+        L, settled = proj.rebase(V, F, L, settled)
     V, F, dropped = _drop_degenerate(V, F)
     mesh.tris = V[F].reshape(-1, 3, 3) + 0.0
-    label = transfer_labels(mesh, src_tris, src_ids, mesh.metadata.get(CONFIDENCE_KEY))
+    label = transfer_labels(
+        mesh,
+        src_tris,
+        src_ids,
+        mesh.metadata.get(CONFIDENCE_KEY),
+        (proj.pts, proj.owner, proj.tree),
+    )
     return {
         "target_edge_mm": h,
         "bbox_diagonal_mm": diagonal,
