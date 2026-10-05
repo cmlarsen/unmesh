@@ -16,6 +16,7 @@ from ..oracle import build_oracle_ir
 from .core import OPERATORS, apply, chain, to_original, to_original_points
 from .faults import DISPOSITION
 from .presets import PRESETS
+from .processing import POLYLINES_COINCIDE
 
 SEVERITIES = (0.0, 0.5, 1.0)
 SEED = 20260101
@@ -207,17 +208,26 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "`face_id` -1 (unknown face), which the oracle excludes from every region. Operators "
         "that change the triangle count report no displacement.",
         "",
-        "- `processing`-family operators (decimation, remeshing, smoothing) rebuild or move "
-        "the triangulation the way mesh-processing pipelines do. Every output triangle takes "
-        "the `face_id` of its nearest source face by triangle-centroid distance to each "
-        "source face's analytic surface (centroid distance for non-analytic faces), with a "
-        'per-triangle `metadata["label_confidence"]` in [0, 1] (`d2 / (d1 + d2)` for the '
-        "nearest vs second-nearest source face; 1.0 on single-face meshes). Metrics that score "
-        "per-triangle labels should mask triangles below 0.9 confidence. The face table, "
-        "adjacency, vertices and shells stay the clean truth, except the smoothing operators "
-        "move shared vertices so their edge polylines move with the mesh. Watertightness is "
-        "per operator: smoothing, quadric decimation and isotropic remeshing preserve it, "
-        "voxel remeshing does not.",
+        "- `processing`-family operators (decimation, remeshing, smoothing, vertex "
+        "clustering) rebuild or move the triangulation the way mesh-processing "
+        "pipelines do. Topology-changing operators relabel every output triangle "
+        "from the clean labeled source mesh: source triangles are densely sampled "
+        "(barycentric lattice at bbox-diagonal / 400 plus the centroid), a "
+        "cKDTree over the samples proposes candidate source triangles for the "
+        "output triangle's centroid and 3 edge midpoints (midpoints pulled 10% "
+        "toward the centroid, off exact shared edges), each probe votes its "
+        "exactly containing triangle or else its nearest-sample majority, and the "
+        "triangle takes the 4-probe majority with `label_confidence` the agreeing "
+        "fraction. Coplanar faces sharing one surface keep their trimmed labels. "
+        "Metrics that score per-triangle labels mask triangles below 0.9 "
+        "confidence. The face table, adjacency, vertices and shells stay the "
+        "clean truth, except the smoothing operators move shared vertices so "
+        "their edge polylines move with the mesh. Smoothing keeps connectivity, "
+        "so it keeps the original labels exactly at confidence 1.0 with the "
+        "displacement capped to severity * 1% of the bbox diagonal. Quadric "
+        "decimation targets keep ratio 1 - 0.9 * severity with a 4-triangle "
+        "floor. Watertightness is per operator: smoothing and isotropic "
+        "remeshing preserve it, quadric decimation and vertex clustering do not.",
         "",
         "## Defect disposition",
         "",
@@ -266,7 +276,8 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "",
         f"Seed {SEED}. Displacement is measured in the original frame, per triangle corner, "
         "against the undegraded mesh (against the refined mesh for chains that start with "
-        "`refine`; `-` for the tessellation and processing families, whose triangle counts "
+        "`refine`; `-` for the tessellation family and the topology-changing processing "
+        "operators, whose triangle counts "
         "or corner correspondences change - see Tessellation statistics below). "
         "`closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built "
         "from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 "
@@ -294,9 +305,10 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
                 for severity in (0.0, 1.0) if op.binary else SEVERITIES:
                     s = stats(use, spec, severity)
                     ratio = s["tris_ratio"]
-                    tess = op.family in ("tessellation", "processing")
-                    rms = "-" if tess or s["rms_um"] is None else f"{s['rms_um']:.3f}"
-                    peak = "-" if tess or s["max_um"] is None else f"{s['max_um']:.3f}"
+                    counts_change = op.family in ("tessellation", "processing")
+                    counts_change = counts_change and name not in POLYLINES_COINCIDE
+                    rms = "-" if counts_change or s["rms_um"] is None else f"{s['rms_um']:.3f}"
+                    peak = "-" if counts_change or s["max_um"] is None else f"{s['max_um']:.3f}"
                     lines.append(
                         f"| {label} | {row_label} | {severity} | {rms} | {peak} | {ratio:.1f} | "
                         f"{'yes' if s['closed'] else 'no'} | {'yes' if s['ir_valid'] else 'no'} |"
@@ -336,29 +348,67 @@ def render(meshes: list[LabeledMesh] | None = None) -> str:
         "",
         "## Processing statistics",
         "",
-        f"Seed {SEED}. Per-operator stats over the same meshes as above. `conf<0.9` is the "
+        f"Seed {SEED}. Per-operator stats over the same meshes as above, plus one "
+        "aggregate row per operator over the full smoke set. `conf<0.9` is the "
         "fraction of output triangles whose `label_confidence` is below 0.9; metrics that "
-        "score per-triangle labels should mask those triangles. `closed` and `IR valid` "
+        "score per-triangle labels mask those triangles. `faces lost` counts clean faces "
+        "with no output triangle at confidence 0.9 or above. `closed` and `IR valid` "
         "are as in the displacement sheet.",
         "",
-        "| mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 |",
-        "|---|---|---|---|---|---|---|---|",
+        "| mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 | "
+        "faces lost |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
+    smoke = smoke_meshes()
     for label, mesh in tess_meshes():
-        lines.append(f"| {label} | `-` | - | {len(mesh.tris)} | yes | yes | 1.000 | 0.000 |")
+        lines.append(f"| {label} | `-` | - | {len(mesh.tris)} | yes | yes | 1.000 | 0.000 | 0 |")
         for name, op in OPERATORS.items():
             if op.family != "processing":
                 continue
             for severity in (0.5, 1.0):
                 out = apply(name, mesh, severity, SEED)
+                lines.append(_processing_row(label, f"`{name}`", severity, mesh, out))
+    for name, op in OPERATORS.items():
+        if op.family != "processing":
+            continue
+        for severity in (0.5, 1.0):
+            tris = lost = below = total = 0
+            weighted = 0.0
+            closed = valid = True
+            for mesh in smoke:
+                out = apply(name, mesh, severity, SEED)
                 conf = np.array(out.metadata.get("label_confidence", [1.0]))
-                lines.append(
-                    f"| {label} | `{name}` | {severity} | {len(out.tris)} | "
-                    f"{'yes' if _closed(out) else 'no'} | "
-                    f"{'yes' if _ir_valid(out) else 'no'} | {float(conf.mean()):.3f} | "
-                    f"{float((conf < 0.9).mean()):.3f} |"
-                )
+                tris += len(out.tris)
+                lost += _faces_lost(mesh, out)
+                below += int((conf < 0.9).sum())
+                weighted += float(conf.sum())
+                total += len(conf)
+                closed &= _closed(out)
+                valid &= _ir_valid(out)
+            lines.append(
+                f"| smoke ({len(smoke)}) | `{name}` | {severity} | {tris} | "
+                f"{'yes' if closed else 'no'} | {'yes' if valid else 'no'} | "
+                f"{weighted / total:.3f} | {below / total:.3f} | {lost} |"
+            )
     return "\n".join(lines) + "\n"
+
+
+def _faces_lost(clean: LabeledMesh, out: LabeledMesh) -> int:
+    conf = np.array(out.metadata.get("label_confidence", np.ones(len(out.tris))))
+    keep = np.asarray(out.face_id)[np.asarray(conf) >= 0.9]
+    return sum(1 for f in clean.faces if not (keep == f.id).any())
+
+
+def _processing_row(
+    label: str, op: str, severity: float, clean: LabeledMesh, out: LabeledMesh
+) -> str:
+    conf = np.array(out.metadata.get("label_confidence", [1.0]))
+    return (
+        f"| {label} | {op} | {severity} | {len(out.tris)} | "
+        f"{'yes' if _closed(out) else 'no'} | "
+        f"{'yes' if _ir_valid(out) else 'no'} | {float(conf.mean()):.3f} | "
+        f"{float((conf < 0.9).mean()):.3f} | {_faces_lost(clean, out)} |"
+    )
 
 
 def main() -> None:

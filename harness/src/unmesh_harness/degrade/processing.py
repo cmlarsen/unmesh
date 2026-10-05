@@ -430,6 +430,14 @@ def _collapse_pass(
             opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
             if len(opp) != 2:
                 continue
+            ta = tri_of[starts[a] : starts[a] + vcounts[a]]
+            tb = tri_of[starts[b] : starts[b] + vcounts[b]]
+            if set(ta.tolist()) & set(tb.tolist()) != {r0, r1}:
+                continue
+            na = set(np.unique(F[ta]).tolist()) - {a}
+            nb = set(np.unique(F[tb]).tolist()) - {b}
+            if na & nb != set(opp):
+                continue
             aff = np.unique(
                 np.concatenate(
                     [
@@ -490,6 +498,7 @@ def _flip_pass(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray, in
         cand = cand[ordered]
         t0, t1 = _manifold_owners(len(F), counts, inverse)
         val = np.bincount(F.ravel(), minlength=len(V))
+        starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
         touch = np.zeros(len(F), dtype=bool)
         swap: list[tuple[int, tuple[int, int, int], tuple[int, int, int]]] = []
         for e in cand.tolist():
@@ -501,6 +510,8 @@ def _flip_pass(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray, in
             if len(opp) != 2:
                 continue
             c, d = opp
+            if d in set(tri_of[starts[c] : starts[c] + vcounts[c]].tolist()):
+                continue
             before = (
                 abs(int(val[a]) - 6)
                 + abs(int(val[b]) - 6)
