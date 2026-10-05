@@ -150,6 +150,22 @@ def download_artifact(repo: str, run_id: int, artifact: str, dest: Path) -> None
             raise ValueError(f"artifact {artifact!r} of run {run_id} holds no jsonl")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(hits[0].read_bytes())
+    validate_baseline(dest)
+
+
+def validate_baseline(dest: Path) -> None:
+    try:
+        lines = [ln for ln in dest.read_text().splitlines() if ln.strip()]
+    except OSError as e:
+        raise ValueError(f"baseline {dest} is unreadable: {e}") from None
+    if not lines:
+        raise ValueError(f"baseline {dest} is empty: failing instead of silently passing")
+    try:
+        first = json.loads(lines[0])
+    except json.JSONDecodeError as e:
+        raise ValueError(f"baseline {dest} holds no JSON records: {e}") from None
+    if not isinstance(first, dict):
+        raise ValueError(f"baseline {dest} holds no JSON records")
 
 
 def main() -> int:

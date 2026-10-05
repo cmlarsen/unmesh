@@ -45,8 +45,13 @@ def unlabeled(actor, actor_type="User", created_at=AFTER, label=LABEL):
     }
 
 
-def comment(login, body, created_at=AFTER):
-    return {"user": {"login": login}, "body": body, "created_at": created_at}
+def comment(login, body, created_at=AFTER, updated_at=None):
+    return {
+        "user": {"login": login},
+        "body": body,
+        "created_at": created_at,
+        "updated_at": created_at if updated_at is None else updated_at,
+    }
 
 
 def waive_line(cell=CELL):
@@ -243,6 +248,27 @@ def test_unknown_head_sha_is_not_a_waiver():
     assert not ok
     ok, _ = decide([labeled("cmlarsen")], [approved_comment()], head_sha="  ")
     assert not ok
+
+
+def test_edited_waive_comment_is_not_a_waiver():
+    edited = approved_comment()
+    edited["updated_at"] = "2026-10-03T09:00:00Z"
+    ok, reason = decide([labeled("cmlarsen")], [edited])
+    assert not ok
+
+
+def test_edited_sha_confirmation_does_not_count():
+    body = f"{waive_line()}\nsha: {HEAD_SHA}"
+    edited = comment("cmlarsen", body, updated_at="2026-10-03T09:00:00Z")
+    ok, _ = decide([labeled("cmlarsen")], [edited])
+    assert not ok
+
+
+def test_comment_without_updated_at_counts_as_unedited():
+    body = f"{waive_line()}\nsha: {HEAD_SHA}"
+    legacy = {"user": {"login": "cmlarsen"}, "body": body, "created_at": AFTER}
+    ok, _ = decide([labeled("cmlarsen")], [legacy])
+    assert ok
 
 
 def test_parse_waived_sha():

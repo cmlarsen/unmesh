@@ -82,13 +82,21 @@ def _named_cells(
 ) -> set[tuple[str, str, float]]:
     named: set[tuple[str, str, float]] = set()
     for comment in comments or ():
-        user = comment.get("user") or {}
-        if str(user.get("login") or "").lower() != login.lower():
+        if not _usable_comment(comment, login):
             continue
         if head_sha not in parse_waived_sha(comment.get("body")):
             continue
         named |= parse_waived_cells(comment.get("body"))
     return named
+
+
+def _usable_comment(comment: dict[str, Any], login: str) -> bool:
+    user = comment.get("user") or {}
+    if str(user.get("login") or "").lower() != login.lower():
+        return False
+    created = parse_time(comment.get("created_at"))
+    updated = parse_time(comment.get("updated_at"))
+    return not (created is not None and updated is not None and updated != created)
 
 
 def waiver_approved(
@@ -136,7 +144,7 @@ def waiver_approved(
     confirmed = head in {
         sha
         for c in comments or ()
-        if str((c.get("user") or {}).get("login") or "").lower() == login.lower()
+        if _usable_comment(c, login)
         for sha in parse_waived_sha(c.get("body"))
     }
     if not confirmed:
