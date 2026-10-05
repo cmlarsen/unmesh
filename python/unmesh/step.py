@@ -114,13 +114,10 @@ def _check(g: _Group, occ, max_tol: float) -> None:
     g.valid = ok
 
 
-def _finish_group(g: _Group, occ, outer_shell, cavities, options, require_positive=False) -> None:
+def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
     if g.kind == "solid":
         solid = occ.make_solid(outer_shell, cavities)
         g.shape, g.context = occ.fix_shape(solid)
-        if require_positive and occ.volume_of(g.shape) < 0:
-            g.shape = occ.reversed_solid(g.shape)
-            g.context = None
     else:
         g.shape = outer_shell
     _check(g, occ, options.max_shape_tolerance)
@@ -165,6 +162,65 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
     return groups, seams
 
 
+def _signed_volume(t: np.ndarray) -> float:
+    a, b, c = t[:, 0], t[:, 1], t[:, 2]
+    return float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
+
+
+def _inside(tris: np.ndarray, point: np.ndarray) -> bool:
+    direction = np.array([1.0, 0.372185571, 0.591327399])
+    a = tris[:, 0]
+    e1 = tris[:, 1] - a
+    e2 = tris[:, 2] - a
+    pvec = np.cross(direction, e2)
+    det = np.einsum("ij,ij->i", e1, pvec)
+    valid = np.abs(det) > 1e-18
+    inv = np.where(valid, 1.0 / np.where(valid, det, 1.0), 0.0)
+    tvec = point - a
+    u = np.einsum("ij,ij->i", tvec, pvec) * inv
+    qvec = np.cross(tvec, e1)
+    v = np.einsum("ij,j->i", qvec, direction) * inv
+    dist = np.einsum("ij,ij->i", e2, qvec) * inv
+    hits = (
+        valid
+        & (u >= -1e-9)
+        & (u <= 1.0 + 1e-9)
+        & (v >= -1e-9)
+        & (u + v <= 1.0 + 1e-9)
+        & (dist > 1e-9)
+    )
+    return bool(np.count_nonzero(hits) % 2 == 1)
+
+
+def _nesting(closed: dict[int, np.ndarray]) -> dict[int, bool]:
+    ids = list(closed)
+    parent: dict[int, int | None] = {}
+    for i in ids:
+        probe = closed[i][0][0]
+        vols = {
+            j: abs(_signed_volume(closed[j])) for j in ids if j != i and _inside(closed[j], probe)
+        }
+        parent[i] = min(vols, key=vols.__getitem__, default=None)
+    expect = {}
+    for i in ids:
+        depth = 0
+        p = parent[i]
+        while p is not None:
+            depth += 1
+            p = parent[p]
+        expect[i] = depth % 2 == 0
+    return expect
+
+
+def _orient_closed(raw: dict[int, np.ndarray], expect: dict[int, bool]) -> dict[int, np.ndarray]:
+    oriented = {}
+    for idx, t in raw.items():
+        if idx in expect and (_signed_volume(t) < 0) == expect[idx]:
+            t = t[:, ::-1]
+        oriented[idx] = t
+    return oriented
+
+
 def _faceted(ir: Ir, tris: np.ndarray, options: WriteOptions, occ, topology):
     groups: list[_Group] = []
     for outer, shell in enumerate(ir.shells):
@@ -173,20 +229,25 @@ def _faceted(ir: Ir, tris: np.ndarray, options: WriteOptions, occ, topology):
         g = _Group(outer, "solid" if shell.closed else "shell")
         groups.append(g)
         try:
-            shells = {}
+            raw = {}
             for idx in _members(ir, outer):
                 ids = sorted(t for r in ir.shells[idx].regions for t in ir.regions[r].triangles)
                 if ids and ids[-1] >= len(tris):
                     raise topology.BuildError("mesh has fewer triangles than the IR references")
-                t = tris[ids]
-                if ir.shells[idx].closed:
-                    a, b, c = t[:, 0], t[:, 1], t[:, 2]
-                    vol = float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
-                    if (vol < 0) == (ir.shells[idx].role == "outer"):
-                        t = t[:, ::-1]
+                raw[idx] = tris[ids]
+            closed = {idx: t for idx, t in raw.items() if ir.shells[idx].closed and len(t)}
+            expect = _nesting(closed)
+            shells = {}
+            for idx, t in _orient_closed(raw, expect).items():
                 shells[idx] = occ.build_triangle_shell(np.ascontiguousarray(t))
-            cavities = [sh for idx, sh in shells.items() if idx != outer]
-            _finish_group(g, occ, shells[outer], cavities, options, require_positive=True)
+            for idx in closed:
+                shells[idx] = occ.orient_like_mesh(shells[idx], expect[idx])
+            if g.kind == "solid":
+                cavities = [s for idx, s in shells.items() if idx != outer]
+                g.shape = occ.make_faceted_solid(shells[outer], cavities)
+            else:
+                g.shape = shells[outer]
+            _check(g, occ, options.max_shape_tolerance)
             if g.kind == "solid" and g.valid:
                 merged = occ.unify_exact(g.shape)
                 trial = _Group(outer, "solid", merged)

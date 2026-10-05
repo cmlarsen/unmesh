@@ -149,8 +149,17 @@ def make_solid(outer_shell, cavities):
     return mk2.Solid()
 
 
-def reversed_solid(solid):
-    return TopoDS.Solid_s(solid.Reversed())
+def make_faceted_solid(outer_shell, cavities):
+    mk = BRepBuilderAPI_MakeSolid(outer_shell)
+    for c in cavities:
+        mk.Add(c)
+    return mk.Solid()
+
+
+def orient_like_mesh(shell, expect_positive: bool):
+    if (volume_of(BRepBuilderAPI_MakeSolid(shell).Solid()) < 0) == expect_positive:
+        return TopoDS.Shell_s(shell.Reversed())
+    return shell
 
 
 def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):
