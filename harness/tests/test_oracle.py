@@ -390,14 +390,7 @@ def test_split_runs_direction_independent_inside_band(samples):
     assert len(fwd) == len(rev) == 2
 
     def splits(segs):
-        return sorted(
-            {
-                v.point
-                for s in segs
-                for v in (s.start, s.end)
-                if isinstance(v, _Split)
-            }
-        )
+        return sorted({v.point for s in segs for v in (s.start, s.end) if isinstance(v, _Split)})
 
     def runs(segs):
         return [(s.dihedral < 3.0, s.dihedral, sorted(s.points)) for s in segs]

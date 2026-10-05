@@ -85,10 +85,6 @@ KIND_HYSTERESIS_DEG = 0.5
 MIN_RUN_SEGMENTS = 2
 
 
-def _near_node(samples: list[float], i: int, threshold_deg: float) -> int:
-    return i if abs(samples[i] - threshold_deg) <= abs(samples[i + 1] - threshold_deg) else i + 1
-
-
 def _span_nodes(span: tuple[int, int, bool], n: int) -> list[int]:
     lo, hi, wrap = span
     if not wrap:
@@ -121,23 +117,20 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
     transversal = [s > hi for s in samples]
     if not any(tangent) or not any(transversal):
         return [_Seg(d.points, d.dihedral, d.start, d.end)]
-    first = next(i for i in range(n) if tangent[i] or transversal[i])
-    state: list[bool] = []
-    cur = bool(tangent[first])
-    for i in range(n):
-        if tangent[i]:
-            cur = True
-        elif transversal[i]:
-            cur = False
-        state.append(cur)
     closed = d.start == d.end
-    joints = sorted(
-        _near_node(samples, i, threshold_deg) for i in range(n - 1) if state[i] != state[i + 1]
-    )
-    if closed and state[0] != state[-1]:
-        wrap = n - 1 if abs(samples[n - 1] - threshold_deg) < abs(samples[0] - threshold_deg) else 0
-        joints.append(wrap)
-        joints.sort()
+    pts = [tuple(p) for p in d.points]
+    out = [i for i in range(n) if tangent[i] or transversal[i]]
+    pairs = list(zip(out, out[1:], strict=False))
+    if closed and len(out) > 1:
+        pairs.append((out[-1], out[0]))
+    joints = set()
+    for a, b in pairs:
+        if tangent[a] == tangent[b]:
+            continue
+        between = list(range(a + 1, b)) if a < b else list(range(a + 1, n)) + list(range(b))
+        cands = between or [a, b]
+        joints.add(min(cands, key=lambda i: (abs(samples[i] - threshold_deg), pts[i], i)))
+    joints = sorted(joints)
     while True:
         spans = _spans(joints, n, closed)
         bad = next((j for j, s in enumerate(spans) if _span_len(s, n) < MIN_RUN_SEGMENTS), None)
@@ -170,7 +163,6 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
             del joints[nxt]
         if not joints or (closed and len(joints) < 2):
             return [_Seg(d.points, d.dihedral, d.start, d.end)]
-    pts = [tuple(p) for p in d.points]
     splits = {j: _Split(pts[j], pair) for j in joints}
     segs = []
     for j, span in enumerate(_spans(joints, n, closed)):
