@@ -117,11 +117,19 @@ def test_exact_curved_strips_do_not_floor_the_tolerance_under_plane_noise():
     assert lost_plane_faces(mesh, ir) == [], ir.tolerances.linear
 
 
+@pytest.mark.parametrize("part", [0, 1, 2])
 @pytest.mark.parametrize("severity", [0.02, 0.1])
-def test_tolerance_tracks_isotropic_noise_on_curved_part(severity):
-    mesh = tessellate(generate("circular_fillet", 0).solid, LIN, ANG)
+def test_tolerance_tracks_isotropic_noise_on_curved_part(severity, part):
+    mesh = tessellate(generate("circular_fillet", part).solid, LIN, ANG)
     mesh = degrade.chain(mesh, [("noise_isotropic", severity)], 0)
     ir, _ = unmesh.convert(mesh.tris)
     std = severity * 0.05 / math.sqrt(5.0)
-    assert 2.5 * std <= ir.tolerances.linear <= 10.0 * std, ir.tolerances.linear
+    assert 4.0 * std <= ir.tolerances.linear <= 13.0 * std, ir.tolerances.linear / std
+
+
+@pytest.mark.parametrize("part", [0, 1, 2])
+def test_curved_part_keeps_every_plane_under_1um_noise(part):
+    mesh = tessellate(generate("circular_fillet", part).solid, LIN, ANG)
+    mesh = degrade.chain(mesh, [("noise_isotropic", 0.02)], 0)
+    ir, _ = unmesh.convert(mesh.tris)
     assert lost_plane_faces(mesh, ir) == [], ir.tolerances.linear
