@@ -77,8 +77,10 @@ def _interior_planar(mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         np.minimum.at(lo, corners[:, corner], ids)
         np.maximum.at(hi, corners[:, corner], ids)
     planar = np.array([f.surface == "plane" for f in mesh.faces], dtype=bool)
-    interior = (lo == hi) & planar[np.clip(lo, 0, len(planar) - 1)] if planar.any() else np.zeros(
-        len(uniq), dtype=bool
+    interior = (
+        (lo == hi) & planar[np.clip(lo, 0, len(planar) - 1)]
+        if planar.any()
+        else np.zeros(len(uniq), dtype=bool)
     )
     return interior, lo, planar
 

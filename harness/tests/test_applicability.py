@@ -111,8 +111,7 @@ def test_clip_triangulates_l_shape():
     tris = _clip(poly, "fan", np.random.default_rng(0))
     assert tris is not None and len(tris) == 4
     area = sum(
-        abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2
-        for a, b, c in tris
+        abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2 for a, b, c in tris
     )
     assert area == pytest.approx(3.0)
 
@@ -137,7 +136,9 @@ def test_run_skips_inapplicable_rows(tmp_path):
     by_status = [(r["operator"], r["status"]) for r in records]
     assert ("identity", "ok") in by_status
     assert by_status.count(("noise_off_plane", "skipped")) == 3
-    assert all(r["skipped_operator"] == "noise_off_plane" for r in records if r["status"] == "skipped")
+    assert all(
+        r["skipped_operator"] == "noise_off_plane" for r in records if r["status"] == "skipped"
+    )
     assert gate(records, grid, ["unmesh"], "s").passed
     assert "skipped as inapplicable: 3 cells" in summarize(records)
 
