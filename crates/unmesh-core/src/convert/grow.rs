@@ -2,7 +2,7 @@ use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::curved::{self, Axis, Kind, Member, Single, Tri};
 use super::fit::{Region, collect_verts, region_pairs};
@@ -190,13 +190,23 @@ impl Pool<'_> {
     }
 
     fn union(&mut self, members: &[u32]) -> (Vec<(V3, f64)>, Vec<Tri>) {
+        let pts = self.union_points(members);
+        let list: Vec<u32> = members
+            .iter()
+            .flat_map(|&r| self.regions[r as usize].faces.iter().copied())
+            .collect();
+        let tris = curved::face_tris(self.vc, self.faces, self.info, &list);
+        (pts, tris)
+    }
+
+    /// The vertices of the union of `members` (each once, its weight
+    /// summed), in first-seen order.
+    fn union_points(&mut self, members: &[u32]) -> Vec<(V3, f64)> {
         self.token += 1;
         let token = self.token;
         let mut pts: Vec<(V3, f64)> = Vec::new();
-        let mut list: Vec<u32> = Vec::new();
         for &r in members {
             let reg = &self.regions[r as usize];
-            list.extend_from_slice(&reg.faces);
             for &(v, w) in &reg.verts {
                 let vi = v as usize;
                 if self.mark[vi] == token {
@@ -208,8 +218,23 @@ impl Pool<'_> {
                 }
             }
         }
-        let tris = curved::face_tris(self.vc, self.faces, self.info, &list);
-        (pts, tris)
+        pts
+    }
+
+    /// The number of distinct vertices of the union of `members`.
+    fn union_len(&mut self, members: &[u32]) -> usize {
+        self.token += 1;
+        let token = self.token;
+        let mut count = 0;
+        for &r in members {
+            for &(v, _) in &self.regions[r as usize].verts {
+                if self.mark[v as usize] != token {
+                    self.mark[v as usize] = token;
+                    count += 1;
+                }
+            }
+        }
+        count
     }
 }
 
@@ -333,7 +358,7 @@ fn extend_chain(
     let mut stuck = [false; 2];
     loop {
         let members: Vec<u32> = chain.iter().copied().collect();
-        if pool.union(&members).0.len() >= min_points {
+        if pool.union_len(&members) >= min_points {
             return Some(members);
         }
         if stuck[0] && stuck[1] {
@@ -363,6 +388,24 @@ fn extend_chain(
             }
         }
     }
+}
+
+/// `seed_fit`, remembering failures: seeds from neighbouring regions often
+/// extend to the same chain, and the outcome depends only on the chain.
+fn seed_fit_cached(
+    pool: &mut Pool<'_>,
+    failed: &mut FxHashMap<Vec<u32>, f64>,
+    chain: &[u32],
+    tol: f64,
+) -> Result<Single, f64> {
+    if let Some(&init) = failed.get(chain) {
+        return Err(init);
+    }
+    let fit = seed_fit(pool, chain, tol);
+    if let Err(init) = fit {
+        failed.insert(chain.to_vec(), init);
+    }
+    fit
 }
 
 fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<Single, f64> {
@@ -550,7 +593,7 @@ fn grow_group(
         let next = if doubly(kind) {
             refit_doubly(pool, &members, kind, axis, &shape, tol)
         } else {
-            curved::refit_quick(&pool.union(&members).0, kind, axis, &shape, tol)
+            curved::refit_quick(&pool.union_points(&members), kind, axis, &shape, tol)
         };
         match next {
             Some(f)
@@ -565,7 +608,7 @@ fn grow_group(
         }
         queue.extend(tried.drain());
     }
-    let (pts, _) = pool.union(&members);
+    let pts = pool.union_points(&members);
     let (rms, max) = curved::member_residual(&axis, &shape, &Member { pts, kind, slot: 0 });
     let fit = (kind, axis, shape, rms, max, false);
     Group { members, fit }
@@ -584,6 +627,8 @@ fn merge_groups(
 ) -> Vec<Group> {
     let mut alive = vec![true; groups.len()];
     let mut root: Vec<u32> = (0..groups.len() as u32).collect();
+    let mut version = vec![0u32; groups.len()];
+    let mut failed: FxHashSet<(u32, u32, u32, u32)> = FxHashSet::default();
     loop {
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         for (gi, grp) in groups.iter().enumerate() {
@@ -611,6 +656,10 @@ fn merge_groups(
             if a == b || !alive[a] || !alive[b] {
                 continue;
             }
+            let key = (a as u32, b as u32, version[a], version[b]);
+            if failed.contains(&key) {
+                continue;
+            }
             let (big, small) = if groups[a].members.len() >= groups[b].members.len() {
                 (a, b)
             } else {
@@ -618,7 +667,7 @@ fn merge_groups(
             };
             let mut members = groups[big].members.clone();
             members.extend_from_slice(&groups[small].members);
-            let (pts, _) = pool.union(&members);
+            let pts = pool.union_points(&members);
             let Some(lead) = [&groups[big].fit, &groups[small].fit]
                 .into_iter()
                 .find(|f| {
@@ -627,6 +676,7 @@ fn merge_groups(
                 })
                 .cloned()
             else {
+                failed.insert(key);
                 continue;
             };
             let pts = if doubly(lead.0) { thin(&pts) } else { pts };
@@ -635,6 +685,7 @@ fn merge_groups(
                 .or(Some(lead));
             if let Some(fit) = fit {
                 groups[big] = Group { members, fit };
+                version[big] += 1;
                 groups[small].members.clear();
                 alive[small] = false;
                 root[small] = big as u32;
@@ -808,7 +859,9 @@ pub fn run(
             seeded[r as usize] = true;
         }
     }
+    super::timing::lap("grow.doubly");
     let junction = Junction::new(nbr, label, &groups);
+    let mut failed: FxHashMap<Vec<u32>, f64> = FxHashMap::default();
     for s in 0..n as u32 {
         if owner[s as usize] != NONE || spent[s as usize] || g.adj[s as usize].is_empty() {
             continue;
@@ -824,7 +877,7 @@ pub fn run(
                 if chain.len() == last {
                     break;
                 }
-                let init = match seed_fit(&mut pool, &chain, tol) {
+                let init = match seed_fit_cached(&mut pool, &mut failed, &chain, tol) {
                     Ok(fit) => {
                         let gid = groups.len() as u32;
                         let grp = grow_group(&mut pool, &g, chain, fit, &mut owner, gid, tol);
@@ -844,7 +897,7 @@ pub fn run(
                         .collect();
                     if pure.len() < chain.len()
                         && pure.len() >= MIN_MEMBERS
-                        && let Ok(fit) = seed_fit(&mut pool, &pure, tol)
+                        && let Ok(fit) = seed_fit_cached(&mut pool, &mut failed, &pure, tol)
                     {
                         let gid = groups.len() as u32;
                         let grp = grow_group(&mut pool, &g, pure, fit, &mut owner, gid, tol);
@@ -856,12 +909,14 @@ pub fn run(
             }
         }
     }
+    super::timing::lap("grow.seed");
     let mut near: Vec<Vec<u32>> = vec![Vec::new(); n];
     for &(a, b) in &pairs {
         near[a as usize].push(b);
         near[b as usize].push(a);
     }
     let groups = merge_groups(&mut pool, &near, groups, &owner, tol);
+    super::timing::lap("grow.merge");
     let groups: Vec<Group> = groups
         .into_iter()
         .filter(|grp| grp.members.len() >= MIN_MEMBERS && grp.fit.4 <= tol)
@@ -891,6 +946,7 @@ pub fn run(
         })
         .collect();
 
+    super::timing::lap("grow.final");
     let mut face_group = vec![NONE; faces.len()];
     for (gi, grp) in groups.iter().enumerate() {
         if sliced[gi] {
@@ -914,6 +970,7 @@ pub fn run(
         &sliced,
         tol,
     );
+    super::timing::lap("grow.peel");
     join_touching(
         &mut pool,
         nbr,
@@ -925,6 +982,7 @@ pub fn run(
         tol,
     );
 
+    super::timing::lap("grow.join");
     let mut out: Vec<Region> = Vec::new();
     let mut out_label = vec![NONE; faces.len()];
     let mut prefit = Vec::new();
@@ -1118,6 +1176,8 @@ fn join_touching(
     sliced: &[bool],
     tol: f64,
 ) {
+    let mut version = vec![0u32; groups.len()];
+    let mut failed: FxHashSet<(u32, u32, u32, u32)> = FxHashSet::default();
     loop {
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         for (f, nb) in nbr.iter().enumerate() {
@@ -1147,6 +1207,10 @@ fn join_touching(
             {
                 continue;
             }
+            let key = (a as u32, b as u32, version[a], version[b]);
+            if failed.contains(&key) {
+                continue;
+            }
             let (big, small) = if groups[a].members.len() >= groups[b].members.len() {
                 (a, b)
             } else {
@@ -1154,7 +1218,7 @@ fn join_touching(
             };
             let mut members = groups[big].members.clone();
             members.extend_from_slice(&groups[small].members);
-            let (mut pts, _) = pool.union(&members);
+            let mut pts = pool.union_points(&members);
             let mut seen: FxHashSet<u32> = members
                 .iter()
                 .flat_map(|&r| pool.regions[r as usize].verts.iter().map(|x| x.0))
@@ -1170,6 +1234,7 @@ fn join_touching(
             let Some(fit) = curved::refit_quick(&thin(&pts), lead.0, lead.1, &lead.2, tol)
                 .filter(|f| curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol)
             else {
+                failed.insert(key);
                 continue;
             };
             let small_members = std::mem::take(&mut groups[small].members);
@@ -1178,6 +1243,7 @@ fn join_touching(
             }
             groups[big].members.extend(small_members);
             groups[big].fit = fit;
+            version[big] += 1;
             let moved = std::mem::take(&mut extra[small]);
             extra[big].extend(moved);
             for g in face_group.iter_mut() {
@@ -1600,6 +1666,107 @@ mod tests {
             }
         }
         TriangleSoup { triangles: tris }
+    }
+
+    struct Planar {
+        vc: Vec<V3>,
+        faces: Vec<[u32; 3]>,
+        info: Vec<super::TriInfo>,
+        regions: Vec<super::Region>,
+        tol: f64,
+    }
+
+    fn planar(soup: &TriangleSoup) -> Planar {
+        let (w, shells, info, tol, _, _) =
+            super::super::prepare(soup, &ConvertOptions::default()).unwrap();
+        let (label, n) = super::super::segment::run(
+            &w.vc,
+            &w.faces,
+            &shells.topo.nbr,
+            &info,
+            &shells.eligible,
+            tol,
+            false,
+        );
+        let mut scratch = super::super::fit::Scratch::new(w.vc.len());
+        let regions =
+            super::super::fit::build_regions(&w.vc, &w.faces, &info, &label, n, tol, &mut scratch);
+        Planar {
+            vc: w.vc,
+            faces: w.faces,
+            info,
+            regions,
+            tol,
+        }
+    }
+
+    fn pool(p: &Planar) -> super::Pool<'_> {
+        super::Pool {
+            vc: &p.vc,
+            faces: &p.faces,
+            info: &p.info,
+            regions: &p.regions,
+            mark: vec![0; p.vc.len()],
+            pos: vec![0; p.vc.len()],
+            token: 0,
+        }
+    }
+
+    #[test]
+    fn union_points_and_count_match_the_full_union() {
+        let p = planar(&torus_soup(10.0, 3.0, 24, 12, &Frame::tilted()));
+        assert!(p.regions.len() > 20);
+        let mut pool = pool(&p);
+        let n = p.regions.len() as u32;
+        for members in [
+            vec![0],
+            vec![0, 1, 2],
+            (0..n).step_by(3).collect(),
+            (0..n).collect(),
+        ] {
+            let (pts, tris) = pool.union(&members);
+            assert_eq!(pool.union_points(&members), pts);
+            assert_eq!(pool.union_len(&members), pts.len());
+            let faces: usize = members
+                .iter()
+                .map(|&r| p.regions[r as usize].faces.len())
+                .sum();
+            assert_eq!(tris.len(), faces);
+            let mut ids: Vec<V3> = pts.iter().map(|x| x.0).collect();
+            ids.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            ids.dedup();
+            assert_eq!(ids.len(), pts.len());
+        }
+    }
+
+    #[test]
+    fn cached_seed_fit_matches_and_remembers_failures() {
+        let p = planar(&torus_soup(10.0, 3.0, 24, 12, &Frame::tilted()));
+        let mut pool = pool(&p);
+        let mut failed = rustc_hash::FxHashMap::default();
+        let n = p.regions.len() as u32;
+        let chains: Vec<Vec<u32>> = (0..n.saturating_sub(3))
+            .map(|r| vec![r, r + 1, r + 2])
+            .collect();
+        let mut fails = 0;
+        for chain in chains.iter().chain(&chains) {
+            let plain = super::seed_fit(&mut pool, chain, p.tol);
+            let cached = super::seed_fit_cached(&mut pool, &mut failed, chain, p.tol);
+            match (&plain, &cached) {
+                (Ok(a), Ok(b)) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                (Err(a), Err(b)) => {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                    assert_eq!(
+                        failed.get(chain).map(|x: &f64| x.to_bits()),
+                        Some(a.to_bits())
+                    );
+                    fails += 1;
+                }
+                _ => panic!("cached seed fit disagrees for {chain:?}"),
+            }
+        }
+        assert!(fails > 0);
+        assert_eq!(failed.len() * 2, fails);
     }
 
     #[test]
