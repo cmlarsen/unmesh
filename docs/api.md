@@ -165,7 +165,14 @@ mesh's: the outer shell's triangles (IR shell grouping) enclose `|V|`, each cavi
 the two must agree within `1e-6 * |V| + area * d`, where `d` is the largest of the regions' residual
 max, the boundary deviation, the vertex displacement and the shape tolerance. A mismatch (an IR
 orientation that turns a pocket into a boss, say) fails the shell, named as `analytic volume X differs
-from mesh volume Y`, and the part falls back to faceted. Without `mesh` nothing ties the written volume
+from mesh volume Y`, and the part falls back to faceted. Then each written face is checked on its
+own, so a small flipped feature cannot hide in a large part's volume budget: its divergence-theorem
+flux `∫ (x - o)·n dA / 3` about the centre `o` of its region's mesh triangles (the written face
+triangulated at the smallest region deviation, floored at 1e-4 of the part's extent) must match the
+same sum over the region's mesh triangles (wound outward) within `(A + P L) d + 1e-9 A L`, where `A`
+is the face's area, `P` its perimeter, `L` its farthest point from `o`, and `d` the region's residual
+max, boundary deviation, vertex displacement and shape tolerance plus the triangulation deflection. A
+face built on the wrong side changes the flux's sign; the region is named in the reason. Without `mesh` nothing ties the written volume
 to the input: the IR alone cannot tell a flipped pocket from a boss, and `volume_checked_against_input`
 is `False`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
 solid. The mesh is welded at `ir.tolerances.vertex_merge`. The IR's shell roles decide orientation: each

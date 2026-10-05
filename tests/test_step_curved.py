@@ -473,8 +473,8 @@ def test_seam_vertex_is_snapped_onto_the_seam_when_refine_leaves_it_off(monkeypa
     assert curved.nearest(e.curve, p)[1] < 1e-12
 
 
-def flipped_pocket():
-    shape = Box(20, 20, 10) - Pos(0, 0, 5) * Sphere(4)
+def flipped_pocket(size=20.0, radius=4.0):
+    shape = Box(size, size, 10) - Pos(0, 0, 5) * Sphere(radius)
     mesh = tessellate(shape, 0.01, 0.2)
     ir = build_oracle_ir(mesh)
     next(r for r in ir.regions if r.surface.type == "sphere").surface.orientation = "same"
@@ -528,3 +528,18 @@ def test_tangent_fit_gives_up_when_neither_fits():
         for a in np.linspace(1.2, 1.9, 9)
     ]
     assert curved.tangent_curve([sa, sb], pts, False, 1e-4) is None
+
+
+@pytest.mark.parametrize(
+    ("size", "radius"),
+    [(100.0, 3.5), (20.0, 1.0), (40.0, 0.2), (40.0, 0.5), (40.0, 2.0)],
+)
+def test_a_small_flipped_pocket_is_caught_face_by_face(size, radius, tmp_path):
+    shape, ir, tris = flipped_pocket(size, radius)
+    report = step.write(ir, tmp_path / "p.step", mesh=tris)
+    assert report.valid and report.fallback == "faceted"
+    assert "the written face's flux about its centre" in report.fallback_reason
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-3)
+    unflipped = build_oracle_ir(tessellate(shape, 0.01, 0.2))
+    good = step.write(unflipped, tmp_path / "g.step", mesh=tris)
+    assert good.valid and good.fallback is None and good.volume_checked_against_input

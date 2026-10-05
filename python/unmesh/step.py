@@ -11,6 +11,8 @@ from unmesh.ir import Ir
 
 READBACK_RELATIVE = 1e-9
 INPUT_VOLUME_RELATIVE = 1e-6
+FLUX_DEFLECTION = 1e-4
+FLUX_RELATIVE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -248,7 +250,7 @@ def _is_curved(ir: Ir, idx: int) -> bool:
     )
 
 
-def _check_input_volume(ir: Ir, g: _Group, tris: np.ndarray) -> None:
+def _check_input_volume(ir: Ir, g: _Group, tris: np.ndarray, occ) -> None:
     total = 0.0
     deviation = max(g.deviation, g.moved, g.tolerance)
     for idx in _members(ir, g.outer):
@@ -270,6 +272,55 @@ def _check_input_volume(ir: Ir, g: _Group, tris: np.ndarray) -> None:
             f"analytic volume {g.expected:.6g} differs from mesh volume {total:.6g}"
             f" by more than {tolerance:.3g}"
         )
+        return
+    _check_face_fluxes(ir, g, tris, occ)
+
+
+def _check_face_fluxes(ir: Ir, g: _Group, tris: np.ndarray, occ) -> None:
+    members = _members(ir, g.outer)
+    origins, deviation = {}, {}
+    for f in g.faces:
+        ids = ir.regions[f.region].triangles
+        if not ids:
+            continue
+        pts = tris[np.asarray(ids, dtype=np.int64)].reshape(-1, 3)
+        origins[f.region] = 0.5 * (pts.min(axis=0) + pts.max(axis=0))
+        res = ir.regions[f.region].residual
+        deviation[f.region] = max(
+            res.max if res is not None else 0.0,
+            f.max_boundary_deviation,
+            f.max_vertex_displacement,
+            f.max_shape_tolerance,
+        )
+    if not origins:
+        return
+    every = tris[
+        np.asarray([t for r in origins for t in ir.regions[r].triangles], dtype=np.int64)
+    ].reshape(-1, 3)
+    floor = FLUX_DEFLECTION * float(np.ptp(every, axis=0).max())
+    deflection = max(min(deviation.values()), floor)
+    written = occ.face_fluxes(g.shape, g.mapping, g.context, origins, deflection)
+    for idx in members:
+        shell_ids = np.asarray(
+            [t for r in ir.shells[idx].regions for t in ir.regions[r].triangles], dtype=np.int64
+        )
+        outward = (_signed_volume(tris[shell_ids]) > 0) == (ir.shells[idx].role == "outer")
+        sign = 1.0 if outward else -1.0
+        for r in ir.shells[idx].regions:
+            mine = written.get(r)
+            if mine is None:
+                continue
+            t = tris[np.asarray(ir.regions[r].triangles, dtype=np.int64)] - origins[r]
+            theirs = sign * _signed_volume(t)
+            d = deviation[r] + deflection
+            bound = (mine.area + mine.perimeter * mine.reach) * d
+            bound += FLUX_RELATIVE * mine.area * mine.reach
+            if not abs(mine.flux - theirs) <= bound:
+                g.valid = False
+                g.issues.append(
+                    f"region {r}: the written face's flux about its centre is {mine.flux:.6g},"
+                    f" the mesh's {theirs:.6g} (allowed {bound:.3g})"
+                )
 
 
 def _signed_volume(t: np.ndarray) -> float:
@@ -431,7 +482,7 @@ def write(
     if tris is not None:
         for g in groups:
             if g.valid and g.kind == "solid":
-                _check_input_volume(ir, g, tris)
+                _check_input_volume(ir, g, tris, occ)
     fallback = None
     reason = None
     vertices = None
