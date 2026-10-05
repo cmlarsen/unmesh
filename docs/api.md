@@ -398,10 +398,13 @@ its `residual.max` takes their vertex distances and sagittas.
 to the least-squares point of its incident analytic surfaces: Gauss-Newton to convergence, with the
 directions the surfaces do not determine (eigenvalues of the normals' matrix below 1e-6) pulled to the
 mesh vertex, so on an intersection curve it takes the point nearest the vertex. The writer's own
-intersection solve then starts at its fixed point. The move is kept when the point's distance to the
-input mesh (the two-ring of the vertex) plus its largest distance to those surfaces is at most five
-times `tolerances.linear`; that sum is the vertex's contribution to `report.max_deviation`. Otherwise
-the vertex keeps its projection below. A boundary's kind follows [IR § Tangent versus
+intersection solve then starts at its fixed point. The move is kept when it is at most ten times
+`tolerances.linear` and the point's distance to the input mesh (the two-ring of the vertex) plus its
+largest distance to those surfaces is at most five times `tolerances.linear`; that sum is the vertex's
+contribution to `report.max_deviation`. Next to a `facets` region the vertex is a corner of the
+patch, so its whole displacement counts instead of its distance to the mesh, and a junction of a
+`facets` region with a curved one is not moved at all (the patch would then stand in for the curved
+surface across a moved chord). Otherwise the vertex keeps its projection below. A boundary's kind follows [IR § Tangent versus
 transversal](ir.md#tangent-versus-transversal): the dihedral of the fitted surfaces is sampled at each
 polyline node (for a `facets` side, against the facet carrying the adjacent boundary edge) and runs
 are split with the hysteresis band there. A `kind_change` vertex is then moved, within the polyline

@@ -6,6 +6,7 @@ use super::surface::{Constraint, Surface};
 
 const EIGEN_FLOOR: f64 = 5e-4;
 pub const JUNCTION_REACH: f64 = 5.0;
+const JUNCTION_SLIDE: f64 = 10.0;
 const GAUSS_NEWTON_STEPS: usize = 3;
 
 fn solve(x0: V3, constraints: &[&Constraint]) -> V3 {
@@ -188,15 +189,22 @@ pub fn run(args: ProjectArgs<'_>) -> Projected {
                 .map(|(s, _)| *s)
                 .collect();
             let mut dev = norm(sub(x, vc[v])) + off_surfaces(x, &analytic);
-            if surfaces.len() >= 3 && analytic.len() >= 2 {
+            let facets = analytic.len() < surfaces.len();
+            let curved = analytic.iter().any(|s| s.as_plane().is_none());
+            if surfaces.len() >= 3 && analytic.len() >= 2 && !(facets && curved) {
                 let y = lsq_point(vc[v], x, &analytic);
-                let near = mesh_distance(
-                    y,
-                    ring.around(v, faces)
-                        .map(|f| faces[f as usize].map(|k| vc[k as usize])),
-                );
+                let disp = norm(sub(y, vc[v]));
+                let near = if facets {
+                    disp
+                } else {
+                    mesh_distance(
+                        y,
+                        ring.around(v, faces)
+                            .map(|f| faces[f as usize].map(|k| vc[k as usize])),
+                    )
+                };
                 let dy = near + off_surfaces(y, &analytic);
-                if dy <= JUNCTION_REACH * tol {
+                if disp <= JUNCTION_SLIDE * tol && dy <= JUNCTION_REACH * tol {
                     x = y;
                     dev = dy;
                 }
