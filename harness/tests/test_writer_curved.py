@@ -93,3 +93,42 @@ def test_oracle_ir_writes_tangent_edges_all_seeds(family, seed, tmp_path):
 @pytest.mark.parametrize(("family", "seed"), _cases(True, TANGENT_FAMILIES))
 def test_automatic_ir_writes_tangent_edges_without_fallback_all_seeds(family, seed, tmp_path):
     _check(family, seed, tmp_path, automatic=True)
+
+
+def _operator_cases(slow: bool):
+    seeds = corpus_seeds(list(TANGENT_FAMILIES))
+    out = []
+    for family in TANGENT_FAMILIES if slow else ("corner_fillet",):
+        for seed in seeds[family][:3] if slow else seeds[family][:1]:
+            for op in ("rotation", "float32"):
+                for automatic in (False, True):
+                    marks = [pytest.mark.slow] if slow else []
+                    out.append(pytest.param(family, seed, op, automatic, marks=marks))
+    return out
+
+
+def _check_operator(family, seed, op, automatic, tmp_path):
+    from unmesh_harness.degrade.core import apply
+
+    gt = generate(family, seed)
+    mesh = apply(op, tessellate(gt.solid, *DEFLECTION), 1.0, seed)
+    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
+    ir = unmesh.convert(tris).ir if automatic else build_oracle_ir(mesh)
+    path = tmp_path / f"{family}-{seed}-{op}.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.valid and report.verified and report.readback.ok, report.issues
+    assert report.fallback is None, report.fallback_reason
+    assert report.max_shape_tolerance <= MAX_SHAPE_TOLERANCE_MM
+    assert brep_counts(occ.read_step(path)) == brep_counts(gt.solid)
+
+
+@pytest.mark.parametrize(("family", "seed", "op", "automatic"), _operator_cases(False))
+def test_tangent_edges_survive_rotation_and_float32(family, seed, op, automatic, tmp_path):
+    _check_operator(family, seed, op, automatic, tmp_path)
+
+
+@pytest.mark.parametrize(("family", "seed", "op", "automatic"), _operator_cases(True))
+def test_tangent_edges_survive_rotation_and_float32_all_families(
+    family, seed, op, automatic, tmp_path
+):
+    _check_operator(family, seed, op, automatic, tmp_path)

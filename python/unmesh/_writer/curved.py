@@ -42,6 +42,11 @@ from .topology import BuildError, SeamGap, _boundary_nodes, _signed_area
 INTERSECTION_TOLERANCE = 1e-7
 EDGE_TOLERANCE = 1e-7
 SEAM_TOLERANCE = 1e-6
+PLANE_PULL = 1e-8
+JUNCTION_ITERATIONS = 30
+SETTLE_ITERATIONS = 50
+VERTEX_SLACK = 2.0
+JUNCTION_PULL = 1e-12
 BRANCH_SAMPLES = 24
 SEAM_ITERATIONS = 60
 TWO_PI = 2.0 * math.pi
@@ -100,10 +105,67 @@ def _xyz(p) -> np.ndarray:
     return np.array([p.X(), p.Y(), p.Z()])
 
 
+def _tangent_pairs(ir: Ir) -> dict[int, list[tuple[int, int]]]:
+    out: dict[int, list[tuple[int, int]]] = {}
+    for adj in ir.adjacencies:
+        a, b = adj.regions
+        sa, sb = ir.regions[a].surface, ir.regions[b].surface
+        if not (geo.is_analytic(sa) and geo.is_analytic(sb)):
+            continue
+        if not (geo.is_curved(sa) or geo.is_curved(sb)):
+            continue
+        for bd in adj.boundaries:
+            if bd.kind != "tangent" or bd.closed:
+                continue
+            for v in (bd.start_vertex, bd.end_vertex):
+                if ir.vertices[v].role == "junction" and (a, b) not in out.get(v, []):
+                    out.setdefault(v, []).append((a, b))
+    return out
+
+
+def _vertex_residuals(x, surfaces, pairs, frame, scale):
+    rows = []
+    for s in surfaces:
+        q, n = geo.closest(s, x)
+        rows.append(float((x - q) @ n))
+    for sa, sb in pairs:
+        d = geo.outward(sa, x) - geo.outward(sb, x)
+        rows.extend(scale * float(d @ w) for w in frame)
+    return np.array(rows)
+
+
+def onto_tangent_junction(surfaces, pairs, x0, limit: float) -> np.ndarray:
+    scale = max(_lateral_scale(pair, x0) for pair in pairs)
+    n = geo.outward(pairs[0][0], x0)
+    w1 = geo.perpendicular(n)
+    frame = (w1, np.cross(n, w1))
+    reach = 4.0 * math.sqrt(2.0 * limit * scale) + limit
+    x = np.asarray(x0, dtype=float)
+    h = 1e-7 * max(1.0, scale)
+    for _ in range(JUNCTION_ITERATIONS):
+        r = _vertex_residuals(x, surfaces, pairs, frame, scale)
+        jac = np.column_stack(
+            [
+                (_vertex_residuals(x + h * e, surfaces, pairs, frame, scale) - r) / h
+                for e in np.eye(3)
+            ]
+        )
+        step = np.linalg.solve(jac.T @ jac + JUNCTION_PULL * np.eye(3), -jac.T @ r)
+        x = x + step
+        if float(np.linalg.norm(step)) <= 1e-13 * max(1.0, float(np.linalg.norm(x))):
+            break
+    if float(np.linalg.norm(x - x0)) > reach:
+        return np.asarray(x0, dtype=float)
+    if max(geo.distance(s, x) for s in surfaces) > limit:
+        return np.asarray(x0, dtype=float)
+    return x
+
+
 def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
     vpos = list(vpos)
     vmoved = list(vmoved)
     bad = dict(bad)
+    tangent = _tangent_pairs(ir)
     for v in ir.vertices:
         surfaces = [ir.regions[r].surface for r in v.regions]
         if not any(geo.is_curved(s) for s in surfaces):
@@ -111,9 +173,16 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
         analytic = [s for s in surfaces if geo.is_analytic(s)]
         p0 = np.asarray(v.position, dtype=float)
         x = geo.refine(analytic, p0) if len(analytic) >= 2 else p0
+        snapped = x
+        if v.id in tangent:
+            pairs = [(ir.regions[a].surface, ir.regions[b].surface) for a, b in tangent[v.id]]
+            x = onto_tangent_junction(analytic, pairs, x, limit)
+        planes = [s for s in analytic if isinstance(s, Plane)]
+        if planes and len(analytic) >= 2:
+            x = onto_planes(planes, x)
         gap = float(np.linalg.norm(x - p0))
         bad.pop(v.id, None)
-        if gap > limit:
+        if float(np.linalg.norm(snapped - p0)) > limit:
             bad[v.id] = (
                 f"vertex {v.id}: surface intersection is {gap:.6g} from its IR position,"
                 f" over the {limit:.6g} limit"
@@ -121,6 +190,13 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
         vpos[v.id] = x
         vmoved[v.id] = gap
     return vpos, vmoved, bad
+
+
+def onto_planes(planes, x) -> np.ndarray:
+    n = np.array([geo.unit(p.normal) for p in planes])
+    d = np.array([n[i] @ np.asarray(p.origin, dtype=float) for i, p in enumerate(planes)])
+    pull = PLANE_PULL * np.eye(3)
+    return np.linalg.solve(n.T @ n + pull, n.T @ d + pull @ x)
 
 
 def geom_surface(surface, axis=None, xdir=None):
@@ -627,6 +703,8 @@ class _Builder:
         self.pool = pool
         self.builder = BRep_Builder()
         self.frames: dict[int, _Frame] = {}
+        self.poles: dict[int, np.ndarray] = {}
+        self.moved: set[int] = set()
         self.surfaces: dict[int, object] = {}
         self.edges: list[_Edge] = []
         self.loose: list = []
@@ -647,6 +725,8 @@ class _Builder:
                     self.out.vertex_displacement[r] = max(self.out.vertex_displacement[r], m)
         self.collect()
         self.intersect()
+        self.place_poles()
+        self.settle_vertices()
         self.choose_frames()
         self.make_edges()
         faces = [(r, f) for r in self.shell.regions for f in self.face(r)]
@@ -758,6 +838,8 @@ class _Builder:
             e.fit = "bspline"
             return
         e.fit, e.curve = found[0], found[1]
+        if e.fit == "circle":
+            e.curve = self.onto_sphere(e.curve, surfaces)
 
     def projector(self, e: _Edge):
         if not e.tangent or self.crossing(e):
@@ -768,6 +850,27 @@ class _Builder:
             return onto_tangency(surfaces, p, along, limit)
 
         return project
+
+    def onto_sphere(self, circle, surfaces):
+        for s in surfaces:
+            if not isinstance(s, Sphere):
+                continue
+            c = np.asarray(s.center, dtype=float)
+            n = _xyz(circle.Axis().Direction())
+            d = float((_xyz(circle.Location()) - c) @ n)
+            if abs(d) <= self.limit:
+                d = 0.0
+            r = math.sqrt(max(s.radius**2 - d * d, 0.0))
+            if abs(r - circle.Radius()) > self.limit:
+                return circle
+            ax = gp_Ax2(_pnt(c + d * n), _dir(n), circle.XAxis().Direction())
+            return Geom_Circle(ax, r)
+        return circle
+
+    def chain_points(self, e: _Edge) -> list[np.ndarray]:
+        if e.closed:
+            return list(e.points)
+        return [self.vpos[e.start], *e.points[1:-1], self.vpos[e.end]]
 
     def crossing(self, e: _Edge) -> bool:
         if e.closed:
@@ -787,9 +890,9 @@ class _Builder:
                 return geo.plane_normal(e.points)
         if isinstance(s, Sphere):
             c = np.asarray(s.center, dtype=float)
-            pole = self.pole_vertex(r)
+            pole = self.poles.get(r)
             if pole is not None:
-                return geo.unit(np.asarray(self.vpos[pole], dtype=float) - c)
+                return pole
             d = sum(
                 (geo.unit(p - c) for e in self.edges if r in (e.a, e.b) for p in e.points),
                 np.zeros(3),
@@ -798,7 +901,52 @@ class _Builder:
                 return geo.perpendicular(d)
         return np.array([0.0, 0.0, 1.0])
 
-    def pole_vertex(self, r) -> int | None:
+    def settle_vertices(self):
+        curves: dict[int, list] = {}
+        for e in self.edges:
+            if e.curved and not e.closed and e.curve is not None:
+                for v in {e.start, e.end}:
+                    curves.setdefault(v, []).append(e.curve)
+        for v, cs in curves.items():
+            if len(cs) < 2:
+                continue
+            x0 = np.asarray(self.vpos[v], dtype=float)
+            x = x0
+            for _ in range(SETTLE_ITERATIONS):
+                nxt = sum(_xyz(c.Value(nearest(c, x)[0])) for c in cs) / len(cs)
+                done = float(np.linalg.norm(nxt - x)) <= 1e-15 * max(1.0, float(np.linalg.norm(x)))
+                x = nxt
+                if done:
+                    break
+            planes = [
+                self.surface(r)
+                for r in self.ir.vertices[v].regions
+                if isinstance(self.surface(r), Plane)
+            ]
+            if planes:
+                x = onto_planes(planes, x)
+            spread = max(nearest(c, x)[1] for c in cs)
+            if (
+                spread < max(nearest(c, x0)[1] for c in cs)
+                and float(np.linalg.norm(x - x0)) <= self.limit
+            ):
+                self.vpos[v] = x
+
+    def place_poles(self):
+        for r in self.shell.regions:
+            s = self.surface(r)
+            if isinstance(s, Sphere) and not any(e.closed and r in (e.a, e.b) for e in self.edges):
+                axis = self.pole_axis(r)
+                if axis is not None:
+                    self.poles[r] = axis
+        for e in self.edges:
+            if e.tangent and not e.closed and {e.start, e.end} & self.moved:
+                if e.fit == "circle" and any(r in self.poles for r in (e.a, e.b)):
+                    continue
+                e.curve = None
+                self.fit_tangent(e)
+
+    def pole_axis(self, r) -> np.ndarray | None:
         s = self.surface(r)
         c = np.asarray(s.center, dtype=float)
         ends: dict[int, list[_Edge]] = {}
@@ -815,7 +963,19 @@ class _Builder:
                 and abs(e.curve.Radius() - s.radius) <= 1e-6 * s.radius
             ]
             if len(ends[v]) == 2 and len(meridians) == 2:
-                return v
+                n1, n2 = (_xyz(e.curve.Axis().Direction()) for e in meridians)
+                axis = geo.unit(np.cross(n1, n2))
+                if not np.linalg.norm(axis) > 0:
+                    continue
+                if axis @ (np.asarray(self.vpos[v]) - c) < 0:
+                    axis = -axis
+                pole = c + s.radius * axis
+                if float(np.linalg.norm(pole - self.vpos[v])) > self.limit:
+                    continue
+                if np.any(pole != self.vpos[v]):
+                    self.vpos[v] = pole
+                    self.moved.add(v)
+                return axis
         return None
 
     def winds(self, e: _Edge, r: int) -> bool:
@@ -836,7 +996,7 @@ class _Builder:
         angles = []
         for e in self.edges:
             if r in (e.a, e.b) and not (e.closed and self.winds(e, r)):
-                for p in e.points:
+                for p in self.chain_points(e):
                     q = p - origin
                     if np.linalg.norm(q - (q @ axis) * axis) > 1e-9 * max(1.0, np.linalg.norm(q)):
                         angles.append(geo.angle_about(p, origin, axis, xdir))
@@ -882,7 +1042,7 @@ class _Builder:
         for e in self.edges:
             if r not in (e.a, e.b):
                 continue
-            seg = _Segment([], e.start, e.end, list(e.points))
+            seg = _Segment([], e.start, e.end, self.chain_points(e))
             segs.append(seg if r == e.a else _reverse_segment(seg))
         s = self.surface(r)
         try:
@@ -989,8 +1149,7 @@ class _Builder:
                 e.deviation = dev
                 v0 = self.pool.vertex(start)
                 v1 = self.pool.vertex(end)
-                if e.tangent:
-                    self.loosen_vertices(e.curve, ((v0, start, t0), (v1, end, t1)))
+                self.loosen_vertices(e.curve, ((v0, start, t0), (v1, end, t1)))
                 if t0 <= t1:
                     mk = BRepBuilderAPI_MakeEdge(e.curve, v0, v1, t0, t1)
                     reverse = False
@@ -1012,8 +1171,8 @@ class _Builder:
     def loosen_vertices(self, curve, ends):
         for v, p, t in ends:
             gap = float(np.linalg.norm(_xyz(curve.Value(t)) - p))
-            if gap > BRep_Tool.Tolerance_s(v):
-                self.builder.UpdateVertex(v, max(EDGE_TOLERANCE, 1.01 * gap))
+            if VERTEX_SLACK * gap > BRep_Tool.Tolerance_s(v):
+                self.builder.UpdateVertex(v, max(EDGE_TOLERANCE, VERTEX_SLACK * gap))
 
     def tangent_tolerance(self, e: _Edge, edge, surfaces, lo: float, hi: float):
         n = max(8 * len(e.points), 64)
@@ -1467,6 +1626,18 @@ def sampled_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
     return parts[0] if len(parts) == 1 else _concat2d(parts)
 
 
+def meridian_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
+    if not isinstance(surf, Geom_SphericalSurface) or not isinstance(curve, Geom_Circle):
+        return None
+    mid = 0.5 * (first + last)
+    a = surface_uv(surf, curve.Value(mid))
+    b = surface_uv(surf, curve.Value(mid + 1e-3 * (last - first)))
+    if abs(b[0] - a[0]) > 1e-9:
+        return None
+    sign = 1.0 if b[1] > a[1] else -1.0
+    return Geom2d_Line(gp_Pnt2d(float(a[0]), float(a[1] - sign * mid)), gp_Dir2d(0.0, sign))
+
+
 def pcurve_error(surf, curve, first: float, last: float, pc) -> float:
     worst = 0.0
     for t in np.linspace(first, last, PCURVE_CHECKS):
@@ -1497,9 +1668,13 @@ class _UVLoop:
             pc = corrected_pcurve(surf, curve, first, last, pc)
             error = pcurve_error(surf, curve, first, last, pc)
             if error > PCURVE_EXACT:
-                sampled = sampled_pcurve(surf, curve, first, last, self.v_periodic)
-                if sampled is not None and pcurve_error(surf, curve, first, last, sampled) < error:
-                    pc = sampled
+                for build in (meridian_pcurve, sampled_pcurve):
+                    other = build(surf, curve, first, last, self.v_periodic)
+                    if other is None:
+                        continue
+                    other_error = pcurve_error(surf, curve, first, last, other)
+                    if other_error < error:
+                        pc, error = other, other_error
             a, b = (first, last) if e.Orientation() == TopAbs_FORWARD else (last, first)
             uv.append([np.array(pc.Value(a).Coord()), np.array(pc.Value(b).Coord())])
             self.pcurves.append(pc)
