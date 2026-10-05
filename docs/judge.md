@@ -32,7 +32,9 @@ For each reference mesh, two directions, each with `max`, `p99`, `p95`, `mean`:
   smaller of the two neighbouring regions' distances. That point is found on the footprint: each analytic region's source
   triangles with their corners projected onto the surface (a facets region's own triangles). The
   nearest point of that flat footprint is then moved onto its region's analytic surface, which removes
-  the chord error of the flat triangle inside a face.
+  the chord error of the flat triangle inside a face. Against the input mesh, each sample is also
+  measured to its own projection onto the surface of the analytic region that owns its triangle, and
+  the smaller of the two is kept (see below).
 
 `JudgeResult.input.max` is the larger of the two directions against the input mesh. `region_max` is the
 largest `ir_to_mesh` distance per region (IR to mesh only; there is no per-region reverse distance).
@@ -58,9 +60,15 @@ which is `under_reports()` in Python and `unmesh_core::judge::under_reports` in 
 The footprint is the region's source triangles, not the trimmed face the writer will build. The judged
 patch is those triangles projected onto the surface. Area that a writer extends a wrong surface over,
 out to its trims, is not judged. Near a footprint boundary on a curved region the nearest flat point can belong to a
-neighbouring region, and the reverse distance then reads up to the chord deflection of the input
-tessellation instead of zero. Against the input mesh itself this is exactly the deviation being
-measured; against the truth mesh it is an upper bound, not a measurement of the fit.
+neighbouring region. Its projection then sits on that region's surface, up to a chord gap away from
+the flat point, while the region that owns the sample can be closer. The nearest flat triangle is
+the wrong argmin there: on noisy fillet parts it read the reverse distance up to 25% above both the
+converter's honest per-region deviation and a dense brute-force check, and flagged honest reports as
+under-reports (issue #94). So a sample of the input mesh is also measured to the projection of itself
+onto its owning region's surface. That point lies in the owner's judged patch (the projection of the
+owner's source triangles), so the minimum is still an upper bound on the true distance to the IR, and
+it never exceeds the owner's own residual at that point. The truth mesh has no owners and keeps the
+flat-footprint value, which near a curved boundary is an upper bound, not a measurement of the fit.
 
 ## Calibration
 

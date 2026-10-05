@@ -191,6 +191,51 @@ fn cylinder_against_its_tessellation_reports_the_chord_error() {
     assert!(r.input.ir_to_mesh.mean < sagitta);
 }
 
+fn quad(x0: f64, x1: f64, z: f64) -> [Triangle; 2] {
+    let (a, b, c, d) = ([x0, 0.0, z], [x1, 0.0, z], [x1, 1.0, z], [x0, 1.0, z]);
+    [[a, b, c], [a, c, d]]
+}
+
+#[test]
+fn reverse_direction_does_not_charge_a_neighbouring_chord_gap() {
+    let (w, radius, chord_z) = (0.8_f64, 1.0_f64, 0.15);
+    let sagitta = radius - (radius * radius - w * w).sqrt();
+    let plane_offset = 0.1;
+    let mut tris = quad(0.0, 1.0, plane_offset).to_vec();
+    tris.extend(quad(0.5 - w, 0.5 + w, chord_z));
+    let plane = Surface::Plane {
+        origin: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
+    };
+    let cylinder = Surface::Cylinder {
+        origin: [0.5, 0.0, chord_z - (radius - sagitta)],
+        axis: [0.0, 1.0, 0.0],
+        radius,
+        orientation: Orientation::Same,
+    };
+    let ir = ir_of(
+        vec![
+            region(0, plane, vec![0, 1]),
+            region(1, cylinder, vec![2, 3]),
+        ],
+        tris.len(),
+    );
+    let r = judge(
+        &ir,
+        &tris,
+        None,
+        &JudgeOptions {
+            samples_per_mm2: 50.0,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert!((r.input.ir_to_mesh.max - sagitta).abs() < 1e-6, "{r:?}");
+    assert!((r.input.mesh_to_ir.max - sagitta).abs() < 1e-6, "{r:?}");
+    assert!(!under_reports(sagitta, &r.input));
+    assert!(under_reports(0.5 * sagitta, &r.input));
+}
+
 #[test]
 fn facets_regions_are_sampled_on_their_own_triangles() {
     let (tris, _) = cube(10.0);
