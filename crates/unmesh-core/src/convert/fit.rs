@@ -415,7 +415,91 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         grown.prefit,
         false,
     );
-    (grown.label, regions)
+    let mut label = grown.label;
+    absorb_remnants(vc, faces, nbr, info, &mut label, &mut regions, tol);
+    (label, regions)
+}
+
+const REMNANT_FACES: usize = 2;
+
+fn curved(s: &Surface) -> bool {
+    s.is_analytic() && s.as_plane().is_none()
+}
+
+/// Gives a remnant of at most `REMNANT_FACES` triangles that is not itself
+/// curved to an adjacent curved region whose surface passes within `tol` of
+/// every one of its vertices: the long sliver triangles a tessellator leaves
+/// where a curved face meets another, whose chord sagitta growth refused. The
+/// curved surface is kept; its residual takes the remnant's vertex distances
+/// and sagittas, so the reported deviation still bounds every triangle.
+pub fn absorb_remnants(
+    vc: &[V3],
+    faces: &[[u32; 3]],
+    nbr: &[[u32; 3]],
+    info: &[TriInfo],
+    label: &mut [u32],
+    regions: &mut [Region],
+    tol: f64,
+) {
+    loop {
+        let mut changed = false;
+        for r in 0..regions.len() {
+            let n = regions[r].faces.len();
+            if n == 0 || n > REMNANT_FACES || curved(&regions[r].surface) {
+                continue;
+            }
+            let mut cands: Vec<u32> = regions[r]
+                .faces
+                .iter()
+                .flat_map(|&f| nbr[f as usize])
+                .filter(|&g| g != NONE)
+                .map(|g| label[g as usize])
+                .filter(|&l| l != NONE && l as usize != r)
+                .filter(|&l| {
+                    let c = &regions[l as usize];
+                    curved(&c.surface) && c.max <= tol
+                })
+                .collect();
+            cands.sort_unstable();
+            cands.dedup();
+            let best = cands
+                .into_iter()
+                .filter_map(|c| {
+                    let s = &regions[c as usize].surface;
+                    let worst = regions[r]
+                        .faces
+                        .iter()
+                        .flat_map(|&f| faces[f as usize])
+                        .map(|v| s.distance(vc[v as usize]).abs())
+                        .fold(0.0, f64::max);
+                    (worst <= tol).then_some((worst, c))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let Some((worst, c)) = best else {
+                continue;
+            };
+            let moved = std::mem::take(&mut regions[r].faces);
+            let surf = regions[c as usize].surface;
+            let sag = moved
+                .iter()
+                .map(|&f| super::curved::sagitta(&surf, faces[f as usize].map(|v| vc[v as usize])))
+                .fold(0.0, f64::max);
+            let area: f64 = moved.iter().map(|&f| info[f as usize].area).sum();
+            let target = &mut regions[c as usize];
+            for &f in &moved {
+                label[f as usize] = c;
+            }
+            target.faces.extend_from_slice(&moved);
+            target.max = target.max.max(worst);
+            target.sag = target.sag.max(sag);
+            target.area += area;
+            regions[r].area = 0.0;
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 pub struct RunArgs<'a> {
