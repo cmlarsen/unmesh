@@ -1,0 +1,1269 @@
+{
+  "version": 1,
+  "name": "full",
+  "corpus_grid": "standard",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "timeout_s": 300,
+  "input_deflection": [
+    0.01,
+    0.2
+  ],
+  "truth_deflection": [
+    0.001,
+    0.1
+  ],
+  "cells": [
+    {
+      "operator": "identity",
+      "severity": 0.0,
+      "steps": [],
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 1.0,
+      "steps": [
+        [
+          "float32",
+          1.0
+        ]
+      ],
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "operator": "coarsen",
+      "severity": 0.1,
+      "steps": [
+        [
+          "coarsen",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "coarsen",
+      "severity": 0.25,
+      "steps": [
+        [
+          "coarsen",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "coarsen",
+      "severity": 0.5,
+      "steps": [
+        [
+          "coarsen",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "coarsen",
+      "severity": 0.75,
+      "steps": [
+        [
+          "coarsen",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "coarsen",
+      "severity": 1.0,
+      "steps": [
+        [
+          "coarsen",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "crack_seam",
+      "severity": 0.1,
+      "steps": [
+        [
+          "crack_seam",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "crack_seam",
+      "severity": 0.25,
+      "steps": [
+        [
+          "crack_seam",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "crack_seam",
+      "severity": 0.5,
+      "steps": [
+        [
+          "crack_seam",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "crack_seam",
+      "severity": 0.75,
+      "steps": [
+        [
+          "crack_seam",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "crack_seam",
+      "severity": 1.0,
+      "steps": [
+        [
+          "crack_seam",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "duplicate_facets",
+      "severity": 0.1,
+      "steps": [
+        [
+          "duplicate_facets",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "duplicate_facets",
+      "severity": 0.25,
+      "steps": [
+        [
+          "duplicate_facets",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "duplicate_facets",
+      "severity": 0.5,
+      "steps": [
+        [
+          "duplicate_facets",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "duplicate_facets",
+      "severity": 0.75,
+      "steps": [
+        [
+          "duplicate_facets",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "duplicate_facets",
+      "severity": 1.0,
+      "steps": [
+        [
+          "duplicate_facets",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "far_translation",
+      "severity": 0.1,
+      "steps": [
+        [
+          "far_translation",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "far_translation",
+      "severity": 0.25,
+      "steps": [
+        [
+          "far_translation",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "far_translation",
+      "severity": 0.5,
+      "steps": [
+        [
+          "far_translation",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "far_translation",
+      "severity": 0.75,
+      "steps": [
+        [
+          "far_translation",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "far_translation",
+      "severity": 1.0,
+      "steps": [
+        [
+          "far_translation",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "fillet_rows",
+      "severity": 0.1,
+      "steps": [
+        [
+          "fillet_rows",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "fillet_rows",
+      "severity": 0.25,
+      "steps": [
+        [
+          "fillet_rows",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "fillet_rows",
+      "severity": 0.5,
+      "steps": [
+        [
+          "fillet_rows",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "fillet_rows",
+      "severity": 0.75,
+      "steps": [
+        [
+          "fillet_rows",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "fillet_rows",
+      "severity": 1.0,
+      "steps": [
+        [
+          "fillet_rows",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "flipped_facets",
+      "severity": 0.1,
+      "steps": [
+        [
+          "flipped_facets",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "flipped_facets",
+      "severity": 0.25,
+      "steps": [
+        [
+          "flipped_facets",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "flipped_facets",
+      "severity": 0.5,
+      "steps": [
+        [
+          "flipped_facets",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "flipped_facets",
+      "severity": 0.75,
+      "steps": [
+        [
+          "flipped_facets",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "flipped_facets",
+      "severity": 1.0,
+      "steps": [
+        [
+          "flipped_facets",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 0.1,
+      "steps": [
+        [
+          "float32",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 0.25,
+      "steps": [
+        [
+          "float32",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 0.5,
+      "steps": [
+        [
+          "float32",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "float32",
+      "severity": 0.75,
+      "steps": [
+        [
+          "float32",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "hole_patch",
+      "severity": 0.1,
+      "steps": [
+        [
+          "hole_patch",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "hole_patch",
+      "severity": 0.25,
+      "steps": [
+        [
+          "hole_patch",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "hole_patch",
+      "severity": 0.5,
+      "steps": [
+        [
+          "hole_patch",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "hole_patch",
+      "severity": 0.75,
+      "steps": [
+        [
+          "hole_patch",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "hole_patch",
+      "severity": 1.0,
+      "steps": [
+        [
+          "hole_patch",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "inch_round_trip",
+      "severity": 0.1,
+      "steps": [
+        [
+          "inch_round_trip",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "inch_round_trip",
+      "severity": 0.25,
+      "steps": [
+        [
+          "inch_round_trip",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "inch_round_trip",
+      "severity": 0.5,
+      "steps": [
+        [
+          "inch_round_trip",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "inch_round_trip",
+      "severity": 0.75,
+      "steps": [
+        [
+          "inch_round_trip",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "inch_round_trip",
+      "severity": 1.0,
+      "steps": [
+        [
+          "inch_round_trip",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "mirror",
+      "severity": 0.1,
+      "steps": [
+        [
+          "mirror",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "mirror",
+      "severity": 0.25,
+      "steps": [
+        [
+          "mirror",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "mirror",
+      "severity": 0.5,
+      "steps": [
+        [
+          "mirror",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "mirror",
+      "severity": 0.75,
+      "steps": [
+        [
+          "mirror",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "mirror",
+      "severity": 1.0,
+      "steps": [
+        [
+          "mirror",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.1,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.1
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.25,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.25
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.5,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.5
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.75,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.75
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 1.0,
+      "steps": [
+        [
+          "noise_isotropic",
+          1.0
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 0.1,
+      "steps": [
+        [
+          "noise_normal",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 0.25,
+      "steps": [
+        [
+          "noise_normal",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 0.5,
+      "steps": [
+        [
+          "noise_normal",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 0.75,
+      "steps": [
+        [
+          "noise_normal",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 1.0,
+      "steps": [
+        [
+          "noise_normal",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "noise_off_plane",
+      "severity": 0.1,
+      "steps": [
+        [
+          "noise_off_plane",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "noise_off_plane",
+      "severity": 0.25,
+      "steps": [
+        [
+          "noise_off_plane",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "noise_off_plane",
+      "severity": 0.5,
+      "steps": [
+        [
+          "noise_off_plane",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "noise_off_plane",
+      "severity": 0.75,
+      "steps": [
+        [
+          "noise_off_plane",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "noise_off_plane",
+      "severity": 1.0,
+      "steps": [
+        [
+          "noise_off_plane",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "nonmanifold_fin",
+      "severity": 0.1,
+      "steps": [
+        [
+          "nonmanifold_fin",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "nonmanifold_fin",
+      "severity": 0.25,
+      "steps": [
+        [
+          "nonmanifold_fin",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "nonmanifold_fin",
+      "severity": 0.5,
+      "steps": [
+        [
+          "nonmanifold_fin",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "nonmanifold_fin",
+      "severity": 0.75,
+      "steps": [
+        [
+          "nonmanifold_fin",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "nonmanifold_fin",
+      "severity": 1.0,
+      "steps": [
+        [
+          "nonmanifold_fin",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "nonuniform_chords",
+      "severity": 0.1,
+      "steps": [
+        [
+          "nonuniform_chords",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "nonuniform_chords",
+      "severity": 0.25,
+      "steps": [
+        [
+          "nonuniform_chords",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "nonuniform_chords",
+      "severity": 0.5,
+      "steps": [
+        [
+          "nonuniform_chords",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "nonuniform_chords",
+      "severity": 0.75,
+      "steps": [
+        [
+          "nonuniform_chords",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "nonuniform_chords",
+      "severity": 1.0,
+      "steps": [
+        [
+          "nonuniform_chords",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "refine",
+      "severity": 0.1,
+      "steps": [
+        [
+          "refine",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "refine",
+      "severity": 0.25,
+      "steps": [
+        [
+          "refine",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "refine",
+      "severity": 0.5,
+      "steps": [
+        [
+          "refine",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "refine",
+      "severity": 0.75,
+      "steps": [
+        [
+          "refine",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "refine",
+      "severity": 1.0,
+      "steps": [
+        [
+          "refine",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "retriangulate",
+      "severity": 0.1,
+      "steps": [
+        [
+          "retriangulate",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "retriangulate",
+      "severity": 0.25,
+      "steps": [
+        [
+          "retriangulate",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "retriangulate",
+      "severity": 0.5,
+      "steps": [
+        [
+          "retriangulate",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "retriangulate",
+      "severity": 0.75,
+      "steps": [
+        [
+          "retriangulate",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "retriangulate",
+      "severity": 1.0,
+      "steps": [
+        [
+          "retriangulate",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.1,
+      "steps": [
+        [
+          "rotation",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.25,
+      "steps": [
+        [
+          "rotation",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.5,
+      "steps": [
+        [
+          "rotation",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.75,
+      "steps": [
+        [
+          "rotation",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "rotation",
+      "severity": 1.0,
+      "steps": [
+        [
+          "rotation",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "slivers",
+      "severity": 0.1,
+      "steps": [
+        [
+          "slivers",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "slivers",
+      "severity": 0.25,
+      "steps": [
+        [
+          "slivers",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "slivers",
+      "severity": 0.5,
+      "steps": [
+        [
+          "slivers",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "slivers",
+      "severity": 0.75,
+      "steps": [
+        [
+          "slivers",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "slivers",
+      "severity": 1.0,
+      "steps": [
+        [
+          "slivers",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "stray_shells",
+      "severity": 0.1,
+      "steps": [
+        [
+          "stray_shells",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "stray_shells",
+      "severity": 0.25,
+      "steps": [
+        [
+          "stray_shells",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "stray_shells",
+      "severity": 0.5,
+      "steps": [
+        [
+          "stray_shells",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "stray_shells",
+      "severity": 0.75,
+      "steps": [
+        [
+          "stray_shells",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "stray_shells",
+      "severity": 1.0,
+      "steps": [
+        [
+          "stray_shells",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "t_junctions",
+      "severity": 0.1,
+      "steps": [
+        [
+          "t_junctions",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "t_junctions",
+      "severity": 0.25,
+      "steps": [
+        [
+          "t_junctions",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "t_junctions",
+      "severity": 0.5,
+      "steps": [
+        [
+          "t_junctions",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "t_junctions",
+      "severity": 0.75,
+      "steps": [
+        [
+          "t_junctions",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "t_junctions",
+      "severity": 1.0,
+      "steps": [
+        [
+          "t_junctions",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "truncated_digits",
+      "severity": 0.1,
+      "steps": [
+        [
+          "truncated_digits",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "truncated_digits",
+      "severity": 0.25,
+      "steps": [
+        [
+          "truncated_digits",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "truncated_digits",
+      "severity": 0.5,
+      "steps": [
+        [
+          "truncated_digits",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "truncated_digits",
+      "severity": 0.75,
+      "steps": [
+        [
+          "truncated_digits",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "truncated_digits",
+      "severity": 1.0,
+      "steps": [
+        [
+          "truncated_digits",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_corners",
+      "severity": 0.1,
+      "steps": [
+        [
+          "unwelded_corners",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_corners",
+      "severity": 0.25,
+      "steps": [
+        [
+          "unwelded_corners",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_corners",
+      "severity": 0.5,
+      "steps": [
+        [
+          "unwelded_corners",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_corners",
+      "severity": 0.75,
+      "steps": [
+        [
+          "unwelded_corners",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_corners",
+      "severity": 1.0,
+      "steps": [
+        [
+          "unwelded_corners",
+          1.0
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_gap",
+      "severity": 0.1,
+      "steps": [
+        [
+          "unwelded_gap",
+          0.1
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_gap",
+      "severity": 0.25,
+      "steps": [
+        [
+          "unwelded_gap",
+          0.25
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_gap",
+      "severity": 0.5,
+      "steps": [
+        [
+          "unwelded_gap",
+          0.5
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_gap",
+      "severity": 0.75,
+      "steps": [
+        [
+          "unwelded_gap",
+          0.75
+        ]
+      ]
+    },
+    {
+      "operator": "unwelded_gap",
+      "severity": 1.0,
+      "steps": [
+        [
+          "unwelded_gap",
+          1.0
+        ]
+      ]
+    },
+    {
+      "preset": "fusion-export",
+      "severity": 1.0
+    },
+    {
+      "preset": "tinkercad-export",
+      "severity": 1.0
+    },
+    {
+      "preset": "meshmixer-edit",
+      "severity": 1.0
+    },
+    {
+      "preset": "slicer-repair",
+      "severity": 1.0
+    },
+    {
+      "preset": "inch-roundtrip",
+      "severity": 1.0
+    }
+  ],
+  "judge_samples_per_mm2": 1.0,
+  "step_deviation_sample": [
+    2,
+    5
+  ],
+  "categories": [
+    "planar",
+    "curved",
+    "chamfer_fillet",
+    "complex",
+    "imported"
+  ]
+}
