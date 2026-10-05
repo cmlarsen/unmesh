@@ -7,7 +7,8 @@ pub mod stl;
 pub mod weld;
 
 pub use api::{
-    ConvertError, ConvertOptions, ConvertOutput, ConvertWarning, Report, convert, convert_soup,
+    ConvertError, ConvertOptions, ConvertOutput, ConvertWarning, Report, convert,
+    convert_from_labels, convert_soup, convert_soup_from_labels,
 };
 pub use ir::{Ir, IrError};
 pub use mesh::{IndexedMesh, TriangleSoup};

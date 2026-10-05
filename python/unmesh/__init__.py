@@ -1,5 +1,5 @@
 from unmesh._core import core_version, read_stl, weld, write_stl
-from unmesh.api import ConvertOptions, Report, Result, convert
+from unmesh.api import ConvertOptions, Report, Result, convert, convert_from_labels
 from unmesh.ir import Ir
 
 __version__ = core_version()
@@ -11,6 +11,7 @@ __all__ = [
     "Result",
     "__version__",
     "convert",
+    "convert_from_labels",
     "read_stl",
     "weld",
     "write_stl",

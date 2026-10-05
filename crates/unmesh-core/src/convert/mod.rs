@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop)]
 
 mod adjacency;
+mod curved;
 mod dsu;
 mod emit;
 mod fit;
@@ -65,21 +66,73 @@ pub fn convert_soup(
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn convert_from_labels(
-    soup: &TriangleSoup,
-    options: &ConvertOptions,
-    source_labels: &[u32],
-) -> Result<ConvertOutput, ConvertError> {
-    if source_labels.len() != soup.len() {
+pub fn validate_labels(labels: &[u32], triangles: usize) -> Result<(), ConvertError> {
+    if labels.len() != triangles {
         return Err(ConvertError::InvalidInput(format!(
             "label count {} does not match triangle count {}",
-            source_labels.len(),
-            soup.len()
+            labels.len(),
+            triangles
         )));
     }
+    if labels.contains(&NONE) {
+        return Err(ConvertError::InvalidInput(format!(
+            "label {NONE} (u32::MAX) is reserved"
+        )));
+    }
+    let n = labels.iter().max().map_or(0, |&m| m as usize + 1);
+    if n > labels.len() {
+        return Err(ConvertError::InvalidInput(format!(
+            "labels are sparse: largest label {} exceeds the triangle count",
+            n - 1
+        )));
+    }
+    let mut used = vec![false; n];
+    for &l in labels {
+        used[l as usize] = true;
+    }
+    if let Some(gap) = used.iter().position(|u| !u) {
+        return Err(ConvertError::InvalidInput(format!(
+            "labels must be contiguous from 0: label {gap} is unused"
+        )));
+    }
+    Ok(())
+}
+
+fn split_components(nbr: &[[u32; 3]], label: &[u32]) -> (Vec<u32>, usize) {
+    let mut out = vec![NONE; label.len()];
+    let mut next = 0u32;
+    let mut stack = Vec::new();
+    for f in 0..label.len() {
+        if label[f] == NONE || out[f] != NONE {
+            continue;
+        }
+        out[f] = next;
+        stack.push(f as u32);
+        while let Some(g) = stack.pop() {
+            for &h in &nbr[g as usize] {
+                if h != NONE && out[h as usize] == NONE && label[h as usize] == label[f] {
+                    out[h as usize] = next;
+                    stack.push(h);
+                }
+            }
+        }
+        next += 1;
+    }
+    (out, next as usize)
+}
+
+/// Fits one surface per labelled region (the oracle segmentation) instead of
+/// segmenting. Regions are never merged with each other; a label whose
+/// triangles fall apart into several edge-connected pieces becomes one region
+/// per piece.
+pub fn convert_soup_from_labels(
+    soup: &TriangleSoup,
+    source_labels: &[u32],
+    options: &ConvertOptions,
+) -> Result<ConvertOutput, ConvertError> {
+    validate_labels(source_labels, soup.len())?;
     let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
-    let face_labels: Vec<u32> = w
+    let raw: Vec<u32> = w
         .fsrc
         .iter()
         .enumerate()
@@ -91,18 +144,12 @@ pub(crate) fn convert_from_labels(
             }
         })
         .collect();
-    let n_seg = face_labels
-        .iter()
-        .filter(|&&l| l != NONE)
-        .max()
-        .map(|m| *m as usize + 1)
-        .unwrap_or(0);
+    let (face_labels, n_seg) = split_components(&shells.topo.nbr, &raw);
     let mut scratch = fit::Scratch::new(w.vc.len());
     let mut fit_once = |tol: f64| {
         fit::run(fit::RunArgs {
             vc: &w.vc,
             faces: &w.faces,
-            nbr: &shells.topo.nbr,
             info: &info,
             label: &face_labels,
             n_seg,
@@ -282,6 +329,7 @@ fn finish(
                     surface: surface::Surface::Facets,
                     rms: 0.0,
                     max: 0.0,
+                    sag: 0.0,
                     comp: ci,
                 })
                 .collect();
@@ -311,7 +359,7 @@ fn finish(
 mod tests {
     use rustc_hash::FxHashMap;
 
-    use super::linalg::{dot, scale, sub};
+    use super::linalg::{dot, norm, scale, sub};
     use super::*;
     use crate::ir::{Kind, ShellRole, Surface, VertexRole};
 
@@ -626,7 +674,7 @@ mod tests {
         };
         let labels: Vec<u32> = (0..12).map(|i| i / 2).collect();
         let a = convert_soup(&soup, &ConvertOptions::default()).unwrap();
-        let b = convert_from_labels(&soup, &ConvertOptions::default(), &labels).unwrap();
+        let b = convert_soup_from_labels(&soup, &labels, &ConvertOptions::default()).unwrap();
         assert_eq!(a.ir, b.ir);
         assert_eq!(a.report, b.report);
     }
@@ -645,5 +693,489 @@ mod tests {
                 .iter()
                 .any(|w| w.code == "repaired_winding")
         );
+    }
+
+    pub(super) struct Frame {
+        pub rot: [V3; 3],
+        pub off: V3,
+    }
+
+    impl Frame {
+        pub fn identity() -> Self {
+            Frame {
+                rot: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                off: [0.0; 3],
+            }
+        }
+
+        pub fn tilted() -> Self {
+            let (a, b) = (0.37_f64, 0.91_f64);
+            let (sa, ca) = a.sin_cos();
+            let (sb, cb) = b.sin_cos();
+            Frame {
+                rot: [
+                    [cb, -sb * ca, sb * sa],
+                    [sb, cb * ca, -cb * sa],
+                    [0.0, sa, ca],
+                ],
+                off: [12.5, -7.25, 3.0],
+            }
+        }
+
+        pub fn map(&self, p: V3) -> V3 {
+            add(
+                [
+                    dot(self.rot[0], p),
+                    dot(self.rot[1], p),
+                    dot(self.rot[2], p),
+                ],
+                self.off,
+            )
+        }
+
+        pub fn dir(&self, p: V3) -> V3 {
+            [
+                dot(self.rot[0], p),
+                dot(self.rot[1], p),
+                dot(self.rot[2], p),
+            ]
+        }
+    }
+
+    pub(super) fn ring(r: f64, z: f64, i: usize, n: usize) -> V3 {
+        let t = std::f64::consts::TAU * (i % n) as f64 / n as f64;
+        [r * t.cos(), r * t.sin(), z]
+    }
+
+    /// Washer: outer cylinder (label 0), bore (labels 1 and, when
+    /// `split_bore`, 4 for the second half), top (2) and bottom (3) annuli.
+    pub(super) fn washer(
+        ro: f64,
+        ri: f64,
+        h: f64,
+        n: usize,
+        frame: &Frame,
+        split_bore: bool,
+    ) -> (TriangleSoup, Vec<u32>) {
+        let mut tris = Vec::new();
+        let mut labels = Vec::new();
+        let m = |p: V3| frame.map(p);
+        for i in 0..n {
+            let (o0, o1) = (ring(ro, 0.0, i, n), ring(ro, 0.0, i + 1, n));
+            let (o2, o3) = (ring(ro, h, i + 1, n), ring(ro, h, i, n));
+            tris.push([m(o0), m(o1), m(o2)]);
+            tris.push([m(o0), m(o2), m(o3)]);
+            labels.extend([0, 0]);
+            let (i0, i1) = (ring(ri, 0.0, i, n), ring(ri, 0.0, i + 1, n));
+            let (i2, i3) = (ring(ri, h, i + 1, n), ring(ri, h, i, n));
+            let bl = if split_bore && i >= n / 2 { 4 } else { 1 };
+            tris.push([m(i0), m(i2), m(i1)]);
+            tris.push([m(i0), m(i3), m(i2)]);
+            labels.extend([bl, bl]);
+            tris.push([m(i3), m(o3), m(o2)]);
+            tris.push([m(i3), m(o2), m(i2)]);
+            labels.extend([2, 2]);
+            tris.push([m(i0), m(o1), m(o0)]);
+            tris.push([m(i0), m(i1), m(o1)]);
+            labels.extend([3, 3]);
+        }
+        (TriangleSoup { triangles: tris }, labels)
+    }
+
+    /// Frustum: cone side (label 0) from radius `r0` at z=0 to `r1` at z=h,
+    /// bottom disc (1), top disc (2).
+    pub(super) fn frustum(
+        r0: f64,
+        r1: f64,
+        h: f64,
+        n: usize,
+        frame: &Frame,
+    ) -> (TriangleSoup, Vec<u32>) {
+        twisted_frustum(r0, r1, h, n, 0.0, frame)
+    }
+
+    pub(super) fn twisted_frustum(
+        r0: f64,
+        r1: f64,
+        h: f64,
+        n: usize,
+        twist: f64,
+        frame: &Frame,
+    ) -> (TriangleSoup, Vec<u32>) {
+        let top = |i: usize| {
+            let t = std::f64::consts::TAU * (i % n) as f64 / n as f64 + twist;
+            [r1 * t.cos(), r1 * t.sin(), h]
+        };
+        let mut tris = Vec::new();
+        let mut labels = Vec::new();
+        let m = |p: V3| frame.map(p);
+        for i in 0..n {
+            let (b0, b1) = (ring(r0, 0.0, i, n), ring(r0, 0.0, i + 1, n));
+            let (t1, t0) = (top(i + 1), top(i));
+            tris.push([m(b0), m(b1), m(t1)]);
+            tris.push([m(b0), m(t1), m(t0)]);
+            labels.extend([0, 0]);
+            tris.push([m([0.0, 0.0, 0.0]), m(b1), m(b0)]);
+            labels.push(1);
+            tris.push([m([0.0, 0.0, h]), m(t0), m(t1)]);
+            labels.push(2);
+        }
+        (TriangleSoup { triangles: tris }, labels)
+    }
+
+    fn labelled(soup: &TriangleSoup, labels: &[u32]) -> ConvertOutput {
+        convert_soup_from_labels(soup, labels, &ConvertOptions::default()).unwrap()
+    }
+
+    fn cylinder_of(ir: &crate::ir::Ir, tri: u32) -> (V3, V3, f64, crate::ir::Orientation) {
+        let r = ir
+            .regions
+            .iter()
+            .find(|r| r.triangles.contains(&tri))
+            .unwrap();
+        match &r.surface {
+            Surface::Cylinder {
+                origin,
+                axis,
+                radius,
+                orientation,
+            } => (*origin, *axis, *radius, *orientation),
+            s => panic!("triangle {tri}: expected a cylinder, got {s:?}"),
+        }
+    }
+
+    #[test]
+    fn labelled_washer_gives_two_cylinders_and_two_planes() {
+        use crate::ir::Orientation;
+        for (frame, n) in [
+            (Frame::identity(), 48),
+            (Frame::tilted(), 6),
+            (Frame::tilted(), 37),
+        ] {
+            let (soup, labels) = washer(10.0, 4.0, 5.0, n, &frame, false);
+            let out = labelled(&soup, &labels);
+            let ir = &out.ir;
+            ir.validate().unwrap();
+            assert_eq!(ir.regions.len(), 4, "n={n}");
+            assert_eq!(out.report.region_counts.get("cylinder"), Some(&2));
+            assert_eq!(out.report.region_counts.get("plane"), Some(&2));
+            let axis = frame.dir([0.0, 0.0, 1.0]);
+            for (tri, r, orient) in [
+                (0, 10.0, Orientation::Same),
+                (2, 4.0, Orientation::Reversed),
+            ] {
+                let (o, a, radius, or) = cylinder_of(ir, tri);
+                assert!((radius - r).abs() < 1e-9, "n={n}: radius {radius} vs {r}");
+                assert!(dot(a, axis).abs() > 1.0 - 1e-12, "n={n}: axis {a:?}");
+                let d = sub(o, frame.off);
+                assert!(norm(sub(d, scale(axis, dot(d, axis)))) < 1e-9);
+                assert_eq!(or, orient);
+            }
+            let sag = 10.0 * (1.0 - (std::f64::consts::PI / n as f64).cos());
+            assert!(out.report.max_deviation >= sag - 1e-9, "n={n}");
+            assert!(out.report.max_deviation < sag + 1e-6, "n={n}");
+            for a in &ir.adjacencies {
+                for b in &a.boundaries {
+                    assert!((b.dihedral_deg - 90.0).abs() < 1e-6);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn labelled_frustum_gives_a_cone() {
+        use crate::ir::Orientation;
+        for (frame, r0, r1, n) in [
+            (Frame::identity(), 8.0, 3.0, 64),
+            (Frame::tilted(), 2.0, 9.0, 7),
+        ] {
+            let h = 5.0;
+            let (soup, labels) = frustum(r0, r1, h, n, &frame);
+            let out = labelled(&soup, &labels);
+            let ir = &out.ir;
+            ir.validate().unwrap();
+            assert_eq!(ir.regions.len(), 3);
+            let r = ir
+                .regions
+                .iter()
+                .find(|r| r.triangles.contains(&0))
+                .unwrap();
+            let Surface::Cone {
+                apex,
+                axis,
+                half_angle,
+                orientation,
+            } = &r.surface
+            else {
+                panic!("expected a cone, got {:?}", r.surface);
+            };
+            let alpha = (r0 - r1).abs().atan2(h);
+            let z_apex = r0 * h / (r0 - r1);
+            let widen = if r0 > r1 { -1.0 } else { 1.0 };
+            assert!((half_angle - alpha).abs() < 1e-9);
+            assert!(norm(sub(*apex, frame.map([0.0, 0.0, z_apex]))) < 1e-8);
+            assert!(dot(*axis, frame.dir([0.0, 0.0, widen])) > 1.0 - 1e-12);
+            assert_eq!(*orientation, Orientation::Same);
+        }
+    }
+
+    /// Prism over a circular sector: `segments` equal chords turning by
+    /// `step`, the arc wall labelled 0, the two radial walls 1 and 2, the
+    /// caps 3 and 4. Every distinct vertex is moved by up to `noise`.
+    pub(super) fn sector_prism(
+        r: f64,
+        segments: usize,
+        step: f64,
+        noise: f64,
+        frame: &Frame,
+    ) -> (TriangleSoup, Vec<u32>) {
+        let h = 5.0;
+        let start = -std::f64::consts::FRAC_PI_2;
+        let mut profile = vec![[0.0, 0.0]];
+        for k in 0..=segments {
+            let t = start + step * k as f64;
+            profile.push([r * t.cos(), r * t.sin()]);
+        }
+        let m = profile.len();
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut jitter = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        let pts: Vec<[V3; 2]> = profile
+            .iter()
+            .map(|q| {
+                let mut at = |z: f64| {
+                    let p = frame.map([q[0], q[1], z]);
+                    add(p, scale([jitter(), jitter(), jitter()], noise))
+                };
+                [at(0.0), at(h)]
+            })
+            .collect();
+        let mut tris = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..m {
+            let j = (i + 1) % m;
+            let label = if i == 0 {
+                1
+            } else if j == 0 {
+                2
+            } else {
+                0
+            };
+            tris.push([pts[i][0], pts[j][0], pts[j][1]]);
+            tris.push([pts[i][0], pts[j][1], pts[i][1]]);
+            labels.extend([label, label]);
+        }
+        for i in 1..m - 1 {
+            tris.push([pts[0][1], pts[i][1], pts[i + 1][1]]);
+            labels.push(4);
+            tris.push([pts[0][0], pts[i + 1][0], pts[i][0]]);
+            labels.push(3);
+        }
+        (TriangleSoup { triangles: tris }, labels)
+    }
+
+    fn sector_radius(seg: usize, step: f64, noise: f64, tol: f64) -> f64 {
+        let (soup, labels) = sector_prism(10.0, seg, step, noise, &Frame::tilted());
+        let out = convert_soup_from_labels(
+            &soup,
+            &labels,
+            &ConvertOptions {
+                linear_tolerance: Some(tol),
+                ..ConvertOptions::default()
+            },
+        )
+        .unwrap();
+        out.ir.validate().unwrap();
+        cylinder_of(&out.ir, 2).2
+    }
+
+    #[test]
+    fn tessellation_law_recovers_short_noisy_off_axis_arcs() {
+        let tau = std::f64::consts::TAU;
+        for (seg, n) in [(3, 36), (2, 24), (3, 12), (9, 36)] {
+            let r = sector_radius(seg, tau / n as f64, 1e-4, 1e-3);
+            assert!((r - 10.0).abs() < 1e-4, "{seg} of {n}: radius {r}");
+        }
+        for (seg, n) in [(2, 6), (3, 8), (5, 40)] {
+            let r = sector_radius(seg, tau / n as f64, 0.0, 1e-6);
+            assert!((r - 10.0).abs() < 1e-9, "clean {seg} of {n}: radius {r}");
+        }
+    }
+
+    #[test]
+    fn tessellation_law_never_replaces_an_exact_radius() {
+        let step = 90.05f64.to_radians() / 9.0;
+        for tol in [1e-2, 1e-3] {
+            let r = sector_radius(9, step, 0.0, tol);
+            assert!((r - 10.0).abs() < 1e-9, "tol {tol}: radius {r}");
+        }
+    }
+
+    fn dense_cone_deviation(soup: &TriangleSoup, labels: &[u32], ir: &crate::ir::Ir) -> f64 {
+        let r = ir
+            .regions
+            .iter()
+            .find(|r| r.triangles.contains(&0))
+            .unwrap();
+        let Surface::Cone {
+            apex,
+            axis,
+            half_angle,
+            ..
+        } = r.surface
+        else {
+            panic!("expected a cone");
+        };
+        let cone = surface::Surface::Cone {
+            apex,
+            axis,
+            half_angle,
+            reversed: false,
+        };
+        let k = 200;
+        let mut worst: f64 = 0.0;
+        for (t, &l) in soup.triangles.iter().zip(labels) {
+            if l != 0 {
+                continue;
+            }
+            for i in 0..=k {
+                for j in 0..=k - i {
+                    let (a, b) = (i as f64 / k as f64, j as f64 / k as f64);
+                    let p = add(
+                        add(scale(t[0], a), scale(t[1], b)),
+                        scale(t[2], 1.0 - a - b),
+                    );
+                    worst = worst.max(cone.distance(p).abs());
+                }
+            }
+        }
+        worst
+    }
+
+    #[test]
+    fn twisted_cone_never_under_reports() {
+        for frame in [Frame::identity(), Frame::tilted()] {
+            let (soup, labels) = twisted_frustum(10.0, 2.0, 4.0, 48, 60f64.to_radians(), &frame);
+            let out = labelled(&soup, &labels);
+            out.ir.validate().unwrap();
+            assert_eq!(out.report.region_counts.get("cone"), Some(&1));
+            let measured = dense_cone_deviation(&soup, &labels, &out.ir);
+            assert!(measured > 0.284, "{measured}");
+            assert!(
+                out.report.max_deviation >= measured,
+                "reported {} < measured {measured}",
+                out.report.max_deviation
+            );
+            assert!(out.report.max_deviation < measured * 1.001);
+        }
+    }
+
+    #[test]
+    fn split_bore_shares_one_cylinder() {
+        let frame = Frame::tilted();
+        let (soup, labels) = washer(10.0, 4.0, 5.0, 40, &frame, true);
+        let out = labelled(&soup, &labels);
+        let ir = &out.ir;
+        ir.validate().unwrap();
+        assert_eq!(ir.regions.len(), 5);
+        let first = cylinder_of(ir, 2);
+        let last = cylinder_of(ir, 8 * 39 + 2);
+        assert_eq!(first, last);
+        assert!((first.2 - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coaxial_snap_fixes_noisy_halves_to_one_cylinder() {
+        let frame = Frame::tilted();
+        let (mut soup, labels) = washer(10.0, 4.0, 5.0, 40, &frame, true);
+        let mut state = 7u64;
+        let mut moved: FxHashMap<[u64; 3], V3> = FxHashMap::default();
+        for t in soup.triangles.iter_mut() {
+            for p in t.iter_mut() {
+                let key = p.map(f64::to_bits);
+                let d = *moved.entry(key).or_insert_with(|| {
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let u = ((state >> 33) as f64 / (1u64 << 31) as f64) * 2.0 - 1.0;
+                    scale(linalg::unit([u, 1.0 - u, 0.5]), 2e-5 * u)
+                });
+                *p = add(*p, d);
+            }
+        }
+        let out = convert_soup_from_labels(
+            &soup,
+            &labels,
+            &ConvertOptions {
+                linear_tolerance: Some(1e-4),
+                ..ConvertOptions::default()
+            },
+        )
+        .unwrap();
+        let first = cylinder_of(&out.ir, 2);
+        let last = cylinder_of(&out.ir, 8 * 39 + 2);
+        assert_eq!(first, last);
+        assert!((first.2 - 4.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn labels_are_validated() {
+        let soup = TriangleSoup {
+            triangles: grid_box([0.0; 3], [1.0; 3], 1, false),
+        };
+        let opts = ConvertOptions::default();
+        let good: Vec<u32> = (0..12).map(|i| i / 2).collect();
+        assert!(convert_soup_from_labels(&soup, &good, &opts).is_ok());
+        let mut reserved = good.clone();
+        reserved[3] = u32::MAX;
+        let mut sparse = good.clone();
+        sparse[0] = 7;
+        sparse[1] = 7;
+        let mut huge = good.clone();
+        huge[0] = 1000;
+        for bad in [reserved, sparse, huge, good[..11].to_vec()] {
+            assert!(
+                matches!(
+                    convert_soup_from_labels(&soup, &bad, &opts),
+                    Err(ConvertError::InvalidInput(_))
+                ),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn labels_are_never_merged() {
+        let soup = TriangleSoup {
+            triangles: grid_box([0.0; 3], [10.0, 20.0, 30.0], 2, false),
+        };
+        let labels: Vec<u32> = (0..soup.len() as u32).map(|i| i / 2).collect();
+        let out = convert_soup_from_labels(&soup, &labels, &ConvertOptions::default()).unwrap();
+        assert_eq!(out.ir.regions.len(), soup.len() / 2);
+        assert!(
+            out.ir
+                .regions
+                .iter()
+                .all(|r| matches!(r.surface, Surface::Plane { .. }))
+        );
+        out.ir.validate().unwrap();
+    }
+
+    #[test]
+    fn unfittable_label_becomes_facets() {
+        let (soup, mut labels) = washer(10.0, 4.0, 5.0, 24, &Frame::identity(), false);
+        for (l, t) in labels.iter_mut().zip(&soup.triangles) {
+            if *l == 2 && t.iter().all(|p| p[0] > 0.0) {
+                *l = 0;
+            }
+        }
+        let out = labelled(&soup, &labels);
+        out.ir.validate().unwrap();
+        assert!(out.ir.regions.iter().any(|r| r.surface.is_facets()));
+        assert_eq!(out.report.region_counts.get("cylinder"), Some(&1));
     }
 }

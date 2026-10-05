@@ -4,7 +4,8 @@ Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` w
 crate `unmesh-core`. They share one contract, the [IR](ir.md).
 
 Everything here is v0 and may change freely before the first release. `convert` handles all-planar
-parts today (what it cannot fit stays `facets`). `step.write` is implemented for planes and `facets`
+parts today (what it cannot fit stays `facets`); `convert_from_labels` also fits cylinders and cones
+on a given segmentation. `step.write` is implemented for planes and `facets`
 (#5).
 
 ## Python
@@ -148,6 +149,57 @@ The IR as dataclasses: `Ir`, `Region`, `Plane`, `Cylinder`, `Cone`, `Sphere`, `T
 write [canonical JSON](ir.md#canonical-json); `ir.validate()` raises `IrError` listing every
 structural problem; `unmesh.ir.validate(ir)` returns the list instead. `Ir.loads` validates.
 
+### `unmesh.convert_from_labels(mesh_or_path, labels, options=None) -> Result`
+
+Converts with a given segmentation instead of segmenting: `labels` is one integer per input triangle
+(the oracle face ids of a labelled tessellation, for example). Labels must be contiguous from 0, every
+id in `0..max` used, and below `2**32 - 1`; anything else raises `ValueError`, as does a label array
+that is not one-dimensional, not integer, or not one per triangle. Labelled regions are never merged
+with each other, and a label whose triangles fall apart into several edge-connected pieces becomes one
+region per piece. Each region gets the most parsimonious surface that fits its vertices within
+`tolerances.linear`: a plane, else a cylinder, else a cone, else it is kept as `facets`. The automatic
+`convert` does not fit curved surfaces yet.
+
+- **Cylinder**: the axis is the smallest eigenvector of the area-weighted scatter of the triangle normals
+  (they lie on a great circle of the Gaussian sphere), the centre and radius a circle fit of the vertices
+  projected along it, refined by Levenberg-Marquardt on the vertex distances with Huber weights.
+- **Cone**: the normals lie on a small circle, so the axis is the smallest eigenvector of their centred
+  scatter; the apex is the least-squares intersection of the triangle planes (every chord facet of a
+  cone passes through its apex), the half-angle the mean angle of the vertices about the axis; then the
+  same refinement.
+- **Tessellation law**: when the rulings of a cylinder are cut into equal chords `c` with equal
+  turning angles, including a partial arc, the turning angle gives `N` and the radius is
+  `c / (2 sin(π/N))`. Chords and turning angles are measured between rulings, so the estimate does not
+  depend on the fitted centre. It replaces the least-squares radius only when (a) chords and turning
+  angles are equal within what `tolerances.linear` allows, (b) the mean turning angle is `2π/N` within
+  its own measurement uncertainty and the chord count agrees with `N` (exactly `N` for a closed ring,
+  fewer for an arc), and (c) with the radius fixed at the law's value and the axis refitted, the
+  vertices fit within the tolerance and their RMS is no worse than the least-squares RMS beyond the
+  allowance for one fewer free parameter (`rms² ≤ rms_lsq² (1 + 4/(n - 5))`). Exact vertices therefore
+  keep their exact least-squares radius (an arc of 90.05° in 9 chords is refused), and the law matters
+  on short noisy arcs, where the least-squares radius is poorly conditioned. A law radius stays fixed
+  through the coaxial and world-axis refits below.
+- **Coaxial snapping**: cylinders and cones whose axes are parallel within `angular_snap_deg` and
+  collinear within three times `tolerances.linear` are refitted with one shared axis, and cylinders among
+  them with radii within the tolerance share one radius, so a bore split across several regions is one
+  cylinder. A group's axis within `angular_snap_deg` of a world axis is snapped to it. Either is kept
+  only when every member still fits within the tolerance, its RMS within half of it, and every cone's
+  half-angle stays in (0, π/2).
+
+Vertices of a tessellated curved face lie on the surface, but the triangles between them do not:
+`residual.max` and `report.max_deviation` include each triangle's chord sagitta, so a coarse cylinder
+reports a deviation near `r (1 - cos(π/N))` while its fitted radius is exact. The sagitta is computed
+exactly, never sampled: for a cylinder as the 2D distance from the axis to the projected triangle, for
+a cone as the minimum of the convex signed distance `ρ cos α - h sin α` over the triangle (corners,
+the stationary points along each edge, and the point where the axis pierces the triangle). `residual.rms`
+is the RMS over the region's vertices only, without the sagitta.
+
+**Ambiguity sets (n-gon prism versus coarse cylinder, chamfer versus one-segment fillet):** on this
+path the labels decide. A regular n-gon prism whose sides carry one label each stays n planes; the same
+sides under one label become one cylinder with the exact circumradius and an honest deviation equal to
+the polygon's sagitta. The policy for the automatic `convert`, which has to choose without labels, is
+not set yet (#16 part B).
+
 ### `unmesh.convert` internals
 
 The planar converter welds the input, groups triangles into regions by growing them while every
@@ -193,7 +245,9 @@ Public surface:
   `IrError`. All types are `serde` `Serialize`/`Deserialize`; JSON field names equal the Rust names.
 - `api` (re-exported at the crate root): `convert(&IndexedMesh, &ConvertOptions) -> Result<ConvertOutput,
   ConvertError>`, `convert_soup(&TriangleSoup, &ConvertOptions)` (the same for a triangle soup, which
-  is what STL files and `(n, 3, 3)` arrays are), `ConvertOptions`, `Report`, `ConvertWarning`,
+  is what STL files and `(n, 3, 3)` arrays are), `convert_from_labels(&IndexedMesh, &[u32],
+  &ConvertOptions)` and `convert_soup_from_labels(&TriangleSoup, &[u32], &ConvertOptions)` (fit a given
+  segmentation, see `unmesh.convert_from_labels`), `ConvertOptions`, `Report`, `ConvertWarning`,
   `ConvertOutput`, `ConvertError` (`EmptyMesh`, `InvalidInput`). Source triangle ids in the IR are
   indices into the soup, or into `mesh.faces`.
 

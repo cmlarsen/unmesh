@@ -130,6 +130,7 @@ mod tests {
             verts,
             rms: 0.0,
             max: 0.0,
+            sag: 0.0,
         };
         (v, r)
     }
@@ -195,6 +196,7 @@ mod tests {
             verts: list,
             rms: 0.0,
             max: 0.0,
+            sag: 0.0,
         };
         (v, r)
     }
@@ -239,6 +241,7 @@ mod tests {
             verts,
             rms: 0.0,
             max: 0.0,
+            sag: 0.0,
         };
         (v, r)
     }

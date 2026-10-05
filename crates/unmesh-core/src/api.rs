@@ -75,7 +75,24 @@ pub fn convert(
     convert_soup(&mesh.to_soup(), options)
 }
 
-pub use crate::convert::convert_soup;
+pub fn convert_from_labels(
+    mesh: &IndexedMesh,
+    labels: &[u32],
+    options: &ConvertOptions,
+) -> Result<ConvertOutput, ConvertError> {
+    if mesh.faces.is_empty() {
+        return Err(ConvertError::EmptyMesh);
+    }
+    let n = mesh.vertices.len();
+    if mesh.faces.iter().flatten().any(|&i| i as usize >= n) {
+        return Err(ConvertError::InvalidInput(
+            "face index out of range".to_string(),
+        ));
+    }
+    convert_soup_from_labels(&mesh.to_soup(), labels, options)
+}
+
+pub use crate::convert::{convert_soup, convert_soup_from_labels};
 
 #[cfg(test)]
 mod tests {

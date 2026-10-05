@@ -184,6 +184,19 @@ def _compare(args) -> int:
     return 0
 
 
+def _oracle_fit(args) -> int:
+    from .oracle_fit import CURVED_FAMILIES, corpus_seeds, format_table, run_oracle, summarize
+
+    families = [f for arg in args.family or [] for f in arg.split(",")] or list(CURVED_FAMILIES)
+    seeds = corpus_seeds(families)
+    if args.seeds is not None:
+        seeds = {f: s[: args.seeds] for f, s in seeds.items()}
+    operators = [o for arg in args.operator for o in arg.split(",")]
+    records = run_oracle(families, seeds, operators, tuple(args.deflection), args.jobs)
+    print(format_table(summarize(records)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unmesh-harness")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -251,7 +264,19 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("run_b", type=Path)
     compare.add_argument("--converter", default="unmesh")
 
+    oracle = sub.add_parser(
+        "oracle-fit", help="fit surfaces on the oracle segmentation and score recovery"
+    )
+    oracle.add_argument("--family", action="append")
+    oracle.add_argument("--operator", action="append", default=None)
+    oracle.add_argument("--seeds", type=int, default=None, help="first N corpus seeds per family")
+    oracle.add_argument("--deflection", type=float, nargs=2, default=[0.01, 0.2])
+    oracle.add_argument("--jobs", type=int, default=1)
+
     args = parser.parse_args(argv)
+    if args.group == "oracle-fit":
+        args.operator = args.operator or ["identity,float32"]
+        return _oracle_fit(args)
     if args.group == "compare":
         return _compare(args)
     if args.group == "run":
