@@ -320,6 +320,7 @@ pub fn fit_joint_with(
     Joint { axis, shape, fit }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Tri {
     pub normal: V3,
     pub area: f64,

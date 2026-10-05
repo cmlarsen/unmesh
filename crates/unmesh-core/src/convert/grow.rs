@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, VecDeque};
 
 use rustc_hash::FxHashSet;
 
@@ -18,7 +19,9 @@ const SAG_RATIO: f64 = 16.0;
 const SEED_POINTS: [usize; 3] = [12, 24, 48];
 const DOUBLY_POINTS: [usize; 3] = [16, 32, 64];
 const PEEL_MAX: usize = 64;
+const THIN_POINTS: usize = 2048;
 const RETRY_ROUNDS: usize = 3;
+const RETRY_ROUNDS_DOUBLY: usize = 12;
 const SLICE_SHARE: f64 = 0.15;
 const DOUBLY_AREA: f64 = 4.0;
 const DOUBLY_RATIO: f64 = 0.01;
@@ -126,7 +129,7 @@ impl Pool<'_> {
             .iter()
             .map(|&f| {
                 let t = self.faces[f as usize];
-                curved::sagitta(&surf, t.map(|v| self.vc[v as usize]))
+                chord_sag(&surf, t.map(|v| self.vc[v as usize]))
             })
             .fold(0.0, f64::max);
         (dot(n, normal).abs().min(1.0).acos() <= tilt(kind, tol, sag, reg.width, spread))
@@ -155,12 +158,12 @@ impl Pool<'_> {
                 .map(|i| super::linalg::norm(sub(t[(i + 1) % 3], t[i])))
                 .fold(0.0, f64::max);
             let width = 2.0 * ti.area / longest.max(f64::MIN_POSITIVE);
-            let sag = curved::sagitta(surf, t);
+            let sag = chord_sag(surf, t);
             if dot(ti.normal, normal).abs().min(1.0).acos() > tilt(fit.0, tol, sag, width, spread) {
                 return false;
             }
         }
-        curved::sagitta(surf, t) <= limit
+        chord_sag(surf, t) <= limit
     }
 
     /// `fits` for every member, and no member's chord sagitta more than
@@ -206,6 +209,54 @@ impl Pool<'_> {
         }
         let tris = curved::face_tris(self.vc, self.faces, self.info, &list);
         (pts, tris)
+    }
+}
+
+/// The running `median` of a growing list (two heaps of order keys).
+struct Median {
+    lo: BinaryHeap<u64>,
+    hi: BinaryHeap<Reverse<u64>>,
+}
+
+fn order_key(x: f64) -> u64 {
+    let b = x.to_bits();
+    if b >> 63 == 1 { !b } else { b | (1 << 63) }
+}
+
+fn from_key(k: u64) -> f64 {
+    f64::from_bits(if k >> 63 == 1 { k & !(1 << 63) } else { !k })
+}
+
+impl Median {
+    fn from(v: Vec<f64>) -> Self {
+        let mut m = Median {
+            lo: BinaryHeap::new(),
+            hi: BinaryHeap::new(),
+        };
+        for x in v {
+            m.push(x);
+        }
+        m
+    }
+
+    fn push(&mut self, x: f64) {
+        let k = order_key(x);
+        match self.hi.peek() {
+            Some(&Reverse(h)) if k < h => self.lo.push(k),
+            _ => self.hi.push(Reverse(k)),
+        }
+        let want = (self.lo.len() + self.hi.len()).div_ceil(2);
+        if self.hi.len() > want {
+            let Reverse(h) = self.hi.pop().unwrap();
+            self.lo.push(h);
+        } else if self.hi.len() < want {
+            let l = self.lo.pop().unwrap();
+            self.hi.push(Reverse(l));
+        }
+    }
+
+    fn get(&self) -> f64 {
+        self.hi.peek().map_or(0.0, |&Reverse(k)| from_key(k))
     }
 }
 
@@ -317,16 +368,45 @@ fn extend_chain(
 /// else a refit started from `start`, each kept only if every member fits.
 fn final_fit(pool: &mut Pool<'_>, members: &[u32], start: &Single, tol: f64) -> Option<Single> {
     let (pts, tris) = pool.union(members);
-    let fresh = if doubly(start.0) {
-        super::doubly::fit_doubly(&pts, &tris, tol, f64::INFINITY)
-    } else {
-        curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
-    };
-    fresh
+    if doubly(start.0) {
+        return curved::refit(&thin(&pts), start.0, start.1, &start.2, tol)
+            .filter(|f| pool.all_fit(members, f, tol).is_some());
+    }
+    curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
         .filter(|f| pool.all_fit(members, f, tol).is_some())
         .or_else(|| {
             curved::refit(&pts, start.0, start.1, &start.2, tol)
                 .filter(|f| pool.all_fit(members, f, tol).is_some())
+        })
+}
+
+/// At most `THIN_POINTS` of the items, evenly strided, for refining a fit
+/// whose acceptance is then checked on every vertex.
+fn thin<T: Copy>(v: &[T]) -> Vec<T> {
+    let step = v.len().div_ceil(THIN_POINTS).max(1);
+    v.iter().step_by(step).copied().collect()
+}
+
+/// A stalled sphere or torus group's next fit: the current one refined on
+/// the members so far, else a fresh fit of their union (a small seed's
+/// torus is right only locally, and its refinement can stall in that
+/// minimum), whichever fits every member.
+fn refit_doubly(
+    pool: &mut Pool<'_>,
+    members: &[u32],
+    kind: Kind,
+    axis: Axis,
+    shape: &[f64],
+    tol: f64,
+) -> Option<Single> {
+    let (pts, tris) = pool.union(members);
+    let (pts, tris) = (thin(&pts), thin(&tris));
+    curved::refit(&pts, kind, axis, shape, tol)
+        .filter(|f| pool.all_fit(members, f, tol).is_some())
+        .or_else(|| {
+            super::doubly::fit_doubly_with(&pts, &tris, tol, f64::INFINITY, false)
+                .ok()
+                .filter(|f| f.0 == kind)
         })
 }
 
@@ -345,7 +425,7 @@ fn grow_group(
     tol: f64,
 ) -> Group {
     let mut members = seed.clone();
-    let mut sags = pool.all_fit(&members, &fit, tol).unwrap_or_default();
+    let mut sags = Median::from(pool.all_fit(&members, &fit, tol).unwrap_or_default());
     for &r in &seed {
         owner[r as usize] = gid;
     }
@@ -361,7 +441,7 @@ fn grow_group(
             if owner[r as usize] != NONE || tried.contains(&r) {
                 continue;
             }
-            let limit = SAG_RATIO * median(&sags).max(tol);
+            let limit = SAG_RATIO * sags.get().max(tol);
             match pool.fits(r, kind, &axis, &shape, tol) {
                 Some(s) if s <= limit => sags.push(s),
                 _ => {
@@ -374,18 +454,27 @@ fn grow_group(
             queue.extend(g.adj[r as usize].iter().copied());
         }
         rounds += 1;
-        if tried.is_empty() || rounds >= RETRY_ROUNDS {
+        let cap = if doubly(kind) {
+            RETRY_ROUNDS_DOUBLY
+        } else {
+            RETRY_ROUNDS
+        };
+        if tried.is_empty() || rounds >= cap {
             break;
         }
-        let (pts, _) = pool.union(&members);
-        match curved::refit_quick(&pts, kind, axis, &shape, tol) {
+        let next = if doubly(kind) {
+            refit_doubly(pool, &members, kind, axis, &shape, tol)
+        } else {
+            curved::refit_quick(&pool.union(&members).0, kind, axis, &shape, tol)
+        };
+        match next {
             Some(f)
                 if (f.1.a != axis.a || f.1.c != axis.c || f.2 != shape)
                     && let Some(s) = pool.all_fit(&members, &f, tol) =>
             {
                 axis = f.1;
                 shape = f.2;
-                sags = s;
+                sags = Median::from(s);
             }
             _ => break,
         }
@@ -444,14 +533,19 @@ fn merge_groups(
             };
             let mut members = groups[big].members.clone();
             members.extend_from_slice(&groups[small].members);
+            let (pts, _) = pool.union(&members);
             let Some(lead) = [&groups[big].fit, &groups[small].fit]
                 .into_iter()
-                .find(|f| pool.all_fit(&members, f, tol).is_some())
+                .find(|f| {
+                    curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
+                        && pool.all_fit(&members, f, tol).is_some()
+                })
                 .cloned()
             else {
                 continue;
             };
-            let fit = curved::refit_quick(&pool.union(&members).0, lead.0, lead.1, &lead.2, tol)
+            let pts = if doubly(lead.0) { thin(&pts) } else { pts };
+            let fit = curved::refit_quick(&pts, lead.0, lead.1, &lead.2, tol)
                 .filter(|f| pool.all_fit(&members, f, tol).is_some())
                 .or(Some(lead));
             if let Some(fit) = fit {
@@ -483,6 +577,28 @@ fn merge_groups(
 fn tilt(kind: Kind, tol: f64, sag: f64, width: f64, spread: f64) -> f64 {
     let (reach, bow) = if doubly(kind) { (2.0, sag) } else { (1.0, 0.0) };
     (2.0 * tol + bow).atan2(width.max(1e-300)) + reach * spread + 1e-9
+}
+
+/// The chord sagitta the growth heuristics compare: the exact bound, except
+/// on a torus, where the distance at the corners, edge midpoints and centroid
+/// stands in for it (the reported deviation still uses the bound).
+fn chord_sag(surf: &Surface, t: [V3; 3]) -> f64 {
+    if !matches!(surf, Surface::Torus { .. }) {
+        return curved::sagitta(surf, t);
+    }
+    let mid = |a: V3, b: V3| scale(add(a, b), 0.5);
+    [
+        t[0],
+        t[1],
+        t[2],
+        mid(t[0], t[1]),
+        mid(t[1], t[2]),
+        mid(t[2], t[0]),
+        scale(add(add(t[0], t[1]), t[2]), 1.0 / 3.0),
+    ]
+    .iter()
+    .map(|&p| surf.distance(p).abs())
+    .fold(0.0, f64::max)
 }
 
 fn doubly(kind: Kind) -> bool {
@@ -567,34 +683,44 @@ pub fn run(
     };
     let doubly_region = doubly_curved(vc, faces, nbr, label, &regions, &g);
     let spent = doubly_region.clone();
+    let mut seeded = vec![false; n];
     for s in 0..n as u32 {
-        if owner[s as usize] != NONE || !doubly_region[s as usize] {
+        if owner[s as usize] != NONE || !doubly_region[s as usize] || seeded[s as usize] {
             continue;
         }
         let free = |r: u32| owner[r as usize] == NONE && doubly_region[r as usize];
-        let mut last = 0;
+        let mut last: Vec<u32> = Vec::new();
         for k in DOUBLY_POINTS {
             let Some(seed) = patch(&mut pool, &g, s, &free, k) else {
                 break;
             };
-            if seed.len() == last {
+            if seed.len() == last.len() {
                 break;
             }
             let (pts, tris) = pool.union(&seed);
             if curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol).is_ok() {
                 break;
             }
-            match super::doubly::fit_doubly_with(&pts, &tris, tol, f64::INFINITY, true) {
-                Ok(fit) if pool.all_fit(&seed, &fit, tol).is_some() => {
-                    let gid = groups.len() as u32;
-                    let grp = grow_group(&mut pool, &g, seed, fit, &mut owner, gid, tol);
-                    groups.push(grp);
+            match super::doubly::fit_doubly_with(&pts, &tris, tol, f64::INFINITY, false) {
+                Ok(fit) => {
+                    if pool.all_fit(&seed, &fit, tol).is_some() {
+                        let gid = groups.len() as u32;
+                        let grp = grow_group(&mut pool, &g, seed, fit, &mut owner, gid, tol);
+                        groups.push(grp);
+                        last.clear();
+                        break;
+                    }
+                }
+                Err(init) if init > ESCALATE * tol => {
+                    last = seed;
                     break;
                 }
-                Err(init) if init > ESCALATE * tol => break,
-                _ => {}
+                Err(_) => {}
             }
-            last = seed.len();
+            last = seed;
+        }
+        for r in last {
+            seeded[r as usize] = true;
         }
     }
     for s in 0..n as u32 {
@@ -938,7 +1064,9 @@ fn join_touching(
                 }
             }
             let lead = &groups[big].fit;
-            let Some(fit) = curved::refit_quick(&pts, lead.0, lead.1, &lead.2, tol) else {
+            let Some(fit) = curved::refit_quick(&thin(&pts), lead.0, lead.1, &lead.2, tol)
+                .filter(|f| curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol)
+            else {
                 continue;
             };
             let small_members = std::mem::take(&mut groups[small].members);
@@ -1369,6 +1497,20 @@ mod tests {
             }
         }
         TriangleSoup { triangles: tris }
+    }
+
+    #[test]
+    fn running_median_matches_the_sorted_median() {
+        let mut m = super::Median::from(Vec::new());
+        let mut v: Vec<f64> = Vec::new();
+        let mut x = 0.37f64;
+        for i in 0..200 {
+            x = (x * 7919.0 + 0.123).fract();
+            let y = if i % 7 == 0 { -x } else { x * 1e-3 };
+            m.push(y);
+            v.push(y);
+            assert_eq!(m.get(), super::median(&v));
+        }
     }
 
     #[test]

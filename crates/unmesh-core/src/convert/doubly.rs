@@ -14,6 +14,7 @@ const MAX_SPAN_COS: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const GMAX_SLACK: f64 = 0.02;
 const GMAX_DEPTH: usize = 6;
 const MIN_RINGS: usize = 4;
+const LOCAL_STEPS: usize = 180;
 
 /// Sphere through the vertices: `|p|² + D·p + E = 0` is linear in `D` and
 /// `E`, exact on exact vertices (solved about the weighted mean).
@@ -219,6 +220,118 @@ pub fn init_torus_axis(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, Vec<f64
     (r2 > 0.0).then(|| (Axis { a, c }, vec![oy + ch, ox + cr, r2.sqrt()]))
 }
 
+/// Torus start from the local shape of a small patch, where neither circle
+/// above is determined: a quadric through the vertices gives the point,
+/// normal and principal curvatures at the patch's middle. The larger
+/// curvature is the tube's (`1/minor`, centre `minor` along the normal), and
+/// the other is `cos(v) / rho` along the parallel, with `v` the angle of the
+/// normal above the equator; `v` (hence the axis, tilted by `v` from the
+/// normal in the plane of the tube's curvature, and `rho`) is chosen by the
+/// smallest largest vertex residual over a grid, for either assignment of
+/// the two curvatures.
+pub fn init_torus_local(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, Vec<f64>)> {
+    let (mean, _) = weighted_mean(pts.iter().copied())?;
+    let mut nsum = [0.0; 3];
+    for t in tris {
+        nsum = add(nsum, scale(t.normal, t.area));
+    }
+    let len = norm(nsum);
+    if len <= 0.0 || pts.len() < 6 {
+        return None;
+    }
+    let n = scale(nsum, 1.0 / len);
+    let (t1, t2) = super::curved::basis(n);
+    let mut m = vec![vec![0.0; 6]; 6];
+    let mut b = vec![0.0; 6];
+    for &(p, w) in pts {
+        let d = sub(p, mean);
+        let (x, y, z) = (dot(d, t1), dot(d, t2), dot(d, n));
+        let row = [x * x, x * y, y * y, x, y, 1.0];
+        for i in 0..6 {
+            b[i] += w * row[i] * z;
+            for j in 0..6 {
+                m[i][j] += w * row[i] * row[j];
+            }
+        }
+    }
+    let c = solve_dense(m, b)?;
+    let (gx, gy) = (c[3], c[4]);
+    let p0 = add(mean, scale(n, c[5]));
+    let tx = add(t1, scale(n, gx));
+    let ty = add(t2, scale(n, gy));
+    let n0 = unit_v(cross(tx, ty))?;
+    let g = (1.0 + gx * gx + gy * gy).sqrt();
+    let second = [[2.0 * c[0] / g, c[1] / g], [c[1] / g, 2.0 * c[2] / g]];
+    let first = [[1.0 + gx * gx, gx * gy], [gx * gy, 1.0 + gy * gy]];
+    let det = first[0][0] * first[1][1] - first[0][1] * first[1][0];
+    let inv = [
+        [first[1][1] / det, -first[0][1] / det],
+        [-first[1][0] / det, first[0][0] / det],
+    ];
+    let mut shape = [[0.0; 2]; 2];
+    for i in 0..2 {
+        for j in 0..2 {
+            shape[i][j] = -(inv[i][0] * second[0][j] + inv[i][1] * second[1][j]);
+        }
+    }
+    let tr = shape[0][0] + shape[1][1];
+    let dt = shape[0][0] * shape[1][1] - shape[0][1] * shape[1][0];
+    let disc = (tr * tr / 4.0 - dt).max(0.0).sqrt();
+    let ks = [tr / 2.0 + disc, tr / 2.0 - disc];
+    let dir = |k: f64| -> Option<V3> {
+        let (a, b) = if (shape[0][1]).abs() > 1e-300 {
+            (shape[0][1], k - shape[0][0])
+        } else if (shape[1][0]).abs() > 1e-300 {
+            (k - shape[1][1], shape[1][0])
+        } else if (k - shape[0][0]).abs() <= (k - shape[1][1]).abs() {
+            (1.0, 0.0)
+        } else {
+            (0.0, 1.0)
+        };
+        unit_v(add(scale(tx, a), scale(ty, b)))
+    };
+    let mut best: Option<(f64, Axis, Vec<f64>)> = None;
+    for (i, j) in [(0, 1), (1, 0)] {
+        let (k1, k2) = (ks[i], ks[j]);
+        if k1 == 0.0 {
+            continue;
+        }
+        let Some(e1) = dir(k1) else { continue };
+        let nat = scale(n0, k1.signum());
+        let minor = 1.0 / k1.abs();
+        let k2 = k2 * k1.signum();
+        let tube = sub(p0, scale(nat, minor));
+        for step in 1..LOCAL_STEPS {
+            let v =
+                -std::f64::consts::PI + std::f64::consts::TAU * step as f64 / LOCAL_STEPS as f64;
+            let (sv, cv) = v.sin_cos();
+            if k2 == 0.0 || cv * k2 <= 0.0 {
+                continue;
+            }
+            let rho = cv / k2;
+            let major = rho - minor * cv;
+            if !(major > minor) {
+                continue;
+            }
+            let a = add(scale(nat, sv), scale(e1, cv));
+            let radial = sub(scale(nat, cv), scale(e1, sv));
+            let center = sub(tube, scale(radial, major));
+            let axis = Axis { a, c: center };
+            let shape = vec![0.0, major, minor];
+            let r = max_residual(Kind::Torus, &axis, &shape, pts);
+            if best.as_ref().is_none_or(|b| r < b.0) {
+                best = Some((r, axis, shape));
+            }
+        }
+    }
+    best.map(|(_, axis, shape)| (axis, shape))
+}
+
+fn unit_v(v: V3) -> Option<V3> {
+    let l = norm(v);
+    (l > 0.0 && l.is_finite()).then(|| scale(v, 1.0 / l))
+}
+
 fn bounds(pts: &[(V3, f64)]) -> (V3, V3) {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
@@ -280,11 +393,18 @@ pub fn fit_doubly_with(
     if pts.len() < 8 {
         return Err(best);
     }
-    for start in [init_torus(pts, tris), init_torus_axis(pts, tris)] {
-        let Some((axis, shape)) = start else {
-            continue;
-        };
-        let r = max_residual(Kind::Torus, &axis, &shape, pts);
+    let mut starts: Vec<(f64, Axis, Vec<f64>)> = [
+        init_torus(pts, tris),
+        init_torus_axis(pts, tris),
+        init_torus_local(pts, tris),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(axis, shape)| (max_residual(Kind::Torus, &axis, &shape, pts), axis, shape))
+    .filter(|s| s.0.is_finite())
+    .collect();
+    starts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (r, axis, shape) in starts {
         best = best.min(r);
         if r <= gate
             && let Some(f) = refine(pts, Kind::Torus, axis, shape, tol, quick)
