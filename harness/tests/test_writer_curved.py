@@ -22,14 +22,23 @@ FAMILIES = (
     "revolved_cone",
     "revolved_torus",
 )
+TANGENT_FAMILIES = (
+    "straight_fillet",
+    "circular_fillet",
+    "corner_fillet",
+    "round_slot_through",
+    "round_slot_blind",
+    "revolved_dome",
+)
 EDGE_HAUSDORFF_MM = 1e-4
+MAX_SHAPE_TOLERANCE_MM = 1e-3
 DEFLECTION = (0.01, 0.2)
 
 
-def _cases(slow: bool):
-    seeds = corpus_seeds(list(FAMILIES))
+def _cases(slow: bool, families=FAMILIES):
+    seeds = corpus_seeds(list(families))
     out = []
-    for family in FAMILIES:
+    for family in families:
         for seed in seeds[family] if slow else seeds[family][:1]:
             out.append(pytest.param(family, seed, marks=[pytest.mark.slow] if slow else []))
     return out
@@ -45,6 +54,9 @@ def _check(family, seed, tmp_path, automatic=False):
     assert report.valid and report.verified and report.readback.ok, report.issues
     assert report.fallback is None, report.fallback_reason
     assert not report.edge_fallbacks
+    assert report.max_shape_tolerance <= MAX_SHAPE_TOLERANCE_MM
+    assert bool(report.tangent_edges) == (family in TANGENT_FAMILIES)
+    assert {t.curve for t in report.tangent_edges} <= {"line", "circle"}
     written = occ.read_step(path)
     assert brep_counts(written) == brep_counts(gt.solid)
     if not automatic:
@@ -65,4 +77,19 @@ def test_oracle_ir_writes_exact_edges_all_seeds(family, seed, tmp_path):
 
 @pytest.mark.parametrize(("family", "seed"), _cases(slow=True))
 def test_automatic_ir_writes_without_fallback_all_seeds(family, seed, tmp_path):
+    _check(family, seed, tmp_path, automatic=True)
+
+
+@pytest.mark.parametrize(("family", "seed"), _cases(False, TANGENT_FAMILIES))
+def test_oracle_ir_writes_tangent_edges(family, seed, tmp_path):
+    _check(family, seed, tmp_path)
+
+
+@pytest.mark.parametrize(("family", "seed"), _cases(True, TANGENT_FAMILIES))
+def test_oracle_ir_writes_tangent_edges_all_seeds(family, seed, tmp_path):
+    _check(family, seed, tmp_path)
+
+
+@pytest.mark.parametrize(("family", "seed"), _cases(True, TANGENT_FAMILIES))
+def test_automatic_ir_writes_tangent_edges_without_fallback_all_seeds(family, seed, tmp_path):
     _check(family, seed, tmp_path, automatic=True)

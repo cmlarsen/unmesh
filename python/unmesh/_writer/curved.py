@@ -9,6 +9,7 @@ from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepClass import BRepClass_FaceClassifier
 from OCP.BRepLib import BRepLib
+from OCP.BRepTools import BRepTools
 from OCP.ElSLib import ElSLib
 from OCP.Geom import (
     Geom_BSplineCurve,
@@ -48,10 +49,13 @@ TANGENT_PROJECTIONS = 8
 SNAP_ITERATIONS = 40
 INTERSECTION_SAMPLES = 400
 KINK_DEG = 30.0
+DIHEDRAL_TOLERANCE_DEG = 10.0
 KINK_RATIO = 3.0
 KINK_JOIN = 1e-9
 PCURVE_SAMPLES = 8
 PCURVE_CHECKS = 512
+PCURVE_SPANS = 64
+PCURVE_EXACT = 1e-9
 LINE_PREFERENCE = 2.0
 FACETS_REASON = "facets regions next to curved surfaces are not supported yet (#34)"
 
@@ -471,15 +475,23 @@ def _interpolate(pts, periodic: bool):
 def _with_midpoints(surfaces, chain, project):
     pts = []
     for p, q in zip(chain, chain[1:], strict=False):
-        pts.extend([p, project(surfaces, 0.5 * (p + q))])
+        pts.extend([p, project(surfaces, 0.5 * (p + q), q - p)])
     pts.append(chain[-1])
     return pts
 
 
+def _refine(surfaces, p, along):
+    return geo.refine(surfaces, p)
+
+
 def projected_curve(surfaces, nodes, closed: bool, project=None):
-    project = project or geo.refine
-    inner = nodes[1:] if closed else nodes[1:-1]
-    fixed = [nodes[0], *(project(surfaces, p) for p in inner)]
+    project = project or _refine
+    n = len(nodes)
+    inner = range(1, n) if closed else range(1, n - 1)
+    fixed = [
+        nodes[0],
+        *(project(surfaces, nodes[i], nodes[(i + 1) % n] - nodes[i - 1]) for i in inner),
+    ]
     if not closed:
         fixed.append(nodes[-1])
     corners = [k for k in kinks(fixed, closed) if k != 0]
@@ -664,6 +676,8 @@ class _Builder:
                 pts = [np.asarray(p, dtype=float) for p in bd.points]
                 e = _Edge(a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved)
                 e.tangent = curved and bd.kind == "tangent"
+                if curved:
+                    self.check_dihedral(sa, sb, a, b, pts, bd.dihedral_deg)
                 if facets:
                     analytic = sb if isinstance(sa, Facets) else sa
                     n = geo.unit(analytic.normal)
@@ -675,6 +689,20 @@ class _Builder:
                     e.nodes, e.deviation = _boundary_nodes(self.ir, bd, a, b, self.vpos, self.limit)
                     if bd.closed:
                         e.nodes = [*e.nodes, e.nodes[0]]
+
+    def check_dihedral(self, sa, sb, a, b, pts, stored: float):
+        samples = [0.5 * (pts[0] + pts[1])] if len(pts) == 2 else pts
+        angles = []
+        for p in samples:
+            c = float(geo.outward(sa, p) @ geo.outward(sb, p))
+            angles.append(math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+        measured = float(np.median(angles))
+        off = abs(measured - stored)
+        if off > DIHEDRAL_TOLERANCE_DEG and abs(measured - (180.0 - stored)) < off:
+            raise BuildError(
+                f"regions {a}/{b}: the IR orientations meet at {measured:.3g} degrees,"
+                f" but the boundary records {stored:.3g}"
+            )
 
     def occ_surface(self, r):
         s = self.surfaces.get(r)
@@ -730,6 +758,16 @@ class _Builder:
             e.fit = "bspline"
             return
         e.fit, e.curve = found[0], found[1]
+
+    def projector(self, e: _Edge):
+        if not e.tangent or self.crossing(e):
+            return _refine
+        limit = self.limit
+
+        def project(surfaces, p, along):
+            return onto_tangency(surfaces, p, along, limit)
+
+        return project
 
     def crossing(self, e: _Edge) -> bool:
         if e.closed:
@@ -1008,12 +1046,8 @@ class _Builder:
             nodes = [start, *pts[1:]]
         else:
             nodes = [start, *ref[1:-1], end]
-        curve, dev = projected_curve(
-            surfaces,
-            nodes,
-            e.closed,
-            onto_both if e.tangent and not self.crossing(e) else geo.refine,
-        )
+        curve, dev = projected_curve(surfaces, nodes, e.closed, self.projector(e))
+
         if dev > self.limit:
             raise BuildError(
                 f"regions {e.a}/{e.b}: projected boundary curve is {dev:.3g} off the surfaces,"
@@ -1209,6 +1243,9 @@ class _Builder:
             v_lo = self.pool.vertex(pole_point)
         if v_hi is None:
             v_hi = self.pool.vertex(pole_point)
+        self.loosen_vertices(
+            iso, ((v_lo, _xyz(BRep_Tool.Pnt_s(v_lo)), lo), (v_hi, _xyz(BRep_Tool.Pnt_s(v_hi)), hi))
+        )
         mk = BRepBuilderAPI_MakeEdge(iso, v_lo, v_hi, lo, hi)
         if not mk.IsDone():
             raise BuildError(f"seam edge construction failed ({mk.Error()})")
@@ -1276,29 +1313,44 @@ class _Builder:
         pair = [self.surface(e.a), self.surface(e.b)]
         if not all(geo.is_analytic(x) for x in pair):
             pair = None
+        confirmed = False
         for i in sorted({segments // 2, segments // 3, (2 * segments) // 3, 0}):
             a, b = pts[i], pts[(i + 1) % n]
             t = geo.unit(b - a) if r == e.a else geo.unit(a - b)
             p = 0.5 * (a + b)
             if pair:
-                p = geo.refine(pair, p)
+                p = self.projector(e)(pair, p, b - a)
             p, _ = geo.closest(s, p)
             side = geo.unit(np.cross(geo.outward(s, p), t))
             for k, step in enumerate(steps):
                 q, _ = geo.closest(s, p + step * side)
-                state = BRepClass_FaceClassifier(face, _pnt(q), 1e-7).State()
+                state = classify(face, q)
                 if state == TopAbs_IN:
-                    return
+                    confirmed = True
+                    break
                 if state != TopAbs_OUT or k + 1 < len(steps):
                     continue
                 raise BuildError(
                     f"region {r}: the built face is not on the IR's side of its boundary with"
                     f" region {e.b if r == e.a else e.a}"
                 )
-        raise BuildError(
-            f"region {r}: could not confirm the built face's side of its boundary with"
-            f" region {e.b if r == e.a else e.a}"
-        )
+        if not confirmed:
+            raise BuildError(
+                f"region {r}: could not confirm the built face's side of its boundary with"
+                f" region {e.b if r == e.a else e.a}"
+            )
+
+
+def classify(face, q):
+    surf = BRep_Tool.Surface_s(face)
+    uv = surface_uv(surf, _pnt(q))
+    if uv is None:
+        return BRepClass_FaceClassifier(face, _pnt(q), 1e-7).State()
+    lo_u, hi_u, lo_v, hi_v = BRepTools.UVBounds_s(face)
+    uv[0] += TWO_PI * round((0.5 * (lo_u + hi_u) - uv[0]) / TWO_PI)
+    if surf.IsVPeriodic():
+        uv[1] += TWO_PI * round((0.5 * (lo_v + hi_v) - uv[1]) / TWO_PI)
+    return BRepClass_FaceClassifier(face, gp_Pnt2d(float(uv[0]), float(uv[1])), 1e-9).State()
 
 
 def surface_uv(surf, p) -> np.ndarray:
@@ -1336,6 +1388,8 @@ def corrected_pcurve(surf, curve, first: float, last: float, pc):
 
 
 def _pieces(curve, first: float, last: float) -> list[tuple[float, float]]:
+    if not isinstance(curve, Geom_BSplineCurve):
+        return [(first, last)]
     cuts = [first]
     for i in range(1, curve.NbKnots() + 1):
         k = curve.Knot(i)
@@ -1346,6 +1400,8 @@ def _pieces(curve, first: float, last: float) -> list[tuple[float, float]]:
 
 
 def _spans(curve, lo: float, hi: float) -> np.ndarray:
+    if not isinstance(curve, Geom_BSplineCurve):
+        return np.linspace(lo, hi, PCURVE_SAMPLES * PCURVE_SPANS + 1)
     knots = [curve.Knot(i) for i in range(1, curve.NbKnots() + 1)]
     marks = sorted({lo, hi, *(k for k in knots if lo < k < hi)})
     ts = [
@@ -1383,8 +1439,6 @@ def _concat2d(parts):
 
 
 def sampled_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
-    if not isinstance(curve, Geom_BSplineCurve):
-        return None
     parts = []
     prev = None
     for lo, hi in _pieces(curve, first, last):
@@ -1441,11 +1495,11 @@ class _UVLoop:
             if pc is None:
                 raise BuildError(f"region {region}: could not project an edge onto the surface")
             pc = corrected_pcurve(surf, curve, first, last, pc)
-            sampled = sampled_pcurve(surf, curve, first, last, self.v_periodic)
-            if sampled is not None and pcurve_error(
-                surf, curve, first, last, sampled
-            ) < pcurve_error(surf, curve, first, last, pc):
-                pc = sampled
+            error = pcurve_error(surf, curve, first, last, pc)
+            if error > PCURVE_EXACT:
+                sampled = sampled_pcurve(surf, curve, first, last, self.v_periodic)
+                if sampled is not None and pcurve_error(surf, curve, first, last, sampled) < error:
+                    pc = sampled
             a, b = (first, last) if e.Orientation() == TopAbs_FORWARD else (last, first)
             uv.append([np.array(pc.Value(a).Coord()), np.array(pc.Value(b).Coord())])
             self.pcurves.append(pc)
