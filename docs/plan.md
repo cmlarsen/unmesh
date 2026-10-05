@@ -173,7 +173,10 @@ No C++ is written in this project.
 
 - **Every PR:** the `smoke` grid (under 2 min) plus the Rust and Python gates, on GitHub-hosted
   runners.
-- **Nightly on GitHub-hosted runners:** the slow test tier, then the `standard` and `full` grids. The
+- **Nightly on GitHub-hosted runners:** the slow test tier, then the `standard` and `full` grids. The slow
+  tier (`-m "slow or benchmark"`) is split into four jobs by pytest-split, balanced on the measured
+  per-test durations in `harness/tests/.test_durations`; each grid shard caps worker memory so a
+  runaway cell is recorded as a `memory cap` error instead of losing the runner. The
   repo is public, so hosted runners are free. No self-hosted runner is used: on a public repo a fork
   pull request could run its own code on one. Hidden seeds and the hold-out set run from a private
   companion repo, so their files and results never appear here.
