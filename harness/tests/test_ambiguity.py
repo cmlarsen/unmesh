@@ -339,7 +339,7 @@ def test_new_standard_entries_pinned():
     ids = {e["id"] for e in ambiguity_entries()}
     entries = [e for e in select(load_manifest(), "standard") if e["id"] in ids]
     assert len(entries) == 30
-    assert all(e["strata"] == {"category": "ambiguity"} for e in entries)
+    assert all(e["strata"]["category"] == "ambiguity" for e in entries)
 
 
 def test_ambiguity_grid_definition():

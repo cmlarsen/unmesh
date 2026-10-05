@@ -31,3 +31,16 @@ def smoke_by_deflection():
         for e in select(load_manifest(), "smoke")
         for lin, ang in DEFLECTION_SETTINGS
     ]
+
+
+def entry_shape(entry):
+    if entry["tier"] == "generated":
+        from unmesh_harness.groundtruth import generate
+
+        return generate(entry["family"], entry["seed"]).solid
+    from unmesh_harness.imported import load_imported_shape
+
+    try:
+        return load_imported_shape(entry)
+    except RuntimeError as e:
+        pytest.skip(str(e))

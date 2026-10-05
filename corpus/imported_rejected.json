@@ -1,0 +1,33 @@
+{
+  "candidate_cap": 233,
+  "pinned_from": {
+    "nist-pmi": "fetch nist-pmi --limit 60 (all 33 STEP files in the archive)",
+    "freecad-library": "fetch freecad-library --limit 200 at commit 544a254e090eaf7bfbb6a9b69e249dc0d3d29d67"
+  },
+  "rejected": [
+    {
+      "dataset": "nist-pmi",
+      "file_id": "nist-pmi/nist_ctc_02_asme1_ap242-e2",
+      "sha256": "99a0a2079ddeb64d05c2432cbe931fa17c89da60d8b0bcb0b11bd0ed94fa2e68",
+      "reason": "STEP import segfaults the probe worker (SIGSEGV, deterministic over two runs); the file never reaches validity probing"
+    },
+    {
+      "dataset": "nist-pmi",
+      "file_id": "nist-pmi/nist_ftc_08_asme1_ap242-e1-tg",
+      "sha256": "841a9ac51a32fe25b872f283b0b8770c77fee4e34adc8499f88a6e1bafd8e578",
+      "reason": "imports but BRepCheck_Analyzer reports invalid with negative volume (-503280.8)"
+    },
+    {
+      "dataset": "freecad-library",
+      "file_id": "freecad-library/Mechanical Parts/Bearings/linear_bearings/LM8suu",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reason": "upstream git blob is 0 bytes; STEP import produces no geometry"
+    },
+    {
+      "dataset": "freecad-library",
+      "file_id": "freecad-library/Mechanical Parts/Profiles EN/DIN1025-3 HE-A-Profiles/HE-A-Profile 240 DIN1025-3 S235JR",
+      "sha256": "19593fb6c4fc77c0c1f3de085d5c9bd5b6b5fe85f94a543994239f0fe8cf15f7",
+      "reason": "STEP imports to an empty shape (0 solids, 0 shells, 0 faces; 8 KB stub, siblings are ~58 KB)"
+    }
+  ]
+}

@@ -214,6 +214,45 @@ def test_no_fusion_dataset():
     assert "fusion360-segmentation" not in d.DATASETS
 
 
+def test_wanted_imported_refs_groups_file_ids_by_dataset():
+    corpus = {
+        "entries": [
+            {"tier": "imported", "source": {"dataset": "nist-pmi", "file_id": "a", "sha256": "s1"}},
+            {
+                "tier": "imported",
+                "source": {"dataset": "nist-pmi", "file_id": "b", "sha256": "s2"},
+            },
+            {
+                "tier": "imported",
+                "source": {"dataset": "freecad-library", "file_id": "c", "sha256": "s3"},
+            },
+            {"tier": "generated", "family": "plate_pockets", "seed": 0},
+        ]
+    }
+    assert d.wanted_imported_refs(corpus) == {
+        "nist-pmi": {"a": "s1", "b": "s2"},
+        "freecad-library": {"c": "s3"},
+    }
+
+
+def test_fetch_manifest_refs_rejects_unknown_dataset_without_network(tmp_path):
+    corpus = {
+        "entries": [
+            {
+                "tier": "imported",
+                "source": {"dataset": "nope", "file_id": "x", "sha256": "s"},
+            }
+        ]
+    }
+    with pytest.raises(RuntimeError, match="--manifest cannot fetch"):
+        d.fetch_manifest_refs(corpus, tmp_path)
+
+
+def test_imported_tier_fetch_params_cover_pinned_datasets():
+    assert set(d.IMPORTED_TIER_FETCH) == {"nist-pmi", "freecad-library"}
+    assert "--manifest corpus/v0.json" in d.IMPORTED_TIER_COMMAND
+
+
 def test_overall_tier_is_computed_from_entries():
     red = {"license_tier": d.REDISTRIBUTABLE}
     dl = {"license_tier": d.DOWNLOAD_ONLY}

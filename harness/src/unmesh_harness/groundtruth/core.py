@@ -67,7 +67,7 @@ def generate(family: str, seed: int) -> GroundTruth:
 
 
 def _load_builtin_families() -> None:
-    from . import ambiguity, chamfer_fillet, curved, planar  # noqa: F401
+    from . import ambiguity, chamfer_fillet, complex, curved, planar  # noqa: F401
 
 
 def fingerprint(shape: Shape) -> dict[str, Any]:

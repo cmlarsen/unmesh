@@ -13,6 +13,7 @@ from unmesh_harness.corpus import (
     select,
 )
 from unmesh_harness.groundtruth import families, fingerprint, generate, validity_problems
+from unmesh_harness.strata import compute_strata
 
 from .volumes import expected_volume
 
@@ -21,11 +22,20 @@ def _entries(grid):
     return [(e["family"], e["seed"]) for e in select(load_manifest(), grid)]
 
 
+def _problems(gt) -> list[str]:
+    return validity_problems(
+        gt.solid,
+        solids=gt.parameters.get("solids", 1),
+        shells=gt.parameters.get("shells", 1),
+    )
+
+
 def test_manifest_contains_planned_entries_unchanged():
     ids = {e["id"]: e for e in load_manifest()["entries"]}
     for planned in planned_entries():
         entry = ids[planned["id"]]
-        assert all(entry[k] == v for k, v in planned.items())
+        assert all(entry[k] == v for k, v in planned.items() if k != "strata")
+        assert entry["strata"]["category"] == planned["strata"]["category"]
         assert "fingerprint" in entry
 
 
@@ -33,7 +43,8 @@ def test_manifest_contains_curved_entries_unchanged():
     ids = {e["id"]: e for e in load_manifest()["entries"]}
     for planned in curved_entries():
         entry = ids[planned["id"]]
-        assert all(entry[k] == v for k, v in planned.items())
+        assert all(entry[k] == v for k, v in planned.items() if k != "strata")
+        assert entry["strata"]["category"] == planned["strata"]["category"]
         assert "fingerprint" in entry
 
 
@@ -55,7 +66,7 @@ def test_unknown_family():
 @pytest.mark.parametrize(("family", "seed"), _entries("smoke"))
 def test_smoke_valid_and_deterministic(family, seed):
     a, b = generate(family, seed), generate(family, seed)
-    assert validity_problems(a.solid) == []
+    assert _problems(a) == []
     fa, fb = fingerprint(a.solid), fingerprint(b.solid)
     assert math.isclose(fa["volume"], fb["volume"], rel_tol=1e-9)
     assert fa["face_count"] == fb["face_count"]
@@ -65,14 +76,17 @@ def test_smoke_valid_and_deterministic(family, seed):
 
 
 def _check_pinned(entry):
+    if entry["tier"] != "generated":
+        pytest.skip("imported parts need the dataset cache")
     gt = generate(entry["family"], entry["seed"])
-    assert validity_problems(gt.solid) == []
+    assert _problems(gt) == []
     pinned, now = entry["fingerprint"], pinned_fingerprint(gt.solid)
     assert now["volume"] == pytest.approx(pinned["volume"], rel=1e-9)
     assert now["face_count"] == pinned["face_count"]
     assert now["bbox_min"] == pytest.approx(pinned["bbox_min"], abs=1e-6)
     assert now["bbox_max"] == pytest.approx(pinned["bbox_max"], abs=1e-6)
     assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9)
+    assert entry["strata"] == compute_strata(gt.solid, entry["strata"]["category"])
 
 
 @pytest.mark.parametrize("entry", select(load_manifest(), "smoke"), ids=lambda e: e["id"])
@@ -91,7 +105,7 @@ def test_standard_matches_pinned_fingerprint_and_metadata(entry):
 def test_seed_sweep_volume_matches_metadata(family):
     for seed in range(300):
         gt = generate(family, seed)
-        assert validity_problems(gt.solid) == [], seed
+        assert _problems(gt) == [], seed
         assert gt.solid.volume == pytest.approx(expected_volume(gt), rel=1e-9), seed
 
 

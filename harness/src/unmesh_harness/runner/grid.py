@@ -222,7 +222,8 @@ def prep_hash(grid: Grid, manifest_path: Path | None = None) -> str:
     )
     files = (
         sorted((base / "groundtruth").glob("*.py"))
-        + [base / "labels.py", base / "corpus.py", base / "runner" / "execute.py"]
+        + [base / "labels.py", base / "corpus.py", base / "imported.py", base / "strata.py"]
+        + [base / "runner" / "execute.py"]
         + [base / "degrade" / name for name in ("__init__.py", "fillets.py", "retriangulate.py")]
     )
     for f in files:

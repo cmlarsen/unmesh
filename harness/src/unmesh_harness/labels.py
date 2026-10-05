@@ -263,6 +263,16 @@ def _indexed(shape, kind) -> TopTools_IndexedMapOfShape:
     return m
 
 
+def face_surface_types(shape: Shape | Any) -> list[str]:
+    wrapped = getattr(shape, "wrapped", shape)
+    faces = _indexed(wrapped, TopAbs_FACE)
+    out = []
+    for fi in range(1, faces.Extent() + 1):
+        face = TopoDS.Face_s(faces.FindKey(fi))
+        out.append(_SURFACE_TYPES.get(BRepAdaptor_Surface(face).GetType(), "other"))
+    return out
+
+
 def _vertex_point(vertex) -> tuple[float, float, float]:
     p = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertex))
     return (p.X(), p.Y(), p.Z())

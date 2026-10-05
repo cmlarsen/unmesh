@@ -53,6 +53,16 @@ def prep_part(task: dict[str, Any]) -> dict[str, Any]:
 
     entry = task["entry"]
     labeled_path, truth_path = _cache_paths(Path(task["cache"]), entry["id"])
+    if entry["tier"] == "imported":
+        from ..imported import load_imported_shape
+
+        solid = load_imported_shape(entry)
+        labeled = tessellate(solid, *task["input_deflection"])
+        if task["need_truth"]:
+            truth = tessellate(solid, *task["truth_deflection"])
+            np.save(truth_path, truth.tris)
+        labeled.save(labeled_path)
+        return {"part": entry["id"]}
     gt = generate(entry["family"], entry["seed"])
     pair_deflection = gt.parameters.get("pair_deflection")
     if pair_deflection is not None:

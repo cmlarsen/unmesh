@@ -16,7 +16,7 @@ from unmesh_harness.labels import (
     tessellate,
 )
 
-from .cases import MESHER_CHORD_FACTOR, smoke_by_deflection
+from .cases import MESHER_CHORD_FACTOR, entry_shape, smoke_by_deflection
 
 
 def closed_manifold_problems(tris):
@@ -86,9 +86,13 @@ def test_smoke_parts_closed_manifold_and_on_surface(entry, lin, ang):
 
 @pytest.mark.slow
 @pytest.mark.parametrize(("lin", "ang"), DEFLECTION_SETTINGS)
-@pytest.mark.parametrize("entry", select(load_manifest(), "standard"), ids=lambda e: e["id"])
+@pytest.mark.parametrize(
+    "entry",
+    [e for e in select(load_manifest(), "standard") if e["tier"] == "generated"],
+    ids=lambda e: e["id"],
+)
 def test_standard_parts_closed_manifold_and_on_surface(entry, lin, ang):
-    check_part(generate(entry["family"], entry["seed"]).solid, lin, ang)
+    check_part(entry_shape(entry), lin, ang)
 
 
 PRIMITIVES = {
