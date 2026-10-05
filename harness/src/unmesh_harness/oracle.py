@@ -131,17 +131,19 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
         cands = between or [a, b]
         joints.add(min(cands, key=lambda i: (abs(samples[i] - threshold_deg), pts[i], i)))
     joints = sorted(joints)
+
+    def drop_key(j: int) -> tuple[tuple[float, ...], float]:
+        return (pts[j], samples[j])
+
     while True:
         spans = _spans(joints, n, closed)
-        bad = next((j for j, s in enumerate(spans) if _span_len(s, n) < MIN_RUN_SEGMENTS), None)
-        if bad is None:
+        bad = [s for s in spans if _span_len(s, n) < MIN_RUN_SEGMENTS]
+        if not bad:
             break
         if len(joints) < (2 if closed else 1):
             return [_Seg(d.points, d.dihedral, d.start, d.end)]
-        if not closed:
-            del joints[bad - 1 if bad > 0 else 0]
-        else:
-            del joints[bad % len(joints)]
+        span = min(bad, key=lambda s: (_span_len(s, n), sorted(pts[i] for i in _span_nodes(s, n))))
+        joints.remove(min((b for b in span[:2] if b in joints), key=drop_key))
     if not joints or (closed and len(joints) < 2):
         return [_Seg(d.points, d.dihedral, d.start, d.end)]
     while True:
@@ -150,17 +152,16 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
             float(np.median([samples[i] for i in _span_nodes(s, n)])) < threshold_deg for s in spans
         ]
         if closed:
-            nxt = next(
-                (j for j in range(len(spans)) if kinds[j] == kinds[(j + 1) % len(spans)]), None
-            )
-            if nxt is None:
-                break
-            del joints[(nxt + 1) % len(joints)]
+            shared = [
+                joints[(j + 1) % len(joints)]
+                for j in range(len(spans))
+                if kinds[j] == kinds[(j + 1) % len(spans)]
+            ]
         else:
-            nxt = next((j for j in range(len(spans) - 1) if kinds[j] == kinds[j + 1]), None)
-            if nxt is None:
-                break
-            del joints[nxt]
+            shared = [joints[j] for j in range(len(spans) - 1) if kinds[j] == kinds[j + 1]]
+        if not shared:
+            break
+        joints.remove(min(shared, key=drop_key))
         if not joints or (closed and len(joints) < 2):
             return [_Seg(d.points, d.dihedral, d.start, d.end)]
     splits = {j: _Split(pts[j], pair) for j in joints}
