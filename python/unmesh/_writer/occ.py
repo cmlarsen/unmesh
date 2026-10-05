@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from OCP.BRep import BRep_Builder
 from OCP.BRepBuilderAPI import (
@@ -258,12 +260,45 @@ def read_step(path):
 
 
 def count_solids(shape) -> int:
+    return len(_solids_of(shape))
+
+
+def _solids_of(shape):
     ex = TopExp_Explorer(shape, TopAbs_SOLID)
-    n = 0
+    out = []
     while ex.More():
-        n += 1
+        out.append(TopoDS.Solid_s(ex.Current()))
         ex.Next()
-    return n
+    return out
+
+
+def shell_count(shape) -> int:
+    return len(_shells_of(shape))
+
+
+def area_of(shape) -> float:
+    props = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(shape, props)
+    return float(props.Mass())
+
+
+@dataclass
+class ReadSolid:
+    volume: float
+    valid: bool
+    tolerance: float
+    shells: int
+
+
+def read_back(path) -> tuple[list[ReadSolid], int]:
+    shape = read_step(path)
+    if shape.IsNull():
+        return [], 0
+    solids = [
+        ReadSolid(volume_of(s), is_valid(s), tolerance_of(s), len(_shells_of(s)))
+        for s in _solids_of(shape)
+    ]
+    return solids, len(_shells_of(shape))
 
 
 def triangle_face(pool: _Pool, a, b, c):

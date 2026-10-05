@@ -492,3 +492,35 @@ def test_noise_only_cone_with_cavity_fallback(tmp_path):
     assert report.solids == 1
     assert report.shells[0].volume == pytest.approx(expected, rel=1e-9)
     assert occ.volume_of(occ.read_step(path)) == pytest.approx(expected, rel=1e-9)
+
+
+def box_with_cavity():
+    tris = np.concatenate(
+        [box_tris((0.0, 0.0, 0.0), 4.0), box_tris((1.0, 1.0, 1.0), 1.0, inward=True)]
+    )
+    ir, _ = unmesh.convert(tris)
+    return break_first_region(ir), tris
+
+
+def test_readback_reports_success_with_measured_values(tmp_path):
+    bad, tris = box_with_cavity()
+    report = step.write(bad, tmp_path / "ok.step", mesh=tris)
+    rb = report.readback
+    assert report.valid and rb.ok and not rb.issues
+    assert (rb.solids, rb.shells) == (rb.expected_solids, rb.expected_shells) == (1, 2)
+    assert rb.expected_volume == pytest.approx(63.0, rel=1e-12)
+    assert rb.volume == pytest.approx(63.0, rel=1e-9)
+    assert 0 < rb.volume_tolerance < 1e-3
+
+
+def test_readback_catches_analytic_writer_mismatch(tmp_path, monkeypatch):
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
+    real = occ.write_step
+    unit = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
+    monkeypatch.setattr(occ, "write_step", lambda shape, path: real(unit, path))
+    report = step.write(load("box"), tmp_path / "a.step")
+    assert report.fallback is None
+    assert not report.valid
+    assert report.readback.volume == pytest.approx(1.0, rel=1e-9)
+    assert report.readback.expected_volume == pytest.approx(1000.0, rel=1e-9)
