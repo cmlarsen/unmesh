@@ -21,6 +21,7 @@ pub struct Asm<'a> {
     pub nbr: &'a [[u32; 3]],
     pub metas: &'a [CompMeta],
     pub orig: &'a [Point],
+    pub reach: f64,
 }
 
 fn orientation(reversed: bool) -> Orientation {
@@ -36,7 +37,7 @@ pub fn assemble(
     finals: &[Final],
     flabel: &[u32],
     pos: &[Point],
-) -> Result<Ir, Vec<String>> {
+) -> Result<(Ir, f64), Vec<String>> {
     let mut regions = Vec::with_capacity(finals.len());
     for (i, fr) in finals.iter().enumerate() {
         let triangles: Vec<u32> = fr.faces.iter().map(|&f| asm.fsrc[f as usize]).collect();
@@ -167,15 +168,21 @@ pub fn assemble(
         })
         .collect();
 
-    let (raw, reg) = adjacency::build(
-        asm.nbr,
-        asm.faces,
+    let adjacency::Built {
+        adjacencies: raw,
+        vertices: reg,
+        moved_deviation,
+    } = adjacency::build(adjacency::BuildArgs {
+        nbr: asm.nbr,
+        faces: asm.faces,
         flabel,
         finals,
         pos,
-        asm.center,
-        asm.tolerances.tangent_threshold_deg,
-    );
+        orig: asm.orig,
+        center: asm.center,
+        tangent_threshold_deg: asm.tolerances.tangent_threshold_deg,
+        reach: asm.reach,
+    });
 
     let mut order: Vec<usize> = (0..reg.len()).collect();
     order.sort_by(|&a, &b| {
@@ -212,7 +219,7 @@ pub fn assemble(
             Vertex {
                 id: n as u32,
                 role: e.role,
-                position: pos[e.mesh as usize],
+                position: e.position,
                 regions: e.regions.clone(),
                 source_positions: vec![asm.orig[e.mesh as usize]],
             }
@@ -233,7 +240,7 @@ pub fn assemble(
     };
     let errors = validate(&ir);
     if errors.is_empty() {
-        Ok(ir)
+        Ok((ir, moved_deviation))
     } else {
         Err(errors)
     }
@@ -261,6 +268,7 @@ mod tests {
             nbr,
             metas,
             orig: pos,
+            reach: 0.0,
         }
     }
 
@@ -326,7 +334,7 @@ mod tests {
         let flabel = vec![0, 1, 0, 1, 1, 1, 1, 1];
         let metas = outer_metas();
         let asm = asm(&faces, &fsrc, &topo.nbr, &metas, &pos);
-        let ir = assemble(&asm, &finals, &flabel, &pos).unwrap();
+        let ir = assemble(&asm, &finals, &flabel, &pos).unwrap().0;
         ir.validate().unwrap();
         assert!(ir.vertices.is_empty());
         assert_eq!(ir.adjacencies.len(), 1);
@@ -384,7 +392,7 @@ mod tests {
             let flabel = vec![0, 1, 0, 1, 1, 1, 1, 1];
             let metas = outer_metas();
             let asm = asm(&faces, &fsrc, &topo.nbr, &metas, &pos);
-            let ir = assemble(&asm, &finals, &flabel, &pos).unwrap();
+            let ir = assemble(&asm, &finals, &flabel, &pos).unwrap().0;
             ir.validate().unwrap();
             assert!(ir.vertices.is_empty());
             assert_eq!(ir.adjacencies.len(), 1);
@@ -402,26 +410,50 @@ mod tests {
         }
     }
 
-    #[test]
-    fn genuine_kind_change_still_emits_a_vertex() {
-        let pos: Vec<Point> = vec![
-            [0.0, 0.0, 0.0],
-            [10.0, 0.0, 0.0],
-            [0.0, 10.0, 0.0],
-            [5.0, 1.0, 0.1],
-        ];
-        let mut faces: Vec<[u32; 3]> = vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]];
-        let fsrc: Vec<u32> = (0..4).collect();
+    fn tent(h: f64, apex_x: f64) -> (Vec<Point>, Vec<[u32; 3]>, Vec<u32>) {
+        let m = 12;
+        let mut pos: Vec<Point> = (0..m)
+            .map(|i| {
+                let t = std::f64::consts::TAU * i as f64 / m as f64;
+                [10.0 * t.cos(), 10.0 * t.sin(), 0.0]
+            })
+            .collect();
+        pos.push([0.0, 0.0, 0.0]);
+        pos.push([apex_x, 0.0, h]);
+        let (c, a) = (m as u32, m as u32 + 1);
+        let mut faces = Vec::new();
+        let mut flabel = Vec::new();
+        for i in 0..m as u32 {
+            let j = (i + 1) % m as u32;
+            faces.push([c, j, i]);
+            flabel.push(0);
+        }
+        for i in 0..m as u32 {
+            let j = (i + 1) % m as u32;
+            faces.push([i, j, a]);
+            flabel.push(1);
+        }
+        (pos, faces, flabel)
+    }
+
+    fn tent_ir(h: f64, apex_x: f64) -> Ir {
+        let (pos, mut faces, flabel) = tent(h, apex_x);
+        let fsrc: Vec<u32> = (0..faces.len() as u32).collect();
         let topo = super::super::topology::build(&mut faces);
         let finals = vec![
-            plane_final(vec![0], [0.0, 0.0, 1.0]),
-            facets_final(vec![1, 2, 3]),
+            plane_final((0..12).collect(), [0.0, 0.0, 1.0]),
+            facets_final((12..24).collect()),
         ];
-        let flabel = vec![0, 1, 1, 1];
         let metas = outer_metas();
         let asm = asm(&faces, &fsrc, &topo.nbr, &metas, &pos);
-        let ir = assemble(&asm, &finals, &flabel, &pos).unwrap();
+        let ir = assemble(&asm, &finals, &flabel, &pos).unwrap().0;
         ir.validate().unwrap();
+        ir
+    }
+
+    #[test]
+    fn genuine_kind_change_still_emits_a_vertex() {
+        let ir = tent_ir(0.5, 6.0);
         let kc: Vec<_> = ir
             .vertices
             .iter()
@@ -434,6 +466,18 @@ mod tests {
             .iter()
             .map(|b| b.kind)
             .collect();
+        assert_eq!(kinds.len(), 2);
         assert!(kinds.contains(&Kind::Tangent) && kinds.contains(&Kind::Transversal));
+        for b in &ir.adjacencies[0].boundaries {
+            assert!(b.points.len() >= 3);
+        }
+    }
+
+    #[test]
+    fn dihedral_hovering_inside_the_band_keeps_one_closed_boundary() {
+        let ir = tent_ir(9.0 * 3.0f64.to_radians().tan(), 0.0);
+        assert!(ir.vertices.is_empty());
+        assert_eq!(ir.adjacencies[0].boundaries.len(), 1);
+        assert!(ir.adjacencies[0].boundaries[0].closed);
     }
 }

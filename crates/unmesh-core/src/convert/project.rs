@@ -1,9 +1,11 @@
 use super::fit::Final;
 use super::linalg::{M3, V3, add, dot, norm, outer_add, scale, sub, sym_eigen};
+use super::refine::{lsq_point, mesh_distance, off_surfaces};
 use super::segment::TriInfo;
 use super::surface::{Constraint, Surface};
 
 const EIGEN_FLOOR: f64 = 5e-4;
+pub const JUNCTION_REACH: f64 = 5.0;
 const GAUSS_NEWTON_STEPS: usize = 3;
 
 fn solve(x0: V3, constraints: &[&Constraint]) -> V3 {
@@ -74,6 +76,52 @@ fn solve_dropping(x0: V3, constraints: &[Constraint], tol: f64) -> (V3, usize) {
     }
 }
 
+/// Faces around each vertex, for the two-ring a moved junction is measured
+/// against.
+pub struct Ring {
+    start: Vec<u32>,
+    faces: Vec<u32>,
+}
+
+impl Ring {
+    pub fn new(faces: &[[u32; 3]], nv: usize) -> Self {
+        let mut start = vec![0u32; nv + 1];
+        for t in faces {
+            for &v in t {
+                start[v as usize + 1] += 1;
+            }
+        }
+        for i in 0..nv {
+            start[i + 1] += start[i];
+        }
+        let mut fill = start.clone();
+        let mut out = vec![0u32; start[nv] as usize];
+        for (f, t) in faces.iter().enumerate() {
+            for &v in t {
+                out[fill[v as usize] as usize] = f as u32;
+                fill[v as usize] += 1;
+            }
+        }
+        Ring { start, faces: out }
+    }
+
+    fn of(&self, v: u32) -> &[u32] {
+        &self.faces[self.start[v as usize] as usize..self.start[v as usize + 1] as usize]
+    }
+
+    pub fn around(&self, v: usize, faces: &[[u32; 3]]) -> impl Iterator<Item = u32> {
+        let mut out: Vec<u32> = self
+            .of(v as u32)
+            .iter()
+            .flat_map(|&f| faces[f as usize])
+            .flat_map(|k| self.of(k).iter().copied())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out.into_iter()
+    }
+}
+
 pub struct Projected {
     pub positions: Vec<V3>,
     pub report_dev: f64,
@@ -117,6 +165,7 @@ pub fn run(args: ProjectArgs<'_>) -> Projected {
         .iter()
         .map(|fr| fr.faces.iter().map(|&f| info[f as usize].area).sum())
         .collect();
+    let ring = Ring::new(faces, vc.len());
     let mut pv = vc.to_vec();
     let mut dev_sum2 = 0.0;
     let mut dev_max: f64 = 0.0;
@@ -132,15 +181,27 @@ pub fn run(args: ProjectArgs<'_>) -> Projected {
             j += 1;
         }
         if surfaces.iter().any(|(s, _)| s.is_analytic()) {
-            let x = project_vertex(vc[v], &surfaces, tol);
-            pv[v] = x;
-            let disp = norm(sub(x, vc[v]));
-            let off = surfaces
+            let mut x = project_vertex(vc[v], &surfaces, tol);
+            let analytic: Vec<&Surface> = surfaces
                 .iter()
                 .filter(|(s, _)| s.is_analytic())
-                .map(|(s, _)| s.distance(x).abs())
-                .fold(0.0, f64::max);
-            let dev = disp + off;
+                .map(|(s, _)| *s)
+                .collect();
+            let mut dev = norm(sub(x, vc[v])) + off_surfaces(x, &analytic);
+            if surfaces.len() >= 3 && analytic.len() >= 2 {
+                let y = lsq_point(vc[v], x, &analytic);
+                let near = mesh_distance(
+                    y,
+                    ring.around(v, faces)
+                        .map(|f| faces[f as usize].map(|k| vc[k as usize])),
+                );
+                let dy = near + off_surfaces(y, &analytic);
+                if dy <= JUNCTION_REACH * tol {
+                    x = y;
+                    dev = dy;
+                }
+            }
+            pv[v] = x;
             dev_max = dev_max.max(dev);
             dev_sum2 += dev * dev;
             dev_count += 1;

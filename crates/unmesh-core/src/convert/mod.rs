@@ -10,6 +10,7 @@ mod grow;
 mod linalg;
 mod noise;
 mod project;
+mod refine;
 mod segment;
 mod snap;
 mod surface;
@@ -297,14 +298,15 @@ fn finish(
         nbr: &shells.topo.nbr,
         metas: &shells.metas,
         orig: &w.orig,
+        reach: project::JUNCTION_REACH * tol,
     };
     let out_pos = positions(&pv);
     let result = emit::assemble(&asm, &finals, &flabel, &out_pos);
     let merge = w.merge_dev;
     let (ir, report_dev, report_rms, region_counts, area_fraction) = match result {
-        Ok(ir) => (
+        Ok((ir, moved)) => (
             ir,
-            report_dev + merge,
+            report_dev.max(moved) + merge,
             report_rms,
             region_counts,
             if total_area > 0.0 {
@@ -337,7 +339,7 @@ fn finish(
                 .collect();
             let fl = label_faces(&fb, w.faces.len());
             let orig_pos = positions(&w.vc);
-            let ir = emit::assemble(&asm, &fb, &fl, &orig_pos)
+            let (ir, _) = emit::assemble(&asm, &fb, &fl, &orig_pos)
                 .map_err(|e| ConvertError::InvalidInput(e.join("; ")))?;
             let mut counts = BTreeMap::new();
             counts.insert("facets".to_string(), fb.len() as u32);
