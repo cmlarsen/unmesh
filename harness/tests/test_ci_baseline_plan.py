@@ -82,6 +82,32 @@ def test_bootstrap_skips_when_compare_is_not_on_main(module):
     assert d.action == "skip" and "not on main yet" in d.message
 
 
+def test_fork_run_is_rejected(module):
+    d = decide(module, latest=run(12, repo="mallory/r", module=module))
+    assert d.action == "fail"
+    d = decide(module, latest=run(12, fork=True, module=module))
+    assert d.action == "fail"
+
+
+def test_non_push_run_is_rejected(module):
+    d = decide(module, latest=run(12, event="pull_request", module=module))
+    assert d.action == "fail"
+
+
+def test_wrong_branch_run_is_rejected(module):
+    d = decide(module, latest=run(12, branch="feature", module=module))
+    assert d.action == "fail"
+
+
+def test_untrusted_base_falls_back_to_trusted_latest(module):
+    d = decide(
+        module,
+        base=run(11, event="pull_request", module=module),
+        latest=run(12, module=module),
+    )
+    assert (d.action, d.run_id) == ("use", 12)
+
+
 def test_main_entrypoint_bootstraps_without_touching_gh(tmp_path, monkeypatch, capsys):
     module = load_module("ci_baseline_bootstrap")
 

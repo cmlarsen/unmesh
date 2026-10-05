@@ -37,6 +37,16 @@ class BaselineDecision:
     fell_back: bool = False
 
 
+def _trusted(run: BaselineRun | None, repo: str) -> bool:
+    return (
+        run is not None
+        and run.event == "push"
+        and run.head_branch == "main"
+        and run.head_repo == repo
+        and not run.fork
+    )
+
+
 def decide_baseline(
     *,
     repo: str,
@@ -47,9 +57,10 @@ def decide_baseline(
 ) -> BaselineDecision:
     if not compare_on_main:
         return BaselineDecision("skip", None, "compare not on main yet; skipping regression gate")
-    if base is not None and base.head_sha == base_sha:
+    if base is not None and _trusted(base, repo) and base.head_sha == base_sha:
         return BaselineDecision("use", base.id, f"baseline is main run {base.id}")
-    if latest is not None:
+    if _trusted(latest, repo):
+        assert latest is not None
         return BaselineDecision(
             "use",
             latest.id,
@@ -57,7 +68,14 @@ def decide_baseline(
             f"falling back to latest main run {latest.id} ({latest.head_sha})",
             fell_back=True,
         )
-    return BaselineDecision("skip", None, "no successful main run yet, skipping compare")
+    if base is None and latest is None:
+        return BaselineDecision("skip", None, "no successful main run yet, skipping compare")
+    return BaselineDecision(
+        "fail",
+        None,
+        "no trustworthy main baseline run: candidates are not push-to-main runs "
+        f"of {repo} (base sha {base_sha})",
+    )
 
 
 def list_run_id(repo: str, workflow: str, commit: str | None) -> int | None:
@@ -71,6 +89,8 @@ def list_run_id(repo: str, workflow: str, commit: str | None) -> int | None:
         "main",
         "--workflow",
         workflow,
+        "--event",
+        "push",
         "--status",
         "success",
         "--limit",
