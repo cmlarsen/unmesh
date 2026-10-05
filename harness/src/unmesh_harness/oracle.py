@@ -105,7 +105,9 @@ def _spans(joints: list[int], n: int, closed: bool) -> list[tuple[int, int, bool
     if not closed:
         bounds = [0] + joints + [n - 1]
         return [(bounds[j], bounds[j + 1], False) for j in range(len(bounds) - 1)]
-    return [(joints[j], joints[(j + 1) % len(joints)], j == len(joints) - 1) for j in range(len(joints))]
+    return [
+        (joints[j], joints[(j + 1) % len(joints)], j == len(joints) - 1) for j in range(len(joints))
+    ]
 
 
 def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> list[_Seg]:
@@ -129,7 +131,9 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
             cur = False
         state.append(cur)
     closed = d.start == d.end
-    joints = sorted(_near_node(samples, i, threshold_deg) for i in range(n - 1) if state[i] != state[i + 1])
+    joints = sorted(
+        _near_node(samples, i, threshold_deg) for i in range(n - 1) if state[i] != state[i + 1]
+    )
     if closed and state[0] != state[-1]:
         wrap = n - 1 if abs(samples[n - 1] - threshold_deg) < abs(samples[0] - threshold_deg) else 0
         joints.append(wrap)
@@ -153,7 +157,9 @@ def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> li
             float(np.median([samples[i] for i in _span_nodes(s, n)])) < threshold_deg for s in spans
         ]
         if closed:
-            nxt = next((j for j in range(len(spans)) if kinds[j] == kinds[(j + 1) % len(spans)]), None)
+            nxt = next(
+                (j for j in range(len(spans)) if kinds[j] == kinds[(j + 1) % len(spans)]), None
+            )
             if nxt is None:
                 break
             del joints[(nxt + 1) % len(joints)]

@@ -3,12 +3,12 @@ import json
 import random
 
 import pytest
-from build123d import Box, Cylinder, Pos, Rot
+from build123d import Box, Cylinder, Pos, Rot, Rotation
 
 from unmesh.ir import Adjacency, Region, validate
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
-from unmesh_harness.labels import tessellate
+from unmesh_harness.labels import DEFLECTION_SETTINGS, tessellate
 from unmesh_harness.metrics.structure import score_structure, score_topology, score_validity
 from unmesh_harness.oracle import build_oracle_ir
 from unmesh_harness.runner.converters import faceted_ir
@@ -262,6 +262,45 @@ def test_rod_through_block_oracle_matches():
     result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
     assert result["topology_match"], result
     assert result["pairs_match"] and result["edges_match"]
+    json.dumps(result)
+
+
+def _equal_tee():
+    return Cylinder(5, 20) + (Pos(0, 0, 0) * Rotation(0, 90, 0) * Cylinder(5, 20))
+
+
+def _tangent_boss():
+    wall = Rotation(0, 90, 0) * Cylinder(5, 20)
+    return wall + (Pos(0, 0, 7.5) * Cylinder(5, 15))
+
+
+@pytest.mark.parametrize("make", [_equal_tee, _tangent_boss])
+@pytest.mark.parametrize("lin,ang", DEFLECTION_SETTINGS)
+def test_oracle_topology_matches_mid_edge_parts(make, lin, ang):
+    mesh = tessellate(make(), lin, ang)
+    result = score_topology(mesh, mesh.face_id, mesh.tris, build_oracle_ir(mesh))
+    assert result["topology_match"], result
+    assert result["pairs_match"] and result["edges_match"] and result["roles_match"]
+    json.dumps(result)
+
+
+@pytest.mark.parametrize("make", [_equal_tee, _tangent_boss])
+def test_whole_edge_ir_misses_mid_edge_vertices(make):
+    mesh = tessellate(make(), 0.001, 0.1)
+    ir = build_oracle_ir(mesh)
+    assert validate(ir) == []
+    assert any(v.role == "kind_change" for v in ir.vertices)
+    whole = build_oracle_ir(
+        dataclasses.replace(
+            mesh, adjacency=[dataclasses.replace(a, dihedral_samples=[]) for a in mesh.adjacency]
+        )
+    )
+    assert validate(whole) == []
+    assert not any(v.role == "kind_change" for v in whole.vertices)
+    result = score_topology(mesh, mesh.face_id, mesh.tris, whole)
+    assert result["topology_match"] is False
+    assert result["roles_match"] is False
+    assert result["edges_match"] is False
     json.dumps(result)
 
 
