@@ -282,7 +282,7 @@ def test_boss_part_loop_kind_change():
     assert any(b.kind == "tangent" for a in ir.adjacencies for b in a.boundaries if not b.closed)
 
 
-def make_directed(points, samples_deg, forward=True):
+def make_directed(points, samples_deg, forward=True, closed=False):
     adj = EdgeAdjacency(
         edge_id=0,
         face_a=0,
@@ -292,9 +292,9 @@ def make_directed(points, samples_deg, forward=True):
         dihedral=math.radians(45.0),
         dihedral_min=math.radians(min(samples_deg)),
         dihedral_max=math.radians(max(samples_deg)),
-        points=[[float(x), 0.0, 0.0] for x in points],
+        points=[[float(x), 0.0, 0.0] if isinstance(x, float) else list(x) for x in points],
         start_vertex=0,
-        end_vertex=1,
+        end_vertex=0 if closed else 1,
         forward_in_a=forward,
         dihedral_samples=[math.radians(s) for s in samples_deg],
     )
@@ -330,6 +330,40 @@ def test_split_runs_no_crossing_keeps_whole_edge():
     (seg,) = _split_runs(d, 3.0, (0, 1))
     assert seg.points == d.points and seg.dihedral == d.dihedral
     assert (seg.start, seg.end) == (0, 1)
+
+
+def test_split_runs_touch_only_edge_stays_whole():
+    for peak in (3.0, 3.0000001, 3.4):
+        d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [1.0, 1.0, peak, 1.0, 1.0])
+        (seg,) = _split_runs(d, 3.0, (0, 1))
+        assert seg.points == d.points and seg.dihedral == d.dihedral
+    for dip in (3.0, 2.9, 2.6):
+        d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [10.0, 10.0, dip, 10.0, 10.0])
+        (seg,) = _split_runs(d, 3.0, (0, 1))
+        assert seg.points == d.points and seg.dihedral == d.dihedral
+
+
+def test_split_runs_hovering_edge_stays_whole():
+    d = make_directed(
+        [0.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+        [2.9, 3.1, 2.9, 3.1, 2.9, 3.1],
+    )
+    (seg,) = _split_runs(d, 3.0, (0, 1))
+    assert seg.points == d.points and seg.dihedral == d.dihedral
+
+
+def test_split_runs_closed_loop_with_two_crossings():
+    points = [
+        (10.0 * math.cos(i * math.pi / 4), 10.0 * math.sin(i * math.pi / 4), 0.0) for i in range(9)
+    ]
+    d = make_directed(points, [10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 10.0, 10.0, 10.0], closed=True)
+    segs = _split_runs(d, 3.0, (0, 1))
+    assert len(segs) == 2
+    assert segs[0].end is segs[1].start and segs[1].end is segs[0].start
+    assert all(len(s.points) >= 3 for s in segs)
+    assert (segs[0].dihedral < 3.0) != (segs[1].dihedral < 3.0)
+    assert segs[0].dihedral == pytest.approx(1.0)
+    assert segs[1].dihedral == pytest.approx(10.0)
 
 
 def test_split_runs_reversed_edge_keeps_samples_on_points():
