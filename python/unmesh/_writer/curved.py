@@ -70,10 +70,6 @@ def _xyz(p) -> np.ndarray:
     return np.array([p.X(), p.Y(), p.Z()])
 
 
-def needs_curved_builder(ir: Ir, shells: list[int]) -> bool:
-    return any(geo.is_curved(ir.regions[r].surface) for s in shells for r in ir.shells[s].regions)
-
-
 def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
     vpos = list(vpos)
     vmoved = list(vmoved)
@@ -282,7 +278,6 @@ def projected_curve(surfaces, nodes, closed: bool):
 
 @dataclass
 class _Edge:
-    index: int
     a: int
     b: int
     closed: bool
@@ -291,7 +286,6 @@ class _Edge:
     points: list[np.ndarray]
     curved: bool
     curve: object = None
-    curve_dev: float = 0.0
     fallback: str | None = None
     approximate: bool = False
     seam_point: np.ndarray | None = None
@@ -425,9 +419,7 @@ class _Builder:
                 if curved and bd.kind == "tangent":
                     raise BuildError(f"regions {a}/{b}: {TANGENT_REASON}")
                 pts = [np.asarray(p, dtype=float) for p in bd.points]
-                e = _Edge(
-                    len(self.edges), a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved
-                )
+                e = _Edge(a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved)
                 if facets:
                     analytic = sb if isinstance(sa, Facets) else sa
                     n = geo.unit(analytic.normal)
@@ -464,7 +456,7 @@ class _Builder:
                 continue
             curve, dev = select_branch(curves, e.points)
             if dev <= self.limit and (curve.IsPeriodic() or not e.closed):
-                e.curve, e.curve_dev = curve, dev
+                e.curve = curve
                 continue
             cover = max(min(nearest(c, p)[1] for c in curves) for p in _samples(e.points))
             if cover <= self.limit:
@@ -797,9 +789,7 @@ class _Builder:
                 raise BuildError(f"region {r}: natural {s.type} face construction failed")
             face = mk.Face()
             return TopoDS.Face_s(face.Reversed()) if reversed_ else face
-        uv_loops = [
-            self.uv_loop(r, surf, face, [e for seg in lp for e in seg.edges]) for lp in loops
-        ]
+        uv_loops = [_UVLoop(r, surf, [e for seg in lp for e in seg.edges], s) for lp in loops]
         wraps = [lp for lp in uv_loops if lp.du != 0]
         holes = [lp for lp in uv_loops if lp.du == 0]
         if any(lp.dv != 0 for lp in uv_loops):
@@ -855,9 +845,6 @@ class _Builder:
         if isinstance(s, Cone) and du < 0:
             return 0.0, np.asarray(s.apex, dtype=float)
         raise BuildError(f"region {r}: a single boundary loop around a {s.type} leaves it open")
-
-    def uv_loop(self, r, surf, face, edges):
-        return _UVLoop(r, surf, edges, self.surface(r))
 
     def seam_edge(self, surf, face, v_lo, v_hi, lo, hi, pole_point=None):
         iso = surf.UIso(0.0)
