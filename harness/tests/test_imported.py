@@ -28,9 +28,36 @@ def _cache_present() -> bool:
     return all((root / ds / "manifest.json").is_file() for ds in IMPORTED_DATASETS)
 
 
+def _missing_imported_ids() -> list[str]:
+    missing = []
+    for entry in _imported_entries():
+        try:
+            path, rec = cached_step_record(entry["source"])
+        except (FileNotFoundError, KeyError):
+            missing.append(entry["id"])
+            continue
+        if not path.is_file() or rec["sha256"] != entry["source"]["sha256"]:
+            missing.append(entry["id"])
+    return missing
+
+
 def _require_cache():
+    from unmesh_harness.datasets import IMPORTED_TIER_COMMAND
+
+    total = len(_imported_entries())
     if not _cache_present():
-        pytest.skip("dataset cache absent; run scripts/fetch-datasets for the imported tier")
+        pytest.skip(
+            f"dataset cache absent for {total} imported entries; "
+            f"run `{IMPORTED_TIER_COMMAND}` from the repo root, then retry"
+        )
+    missing = _missing_imported_ids()
+    if missing:
+        shown = ", ".join(missing[:5])
+        pytest.skip(
+            f"dataset cache partial: {len(missing)}/{total} imported entries do not resolve "
+            f"({shown}{'...' if len(missing) > 5 else ''}); "
+            f"run `{IMPORTED_TIER_COMMAND}` from the repo root, then retry"
+        )
 
 
 def test_imported_manifest_entries():
@@ -46,13 +73,27 @@ def test_imported_manifest_entries():
 
 
 def test_imported_sources_resolve_in_cache():
+    entries = _imported_entries()
     _require_cache()
-    for i, entry in enumerate(_imported_entries()):
+    for i, entry in enumerate(entries):
         path, rec = cached_step_record(entry["source"])
         assert path.is_file()
         assert rec["sha256"] == entry["source"]["sha256"]
         if (i + 1) % 50 == 0:
-            print(f"resolved {i + 1}/{len(_imported_entries())}")
+            print(f"resolved {i + 1}/{len(entries)}")
+
+
+def test_partial_cache_skips_naming_command_and_missing_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("UNMESH_CACHE_DIR", str(tmp_path))
+    for ds in IMPORTED_DATASETS:
+        (tmp_path / "datasets" / ds).mkdir(parents=True)
+        (tmp_path / "datasets" / ds / "manifest.json").write_text('{"entries": []}')
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _require_cache()
+    msg = str(exc.value.msg)
+    total = len(_imported_entries())
+    assert "--manifest corpus/v0.json" in msg
+    assert f"{total}/{total} imported entries do not resolve" in msg
 
 
 @pytest.mark.slow

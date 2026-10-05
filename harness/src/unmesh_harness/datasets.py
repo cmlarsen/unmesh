@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -54,6 +55,11 @@ NIST_SHA256 = "8fa78429e6d8d9b0d7681d223b6aa9ec98c3772185c55b1a0e3679b21c181911"
 FREECAD_REPO = "FreeCAD/FreeCAD-library"
 FREECAD_COMMIT = "544a254e090eaf7bfbb6a9b69e249dc0d3d29d67"
 FREECAD_MAX_BYTES = 5_000_000
+IMPORTED_TIER_FETCH = {
+    "nist-pmi": {"limit": 60},
+    "freecad-library": {"limit": 200},
+}
+IMPORTED_TIER_COMMAND = "uv run scripts/fetch-datasets --manifest corpus/v0.json"
 ABC_ARCHIVES = {
     "step": (
         "https://archive.nyu.edu/rest/bitstreams/88598/retrieve",
@@ -324,7 +330,12 @@ def http_bytes(url: str, headers: dict[str, str] | None = None, retries: int = 3
                 raise
             if attempt == retries - 1:
                 raise
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ):
             if attempt == retries - 1:
                 raise
         time.sleep(2**attempt)
@@ -344,7 +355,12 @@ def http_download(url: str, dest: Path, expected_size: int | None = None) -> Non
                 mode = "ab" if have and r.status == 206 else "wb"
                 with open(part, mode) as f:
                     shutil.copyfileobj(r, f, 1 << 20)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ):
             if attempt == 4:
                 raise
             time.sleep(2**attempt)
@@ -368,40 +384,88 @@ def _manifest_for(ds: Dataset, **params: Any) -> Manifest:
     )
 
 
-def fetch_nist_pmi(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
-    manifest = _manifest_for(ds, limit=limit)
+def _nist_archive(root: Path) -> Path:
     archive = root / "_archive" / "NIST-PMI-STEP-Files.zip"
     if not archive.is_file() or sha256_file(archive) != NIST_SHA256:
         http_download(NIST_URL, archive)
     if sha256_file(archive) != NIST_SHA256:
         raise RuntimeError("NIST archive checksum mismatch")
+    return archive
+
+
+def _nist_entry(ds: Dataset, root: Path, dest: Path) -> dict[str, Any]:
+    return {
+        "id": f"nist-pmi/{dest.stem}",
+        "license": ds.license,
+        "license_tier": ds.tier,
+        "source_url": NIST_URL,
+        "files": {"step": file_record(root, dest)},
+    }
+
+
+def fetch_nist_pmi(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
+    manifest = _manifest_for(ds, limit=limit)
+    archive = _nist_archive(root)
     with zipfile.ZipFile(archive) as z:
         names = sorted(n for n in z.namelist() if n.lower().endswith((".stp", ".step")))[:limit]
         for name in names:
             dest = root / "step" / Path(name).name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(z.read(name))
-            manifest.entries.append(
-                {
-                    "id": f"nist-pmi/{dest.stem}",
-                    "license": ds.license,
-                    "license_tier": ds.tier,
-                    "source_url": NIST_URL,
-                    "files": {"step": file_record(root, dest)},
-                }
-            )
+            manifest.entries.append(_nist_entry(ds, root, dest))
     shutil.rmtree(root / "_archive")
     return manifest
 
 
-def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
-    manifest = _manifest_for(ds, limit=limit, commit=FREECAD_COMMIT)
+def fetch_nist_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
+    manifest = _manifest_for(ds, mode="manifest", refs=len(wanted))
+    stems = {fid.split("/", 1)[1]: fid for fid in wanted}
+    archive = _nist_archive(root)
+    with zipfile.ZipFile(archive) as z:
+        members = sorted(n for n in z.namelist() if n.lower().endswith((".stp", ".step")))
+        found: dict[str, str] = {}
+        for name in members:
+            found.setdefault(Path(name).stem, name)
+        absent = [fid for stem, fid in stems.items() if stem not in found]
+        if absent:
+            raise RuntimeError(
+                f"nist-pmi: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
+            )
+        shutil.rmtree(root / "step", ignore_errors=True)
+        for stem in sorted(found):
+            if stem not in stems:
+                continue
+            dest = root / "step" / Path(found[stem]).name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(z.read(found[stem]))
+            if sha256_file(dest) != wanted[f"nist-pmi/{stem}"]:
+                raise RuntimeError(f"nist-pmi/{stem}: sha256 mismatch against corpus manifest")
+            manifest.entries.append(_nist_entry(ds, root, dest))
+    shutil.rmtree(root / "_archive")
+    return manifest
+
+
+def _freecad_tree() -> list[dict[str, Any]]:
     api = f"https://api.github.com/repos/{FREECAD_REPO}/git/trees/{FREECAD_COMMIT}?recursive=1"
     tree = json.loads(http_bytes(api, {"Accept": "application/vnd.github+json"}))
     if tree.get("truncated"):
         raise RuntimeError("GitHub tree listing truncated")
+    return tree["tree"]
+
+
+def _download_freecad_blob(node: dict[str, Any]) -> bytes:
     raw = f"https://raw.githubusercontent.com/{FREECAD_REPO}/{FREECAD_COMMIT}/"
-    for pair in round_robin(select_freecad_pairs(tree["tree"]), limit):
+    data = http_bytes(raw + urllib.parse.quote(node["path"]))
+    if git_blob_sha1(data) != node["sha"]:
+        raise RuntimeError(f"git blob checksum mismatch for {node['path']}")
+    return data
+
+
+def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
+    manifest = _manifest_for(ds, limit=limit, commit=FREECAD_COMMIT)
+    tree = _freecad_tree()
+    raw = f"https://raw.githubusercontent.com/{FREECAD_REPO}/{FREECAD_COMMIT}/"
+    for pair in round_robin(select_freecad_pairs(tree), limit):
         index = len(manifest.entries)
         files = {}
         for kind in ("step", "stl"):
@@ -426,6 +490,43 @@ def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Mani
                 "source_url": f"https://github.com/{FREECAD_REPO}/blob/{FREECAD_COMMIT}/"
                 + urllib.parse.quote(pair["step"]["path"]),
                 "files": files,
+            }
+        )
+    return manifest
+
+
+def fetch_freecad_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
+    manifest = _manifest_for(ds, mode="manifest", commit=FREECAD_COMMIT, refs=len(wanted))
+    pairs = {p["id"]: p for p in select_freecad_pairs(_freecad_tree())}
+    absent = sorted(fid for fid in wanted if fid.partition("/")[2] not in pairs)
+    if absent:
+        raise RuntimeError(
+            f"freecad-library: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
+        )
+    shutil.rmtree(root / "step", ignore_errors=True)
+    for index, fid in enumerate(sorted(wanted)):
+        pair = pairs[fid.partition("/")[2]]
+        node = pair["step"]
+        dest = root / "step" / f"{index:04d}_{Path(node['path']).name}"
+        if not dest.is_file() or sha256_file(dest) != wanted[fid]:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(_download_freecad_blob(node))
+        if sha256_file(dest) != wanted[fid]:
+            raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
+        manifest.entries.append(
+            {
+                "id": fid,
+                "license": "CC-BY-3.0",
+                "license_tier": ds.tier,
+                "attribution": None,
+                "attribution_note": "author unresolved: take it from the git history of "
+                + node["path"]
+                + " at the pinned commit before publishing",
+                "source_url": f"https://github.com/{FREECAD_REPO}/blob/{FREECAD_COMMIT}/"
+                + urllib.parse.quote(node["path"]),
+                "files": {
+                    "step": file_record(root, dest, source_path=node["path"], git_blob=node["sha"])
+                },
             }
         )
     return manifest
@@ -618,6 +719,43 @@ FETCHERS: dict[str, Callable[..., Manifest]] = {
     "abc": fetch_abc,
 }
 
+REFETCHERS: dict[str, Callable[..., Manifest]] = {
+    "nist-pmi": fetch_nist_refs,
+    "freecad-library": fetch_freecad_refs,
+}
+
+
+def wanted_imported_refs(corpus_manifest: dict[str, Any]) -> dict[str, dict[str, str]]:
+    refs: dict[str, dict[str, str]] = {}
+    for entry in corpus_manifest.get("entries", []):
+        if entry.get("tier") != "imported" or "source" not in entry:
+            continue
+        src = entry["source"]
+        refs.setdefault(src["dataset"], {})[src["file_id"]] = src["sha256"]
+    return refs
+
+
+def fetch_manifest_refs(corpus_manifest: dict[str, Any], base: Path) -> dict[str, int]:
+    refs = wanted_imported_refs(corpus_manifest)
+    unknown = [n for n in refs if n not in REFETCHERS or n not in DATASETS]
+    if unknown:
+        raise RuntimeError(
+            f"--manifest cannot fetch dataset(s): {', '.join(sorted(unknown))}; "
+            "only the imported-tier datasets are rebuildable "
+            f"({', '.join(sorted(REFETCHERS))})"
+        )
+    counts = {}
+    for name in sorted(refs):
+        root = base / name
+        root.mkdir(parents=True, exist_ok=True)
+        manifest = REFETCHERS[name](DATASETS[name], root, refs[name])
+        manifest.finalize()
+        path = manifest.write(root)
+        total = sum(f["bytes"] for e in manifest.entries for f in e["files"].values())
+        print(f"{name}: {len(manifest.entries)} entries, {total / 1e6:.1f} MB, manifest {path}")
+        counts[name] = len(manifest.entries)
+    return counts
+
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
@@ -638,6 +776,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--category", action="append", default=[], help="thingi10k category filter")
     p.add_argument("--keep-archives", action="store_true")
     p.add_argument("--verify", action="store_true", help="re-hash cached files against manifests")
+    p.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="corpus manifest (e.g. corpus/v0.json): fetch exactly the imported "
+        "STEP files it references, ignoring --dataset/--limit",
+    )
     p.add_argument("--list", action="store_true")
     args = p.parse_args(argv)
 
@@ -647,13 +792,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{ds.name:24} {ds.tier:16} {flag:8} {ds.license}")
         return 0
 
+    base = (args.cache_dir or default_datasets_dir()).expanduser()
+
+    if args.manifest is not None:
+        if args.verify:
+            p.error("--manifest cannot be combined with --verify")
+        corpus = json.loads(args.manifest.read_text())
+        fetch_manifest_refs(corpus, base)
+        return 0
+
     names = args.dataset or ["all"]
     if "all" in names:
         names = [n for n in names if n != "all"] + [d.name for d in DATASETS.values() if d.default]
     unknown = [n for n in names if n not in DATASETS]
     if unknown:
         p.error(f"unknown dataset(s): {', '.join(unknown)}")
-    base = (args.cache_dir or default_datasets_dir()).expanduser()
 
     status = 0
     for name in dict.fromkeys(names):

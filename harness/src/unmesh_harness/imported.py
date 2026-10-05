@@ -9,12 +9,14 @@ IMPORTED_DATASETS = ("nist-pmi", "freecad-library")
 
 
 def missing_message(entry: dict[str, Any], cache: Path) -> str:
+    from .datasets import IMPORTED_TIER_COMMAND
+
     src = entry.get("source", {})
     return (
         f"imported part {entry.get('id')} needs {src.get('dataset')}/{src.get('file_id')} "
         f"from the dataset cache at {cache}, which is absent or incomplete. "
-        "Run scripts/fetch-datasets (e.g. `uv run scripts/fetch-datasets --dataset all`) "
-        "to download the pinned datasets, then retry."
+        f"Run `{IMPORTED_TIER_COMMAND}` from the repo root "
+        "to download exactly the STEP files the corpus manifest references, then retry."
     )
 
 

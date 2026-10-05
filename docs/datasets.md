@@ -148,3 +148,19 @@ uv run scripts/fetch-datasets --verify --dataset freecad-library
 ```
 
 `all` means the datasets marked default (`nist-pmi`, `freecad-library`, `thingi10k`). Selection is deterministic: strided, round-robin over families, or ascending id, so the same `--limit` gives the same models for a pinned source version. `--verify` rehashes every file against its manifest.
+
+### Reproducing the imported-tier cache (#25)
+
+Canonical (deterministic: fetches exactly the STEP files `corpus/v0.json` references, by
+`(dataset, file_id, sha256)`, and verifies each sha256):
+
+```sh
+uv run scripts/fetch-datasets --manifest corpus/v0.json
+```
+
+Run from the repo root; files land in `$UNMESH_CACHE_DIR/datasets` or `~/.cache/unmesh/datasets`
+(`--cache-dir` overrides the cache root). The tier was pinned from `nist-pmi --limit 60` (all 33
+files) and `freecad-library --limit 200` (recorded as `IMPORTED_TIER_FETCH` in `datasets.py`);
+probing kept 31 + 198 = 229 entries. Do not re-pin from a bare `--dataset all` fetch: its default limit (25)
+resolves only a fraction of the manifest and every other entry fails with the message naming the
+`--manifest` command above.
