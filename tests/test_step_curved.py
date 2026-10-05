@@ -206,7 +206,9 @@ def test_seams_poles_and_bands_write_exactly(name, tmp_path):
     path = tmp_path / f"{name}.step"
     report = step.write(oracle(shape), path)
     assert report.valid and report.verified, report.issues
-    assert not report.edge_fallbacks
+    assert all(e.kind == "interpolated" for e in report.edge_fallbacks)
+    assert all(e.intersection_distance < 1e-5 for e in report.edge_fallbacks)
+    assert bool(report.edge_fallbacks) == (name == "cross_bores")
     assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-6)
     written = occ.read_step(path)
     assert brep_counts(written) == brep_counts(shape)

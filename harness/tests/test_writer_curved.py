@@ -66,13 +66,3 @@ def test_oracle_ir_writes_exact_edges_all_seeds(family, seed, tmp_path):
 @pytest.mark.parametrize(("family", "seed"), _cases(slow=True))
 def test_automatic_ir_writes_without_fallback_all_seeds(family, seed, tmp_path):
     _check(family, seed, tmp_path, automatic=True)
-
-
-@pytest.mark.parametrize("family", ["circular_fillet", "straight_fillet", "round_slot_through"])
-def test_tangent_adjacencies_fall_back_with_reason(family, tmp_path):
-    gt = generate(family, 0)
-    mesh = tessellate(gt.solid, *DEFLECTION)
-    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
-    report = step.write(build_oracle_ir(mesh), tmp_path / "t.step", mesh=tris)
-    assert report.valid and report.fallback == "faceted"
-    assert "tangent edges not supported yet (#33)" in report.fallback_reason

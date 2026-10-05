@@ -40,6 +40,15 @@ class EdgeFallback:
     regions: tuple[int, int]
     reason: str
     max_deviation: float
+    kind: Literal["projected", "interpolated"] = "projected"
+    intersection_distance: float | None = None
+
+
+@dataclass
+class TangentEdge:
+    regions: tuple[int, int]
+    curve: Literal["line", "circle", "bspline"]
+    max_deviation: float
 
 
 @dataclass
@@ -81,6 +90,7 @@ class WriteReport:
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
+    tangent_edges: list[TangentEdge] = field(default_factory=list)
     open_shells: list[int] = field(default_factory=list)
     readback: ReadBack | None = None
     verified: bool = False
@@ -106,6 +116,7 @@ class _Group:
     shells: int = 1
     curved: bool = False
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
+    tangent_edges: list[TangentEdge] = field(default_factory=list)
 
 
 def _triangles(mesh) -> np.ndarray:
@@ -192,7 +203,13 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                     moved.update(cs.vertex_displacement)
                     dev.update(cs.boundary_deviation)
                     g.edge_fallbacks.extend(
-                        EdgeFallback(p.regions, p.reason, p.max_deviation) for p in cs.projected
+                        EdgeFallback(
+                            p.regions, p.reason, p.max_deviation, p.kind, p.intersection_distance
+                        )
+                        for p in cs.projected
+                    )
+                    g.tangent_edges.extend(
+                        TangentEdge(t.regions, t.curve, t.max_deviation) for t in cs.tangent
                     )
                     built.append((idx, cs.shell, cs.mapping))
             for idx in members if not g.curved else ():
@@ -440,6 +457,7 @@ def write(
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
         edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
+        tangent_edges=[e for g in written for e in g.tangent_edges] if fallback is None else [],
         open_shells=[g.outer for g in written if g.kind == "shell"],
         readback=readback,
         verified=readback is not None,
