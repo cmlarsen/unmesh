@@ -19,17 +19,20 @@ the face of its exactly containing source triangle when one is within
 triangle takes the majority over its 4 probes with ``label_confidence`` the
 agreeing fraction. Coplanar faces sharing one surface are told apart by
 trimmed-triangle proximity. Smoothing keeps connectivity, so it keeps the
-original labels exactly with confidence 1.0.
+original labels exactly with confidence 1.0. When the input already carries
+``label_confidence`` (a chain), each output triangle's confidence is capped by
+the confidence of the source triangle under its centroid.
 """
 
 from __future__ import annotations
 
+import heapq
+
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .core import displace_vertices, register, vertex_table
+from .core import CONFIDENCE_KEY, displace_vertices, register, vertex_table
 
-CONFIDENCE_KEY = "label_confidence"
 MASK_THRESHOLD = 0.9
 POLYLINES_COINCIDE = ("laplacian_smoothing", "taubin_smoothing")
 
@@ -115,14 +118,21 @@ def _point_tri_dist2(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray)
     return out
 
 
+def _unit_normals(tris: np.ndarray) -> np.ndarray:
+    n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    return n / np.maximum(np.linalg.norm(n, axis=1), 1e-300)[:, None]
+
+
 def _exact_votes(
     probes: np.ndarray,
     src: np.ndarray,
     owner: np.ndarray,
     tree: cKDTree,
     tol2: float,
+    normals: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     flat = np.asarray(probes, dtype=np.float64).reshape(-1, 3)
+    src_n = None if normals is None else _unit_normals(src)
     k = _LABEL_KNN
     best_t = np.full(len(flat), -1, dtype=np.int64)
     best_d = np.full(len(flat), np.inf)
@@ -132,29 +142,34 @@ def _exact_votes(
         idx = np.asarray(idx).reshape(len(flat), use)
         cand = owner[idx.ravel()]
         rows = np.repeat(np.arange(len(flat)), use)
-        d2 = _point_tri_dist2(flat[rows], src[cand, 0], src[cand, 1], src[cand, 2])
-        d2 = d2.reshape(len(flat), use)
+        raw = _point_tri_dist2(flat[rows], src[cand, 0], src[cand, 1], src[cand, 2])
+        raw = raw.reshape(len(flat), use)
+        d2 = raw
+        if src_n is not None:
+            facing = (src_n[cand] * normals[rows]).sum(axis=1) > 0.0
+            d2 = np.where(facing.reshape(len(flat), use), raw, np.inf)
         pick = d2.argmin(axis=1)
         row_best = d2[np.arange(len(flat)), pick]
         row_tri = cand.reshape(len(flat), use)[np.arange(len(flat)), pick]
         improved = row_best < best_d
         best_d[improved] = row_best[improved]
         best_t[improved] = row_tri[improved]
-        kth = d2[:, -1]
-        retry = (best_d > tol2) & (best_d > 4.0 * kth)
-        if not retry.any() or k >= _LABEL_KNN_CAP:
+        kth = raw[:, -1]
+        retry = (best_d > tol2) & ((best_d > 4.0 * kth) | ~np.isfinite(best_d))
+        if not retry.any() or k >= _LABEL_KNN_CAP or use >= len(tree.data):
             break
         k = min(k * 8, _LABEL_KNN_CAP)
+    lost = best_t < 0
+    if lost.any():
+        best_t[lost], best_d[lost] = _exact_votes(flat[lost], src, owner, tree, tol2)
     return best_t, best_d
 
 
-def transfer_labels(mesh, src_tris, src_ids) -> dict:
+def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
     src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3)
     out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
     src_ids = np.asarray(src_ids)
     faces = np.unique(src_ids)
-    lut = np.zeros(int(src_ids.max()) + 1, dtype=np.int64)
-    lut[faces] = np.arange(len(faces))
     if len(out) == 0:
         mesh.face_id = np.zeros(0, dtype=src_ids.dtype)
         mesh.metadata[CONFIDENCE_KEY] = []
@@ -176,12 +191,15 @@ def transfer_labels(mesh, src_tris, src_ids) -> dict:
         [centroid[:, None], mids * (1.0 - _PROBE_INSET) + centroid[:, None] * _PROBE_INSET],
         axis=1,
     )
-    best_t, best_d = _exact_votes(probes, src, owner, tree, tol2)
+    normal = np.repeat(_unit_normals(out), 4, axis=0)
+    best_t, best_d = _exact_votes(probes, src, owner, tree, tol2, normal)
     exact = best_d.reshape(len(out), 4) <= tol2
     votes = np.empty((len(out), 4), dtype=src_ids.dtype)
     votes[exact] = src_ids[best_t.reshape(len(out), 4)[exact]]
     if not exact.all():
         missing = np.nonzero(~exact.all(axis=1))[0]
+        src_n = _unit_normals(src)
+        out_n = _unit_normals(out)
         idx = tree.query(probes[missing].reshape(-1, 3), k=_LABEL_KNN)[1]
         knn = np.asarray(idx).reshape(len(missing), 4, _LABEL_KNN)
         exm = exact[missing]
@@ -190,21 +208,50 @@ def transfer_labels(mesh, src_tris, src_ids) -> dict:
             if len(loc) == 0:
                 continue
             need = missing[loc]
-            sf = src_ids[owner[knn[loc, j]]]
+            near = owner[knn[loc, j]]
+            sf = src_ids[near]
+            facing = (src_n[near] * out_n[need][:, None, :]).sum(axis=2) > 0.0
+            facing |= ~facing.any(axis=1, keepdims=True)
             counts = np.zeros((len(need), len(faces)), dtype=np.int32)
             for f, face in enumerate(faces):
-                counts[:, f] = (sf == face).sum(axis=1)
+                counts[:, f] = ((sf == face) & facing).sum(axis=1)
             votes[need, j] = faces[counts.argmax(axis=1)]
     counts = np.zeros((len(out), len(faces)), dtype=np.int32)
-    np.add.at(counts, (np.arange(len(out))[:, None], lut[votes]), 1)
+    np.add.at(counts, (np.arange(len(out))[:, None], np.searchsorted(faces, votes)), 1)
     win = counts.argmax(axis=1)
     conf = counts[np.arange(len(out)), win] / 4.0
+    if src_conf is not None:
+        carried = np.asarray(src_conf, dtype=np.float64)[best_t.reshape(len(out), 4)[:, 0]]
+        conf = np.minimum(conf, carried)
     mesh.face_id = np.array(faces[win], dtype=src_ids.dtype)
     mesh.metadata[CONFIDENCE_KEY] = [float(v) for v in conf]
     return {
         "mean_confidence": float(conf.mean()) if len(conf) else 1.0,
         "fraction_below_0_9": float((conf < MASK_THRESHOLD).mean()) if len(conf) else 0.0,
     }
+
+
+def carry_confidence(mesh, src_tris: np.ndarray, src_ids: np.ndarray, src_conf) -> None:
+    conf = np.asarray(src_conf, dtype=np.float64)
+    out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
+    if len(out) == len(conf) and np.array_equal(mesh.face_id, src_ids):
+        return
+    if len(out) == 0 or len(src_tris) == 0:
+        mesh.metadata[CONFIDENCE_KEY] = [1.0] * len(out)
+        return
+    names, labels = np.unique(np.asarray(src_ids), return_inverse=True)
+    proj = _Projector(src_tris, labels)
+    pos = np.clip(np.searchsorted(names, mesh.face_id), 0, len(names) - 1)
+    known = names[pos] == mesh.face_id
+    want = np.where(known, pos, -1)
+
+    def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
+        return labels[flat] == want[rows]
+
+    tri = proj.search(out.mean(axis=1), accept)[1]
+    carried = np.where(labels[tri] == want, conf[tri], 0.0)
+    carried = np.where(known, carried, 1.0)
+    mesh.metadata[CONFIDENCE_KEY] = [float(v) for v in carried]
 
 
 def _weld(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -665,7 +712,7 @@ def _budgeted_smooth(
     if capped:
         disp = disp * (budget / peak)
     peak = displace_vertices(mesh, V0, inverse, disp)
-    mesh.metadata[CONFIDENCE_KEY] = [1.0] * len(mesh.tris)
+    mesh.metadata.setdefault(CONFIDENCE_KEY, [1.0] * len(mesh.tris))
     return peak, capped, budget
 
 
@@ -782,7 +829,7 @@ def vertex_clustering(mesh, severity, rng):
         seen.add(key)
         rows.append(t)
     mesh.tris = np.array(rows, dtype=np.float64).reshape(-1, 3, 3)
-    label = transfer_labels(mesh, src_tris, src_ids)
+    label = transfer_labels(mesh, src_tris, src_ids, mesh.metadata.get(CONFIDENCE_KEY))
     return {
         "cell_mm": size,
         "median_edge_mm": median_edge,
