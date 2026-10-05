@@ -205,7 +205,8 @@ stored in the IR and `kind` is authoritative; a validator checks the two agree.
 Where `kind` changes partway along one edge, the edge is split with hysteresis around the threshold:
 a crossing counts only if the per-node dihedral samples fall below `threshold - 0.5°` on one side and
 above `threshold + 0.5°` on the other, and every resulting run spans at least two polyline segments.
-The split lands on the existing polyline node nearest the threshold, so every `kind_change` vertex
+The split lands on the in-band polyline node nearest the threshold, ties broken towards the
+lexicographically smaller node coordinate so the choice does not depend on walk direction, so every `kind_change` vertex
 and boundary point stays a mesh vertex position. An edge that only touches the threshold, or hovers
 inside the band, keeps a single boundary classified by its median dihedral.
 
