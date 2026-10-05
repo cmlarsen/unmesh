@@ -417,32 +417,88 @@ def fetch_nist_pmi(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
     return manifest
 
 
+def _prior_entries(root: Path) -> list[dict[str, Any]]:
+    path = root / MANIFEST_NAME
+    if not path.is_file():
+        return []
+    return Manifest.read(root).get("entries", [])
+
+
+def _cached_step_ok(root: Path, entry: dict[str, Any] | None, sha: str) -> bool:
+    if entry is None:
+        return False
+    rec = entry.get("files", {}).get("step")
+    if rec is None:
+        return False
+    dest = root / rec["path"]
+    return dest.is_file() and sha256_file(dest) == sha
+
+
+def _step_record_for(root: Path, dest: Path, prior: dict[str, Any] | None, **extra: Any):
+    kept = {k: v for k, v in (prior or {}).items() if k not in ("path", "bytes", "sha256")}
+    kept.update(extra)
+    return file_record(root, dest, **kept)
+
+
+def _kept_entry(root: Path, prior: dict[str, Any], sha: str, **extra: Any) -> dict[str, Any]:
+    dest = root / prior["files"]["step"]["path"]
+    entry = dict(prior)
+    files = dict(prior.get("files", {}))
+    files["step"] = _step_record_for(root, dest, prior["files"]["step"], **extra)
+    entry["files"] = files
+    return entry
+
+
+def _with_preserved_extras(
+    manifest: Manifest, prior: list[dict[str, Any]], wanted: set[str]
+) -> Manifest:
+    manifest.entries.extend(e for e in prior if e.get("id") not in wanted)
+    return manifest
+
+
 def fetch_nist_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
     manifest = _manifest_for(ds, mode="manifest", refs=len(wanted))
-    stems = {fid.split("/", 1)[1]: fid for fid in wanted}
-    archive = _nist_archive(root)
-    with zipfile.ZipFile(archive) as z:
-        members = sorted(n for n in z.namelist() if n.lower().endswith((".stp", ".step")))
-        found: dict[str, str] = {}
-        for name in members:
-            found.setdefault(Path(name).stem, name)
-        absent = [fid for stem, fid in stems.items() if stem not in found]
-        if absent:
-            raise RuntimeError(
-                f"nist-pmi: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
-            )
-        shutil.rmtree(root / "step", ignore_errors=True)
-        for stem in sorted(found):
-            if stem not in stems:
-                continue
-            dest = root / "step" / Path(found[stem]).name
+    prior = _prior_entries(root)
+    by_id = {e["id"]: e for e in prior if "id" in e}
+    missing = sorted(
+        fid for fid in wanted if not _cached_step_ok(root, by_id.get(fid), wanted[fid])
+    )
+    fetched: dict[str, bytes] = {}
+    names: dict[str, str] = {}
+    if missing:
+        stems = {fid.split("/", 1)[1]: fid for fid in wanted}
+        archive = _nist_archive(root)
+        with zipfile.ZipFile(archive) as z:
+            members = sorted(n for n in z.namelist() if n.lower().endswith((".stp", ".step")))
+            found: dict[str, str] = {}
+            for name in members:
+                found.setdefault(Path(name).stem, name)
+            absent = [fid for stem, fid in stems.items() if stem not in found]
+            if absent:
+                raise RuntimeError(
+                    f"nist-pmi: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
+                )
+            for fid in missing:
+                stem = fid.split("/", 1)[1]
+                names[fid] = Path(found[stem]).name
+                fetched[fid] = z.read(found[stem])
+        shutil.rmtree(root / "_archive", ignore_errors=True)
+    for fid in sorted(wanted):
+        prior_entry = by_id.get(fid)
+        if fid in fetched:
+            if prior_entry is not None:
+                dest = root / prior_entry["files"]["step"]["path"]
+            else:
+                dest = root / "step" / names[fid]
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(z.read(found[stem]))
-            if sha256_file(dest) != wanted[f"nist-pmi/{stem}"]:
-                raise RuntimeError(f"nist-pmi/{stem}: sha256 mismatch against corpus manifest")
-            manifest.entries.append(_nist_entry(ds, root, dest))
-    shutil.rmtree(root / "_archive")
-    return manifest
+            dest.write_bytes(fetched[fid])
+            if sha256_file(dest) != wanted[fid]:
+                raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
+            base = prior_entry or _nist_entry(ds, root, dest)
+            manifest.entries.append(_kept_entry(root, base, wanted[fid]))
+        else:
+            manifest.entries.append(_kept_entry(root, prior_entry, wanted[fid]))
+    return _with_preserved_extras(manifest, prior, set(wanted))
 
 
 def _freecad_tree() -> list[dict[str, Any]]:
@@ -495,41 +551,75 @@ def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Mani
     return manifest
 
 
+def _fresh_freecad_dest(root: Path, node: dict[str, Any], taken: set[str]) -> Path:
+    base = Path(node["path"]).name
+    index = 0
+    while True:
+        name = f"{index:04d}_{base}"
+        if name not in taken and not (root / "step" / name).exists():
+            taken.add(name)
+            return root / "step" / name
+        index += 1
+
+
 def fetch_freecad_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
     manifest = _manifest_for(ds, mode="manifest", commit=FREECAD_COMMIT, refs=len(wanted))
-    pairs = {p["id"]: p for p in select_freecad_pairs(_freecad_tree())}
-    absent = sorted(fid for fid in wanted if fid.partition("/")[2] not in pairs)
-    if absent:
-        raise RuntimeError(
-            f"freecad-library: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
-        )
-    shutil.rmtree(root / "step", ignore_errors=True)
-    for index, fid in enumerate(sorted(wanted)):
-        pair = pairs[fid.partition("/")[2]]
-        node = pair["step"]
-        dest = root / "step" / f"{index:04d}_{Path(node['path']).name}"
-        if not dest.is_file() or sha256_file(dest) != wanted[fid]:
+    prior = _prior_entries(root)
+    by_id = {e["id"]: e for e in prior if "id" in e}
+    missing = sorted(
+        fid for fid in wanted if not _cached_step_ok(root, by_id.get(fid), wanted[fid])
+    )
+    fetched: dict[str, bytes] = {}
+    nodes: dict[str, dict[str, Any]] = {}
+    if missing:
+        pairs = {p["id"]: p for p in select_freecad_pairs(_freecad_tree())}
+        absent = sorted(fid for fid in wanted if fid.partition("/")[2] not in pairs)
+        if absent:
+            raise RuntimeError(
+                f"freecad-library: {len(absent)} manifest file(s) vanished upstream: {absent[:5]}"
+            )
+        for fid in missing:
+            node = pairs[fid.partition("/")[2]]["step"]
+            nodes[fid] = node
+            fetched[fid] = _download_freecad_blob(node)
+    taken = {Path(e["files"]["step"]["path"]).name for e in prior if "step" in e.get("files", {})}
+    for fid in sorted(wanted):
+        prior_entry = by_id.get(fid)
+        if fid in fetched:
+            node = nodes[fid]
+            if prior_entry is not None:
+                dest = root / prior_entry["files"]["step"]["path"]
+            else:
+                dest = _fresh_freecad_dest(root, node, taken)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(_download_freecad_blob(node))
-        if sha256_file(dest) != wanted[fid]:
-            raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
-        manifest.entries.append(
-            {
-                "id": fid,
-                "license": "CC-BY-3.0",
-                "license_tier": ds.tier,
-                "attribution": None,
-                "attribution_note": "author unresolved: take it from the git history of "
-                + node["path"]
-                + " at the pinned commit before publishing",
-                "source_url": f"https://github.com/{FREECAD_REPO}/blob/{FREECAD_COMMIT}/"
-                + urllib.parse.quote(node["path"]),
-                "files": {
-                    "step": file_record(root, dest, source_path=node["path"], git_blob=node["sha"])
-                },
-            }
-        )
-    return manifest
+            dest.write_bytes(fetched[fid])
+            if sha256_file(dest) != wanted[fid]:
+                raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
+            base: dict[str, Any] = (
+                dict(prior_entry)
+                if prior_entry is not None
+                else {
+                    "id": fid,
+                    "license": "CC-BY-3.0",
+                    "license_tier": ds.tier,
+                    "attribution": None,
+                    "attribution_note": "author unresolved: take it from the git history of "
+                    + node["path"]
+                    + " at the pinned commit before publishing",
+                    "source_url": f"https://github.com/{FREECAD_REPO}/blob/{FREECAD_COMMIT}/"
+                    + urllib.parse.quote(node["path"]),
+                    "files": {},
+                }
+            )
+            files = {k: v for k, v in base.get("files", {}).items() if k != "step"}
+            files["step"] = _step_record_for(
+                root, dest, None, source_path=node["path"], git_blob=node["sha"]
+            )
+            base["files"] = files
+            manifest.entries.append(_kept_entry(root, base, wanted[fid]))
+        else:
+            manifest.entries.append(_kept_entry(root, prior_entry, wanted[fid]))
+    return _with_preserved_extras(manifest, prior, set(wanted))
 
 
 def fetch_thingi10k(

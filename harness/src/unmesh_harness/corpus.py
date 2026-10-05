@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -208,7 +209,7 @@ def sync_manifest(manifest: dict[str, Any], planned: list[dict[str, Any]]) -> di
     return manifest
 
 
-def imported_candidates(cache_dir=None) -> list[dict[str, Any]]:
+def imported_candidates(cache_dir=None, have: Iterable[str] = ()) -> list[dict[str, Any]]:
     from .imported import IMPORTED_DATASETS, datasets_root
 
     root = datasets_root(cache_dir)
@@ -224,7 +225,10 @@ def imported_candidates(cache_dir=None) -> list[dict[str, Any]]:
                 continue
             out.append({"dataset": dataset, "file_id": item["id"], "sha256": step["sha256"]})
     out.sort(key=lambda s: (s["dataset"], s["file_id"]))
-    return out[:IMPORTED_TIER_CANDIDATE_CAP]
+    pinned = set(have)
+    old = [c for c in out if c["file_id"] in pinned]
+    fresh = [c for c in out if c["file_id"] not in pinned]
+    return (old + fresh)[:IMPORTED_TIER_CANDIDATE_CAP]
 
 
 def rejected_reasons(manifest_path: Path | None = None) -> dict[str, str]:
@@ -284,7 +288,7 @@ def sync_imported(
 
     have = {e["source"]["file_id"] for e in manifest["entries"] if e.get("tier") == "imported"}
     known_bad = rejected if rejected is not None else {}
-    new = [c for c in imported_candidates(cache_dir) if c["file_id"] not in have]
+    new = [c for c in imported_candidates(cache_dir, have) if c["file_id"] not in have]
     if not new:
         return manifest
     start = sum(1 for e in manifest["entries"] if e.get("tier") == "imported")

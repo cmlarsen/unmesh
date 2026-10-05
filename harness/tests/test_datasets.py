@@ -235,6 +235,180 @@ def test_wanted_imported_refs_groups_file_ids_by_dataset():
     }
 
 
+def test_fetch_nist_refs_is_incremental_and_preserves_extras(tmp_path, monkeypatch):
+    import zipfile
+
+    root = tmp_path / "nist-pmi"
+    (root / "step").mkdir(parents=True)
+    bodies = {"a.stp": b"STEP-A", "b.step": b"STEP-B", "extra.stp": b"STEP-X"}
+    archive = tmp_path / "arc.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        for name, data in bodies.items():
+            z.writestr(f"inner/{name}", data)
+    calls = []
+    monkeypatch.setattr(d, "_nist_archive", lambda _root: calls.append(1) or archive)
+
+    def rec(name, data):
+        (root / "step" / name).write_bytes(data)
+        return d.file_record(root, root / "step" / name)
+
+    prior_a = {
+        "id": "nist-pmi/a",
+        "license": "x",
+        "license_tier": d.REDISTRIBUTABLE,
+        "source_url": "u",
+        "files": {"step": rec("a.stp", bodies["a.stp"])},
+    }
+    prior_extra = {
+        "id": "nist-pmi/extra",
+        "license": "x",
+        "license_tier": d.REDISTRIBUTABLE,
+        "source_url": "u",
+        "files": {"step": rec("extra.stp", bodies["extra.stp"])},
+    }
+    ds = d.DATASETS["nist-pmi"]
+    first = d._manifest_for(ds, mode="manifest", refs=2)
+    first.entries = [prior_a, prior_extra]
+    first.write(root)
+    wanted = {
+        "nist-pmi/a": hashlib.sha256(bodies["a.stp"]).hexdigest(),
+        "nist-pmi/b": hashlib.sha256(bodies["b.step"]).hexdigest(),
+    }
+
+    got = d.fetch_nist_refs(ds, root, wanted)
+    assert calls == [1]
+    assert [e["id"] for e in got.entries] == ["nist-pmi/a", "nist-pmi/b", "nist-pmi/extra"]
+    assert got.entries[0]["files"]["step"]["path"] == "step/a.stp"
+    assert (root / "step" / "b.step").read_bytes() == bodies["b.step"]
+    assert (root / "step" / "extra.stp").read_bytes() == bodies["extra.stp"]
+    got.finalize()
+    got.write(root)
+    assert d.verify_manifest(root) == []
+    first_json = (root / d.MANIFEST_NAME).read_text()
+
+    again = d.fetch_nist_refs(ds, root, wanted)
+    again.finalize()
+    again.write(root)
+    assert calls == [1]
+    assert (root / d.MANIFEST_NAME).read_text() == first_json
+    assert [e["id"] for e in again.entries] == ["nist-pmi/a", "nist-pmi/b", "nist-pmi/extra"]
+
+
+def test_fetch_nist_refs_redownloads_on_checksum_mismatch(tmp_path, monkeypatch):
+    import zipfile
+
+    root = tmp_path / "nist-pmi"
+    (root / "step").mkdir(parents=True)
+    archive = tmp_path / "arc.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("inner/a.stp", b"STEP-A")
+    calls = []
+    monkeypatch.setattr(d, "_nist_archive", lambda _root: calls.append(1) or archive)
+    (root / "step" / "a.stp").write_bytes(b"corrupt")
+    ds = d.DATASETS["nist-pmi"]
+    wanted = {"nist-pmi/a": hashlib.sha256(b"STEP-A").hexdigest()}
+    got = d.fetch_nist_refs(ds, root, wanted)
+    assert calls == [1]
+    assert (root / "step" / "a.stp").read_bytes() == b"STEP-A"
+    assert got.entries[0]["files"]["step"]["sha256"] == wanted["nist-pmi/a"]
+
+
+def test_fetch_freecad_refs_preserves_pairs_and_skips_present(tmp_path, monkeypatch):
+    root = tmp_path / "freecad-library"
+    (root / "step").mkdir(parents=True)
+    (root / "stl").mkdir(parents=True)
+    bodies = {
+        "Mechanical Parts/A/Alpha.step": b"ALPHA-STEP",
+        "Mechanical Parts/A/Alpha.stl": b"ALPHA-STL",
+        "Mechanical Parts/B/Beta.step": b"BETA-STEP",
+        "Mechanical Parts/B/Beta.stl": b"BETA-STL",
+        "Mechanical Parts/C/Gamma.step": b"GAMMA-STEP",
+        "Mechanical Parts/C/Gamma.stl": b"GAMMA-STL",
+    }
+    tree = [
+        {"path": p, "type": "blob", "size": len(b), "sha": f"blob-{i}"}
+        for i, (p, b) in enumerate(bodies.items())
+    ]
+    tree_calls, blob_calls = [], []
+
+    def fake_tree():
+        tree_calls.append(1)
+        return tree
+
+    def fake_blob(node):
+        blob_calls.append(node["path"])
+        return bodies[node["path"]]
+
+    monkeypatch.setattr(d, "_freecad_tree", fake_tree)
+    monkeypatch.setattr(d, "_download_freecad_blob", fake_blob)
+
+    def put(rel, data):
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return d.file_record(root, dest)
+
+    alpha_step = put("step/0000_Alpha.step", bodies["Mechanical Parts/A/Alpha.step"])
+    alpha_stl = put("stl/0000_Alpha.stl", bodies["Mechanical Parts/A/Alpha.stl"])
+    gamma_step = put("step/0001_Gamma.step", bodies["Mechanical Parts/C/Gamma.step"])
+    gamma_stl = put("stl/0001_Gamma.stl", bodies["Mechanical Parts/C/Gamma.stl"])
+    ds = d.DATASETS["freecad-library"]
+    first = d._manifest_for(ds, mode="manifest", refs=2)
+    first.entries = [
+        {
+            "id": "freecad-library/Mechanical Parts/A/Alpha",
+            "license": "CC-BY-3.0",
+            "license_tier": ds.tier,
+            "files": {"step": alpha_step, "stl": alpha_stl},
+        },
+        {
+            "id": "freecad-library/Mechanical Parts/C/Gamma",
+            "license": "CC-BY-3.0",
+            "license_tier": ds.tier,
+            "files": {"step": gamma_step, "stl": gamma_stl},
+        },
+    ]
+    first.write(root)
+    wanted = {
+        "freecad-library/Mechanical Parts/A/Alpha": hashlib.sha256(
+            bodies["Mechanical Parts/A/Alpha.step"]
+        ).hexdigest(),
+        "freecad-library/Mechanical Parts/B/Beta": hashlib.sha256(
+            bodies["Mechanical Parts/B/Beta.step"]
+        ).hexdigest(),
+    }
+
+    got = d.fetch_freecad_refs(ds, root, wanted)
+    assert tree_calls == [1]
+    assert blob_calls == ["Mechanical Parts/B/Beta.step"]
+    assert [e["id"] for e in got.entries] == [
+        "freecad-library/Mechanical Parts/A/Alpha",
+        "freecad-library/Mechanical Parts/B/Beta",
+        "freecad-library/Mechanical Parts/C/Gamma",
+    ]
+    alpha, beta, gamma = got.entries
+    assert alpha["files"]["step"] == alpha_step
+    assert alpha["files"]["stl"] == alpha_stl
+    assert set(beta["files"]) == {"step"}
+    assert (root / beta["files"]["step"]["path"]).read_bytes() == bodies[
+        "Mechanical Parts/B/Beta.step"
+    ]
+    assert gamma["files"]["step"] == gamma_step
+    assert gamma["files"]["stl"] == gamma_stl
+    assert (root / "stl" / "0000_Alpha.stl").read_bytes() == bodies["Mechanical Parts/A/Alpha.stl"]
+    got.finalize()
+    got.write(root)
+    assert d.verify_manifest(root) == []
+    first_json = (root / d.MANIFEST_NAME).read_text()
+
+    again = d.fetch_freecad_refs(ds, root, wanted)
+    again.finalize()
+    again.write(root)
+    assert tree_calls == [1]
+    assert blob_calls == ["Mechanical Parts/B/Beta.step"]
+    assert (root / d.MANIFEST_NAME).read_text() == first_json
+
+
 def test_fetch_manifest_refs_rejects_unknown_dataset_without_network(tmp_path):
     corpus = {
         "entries": [

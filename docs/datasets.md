@@ -159,11 +159,17 @@ uv run scripts/fetch-datasets --manifest corpus/v0.json
 ```
 
 Run from the repo root; files land in `$UNMESH_CACHE_DIR/datasets` or `~/.cache/unmesh/datasets`
-(`--cache-dir` overrides the cache root). The tier was pinned from `nist-pmi --limit 60` (all 33
-files) and `freecad-library --limit 200` (recorded as `IMPORTED_TIER_FETCH` in `datasets.py`);
-probing kept 31 + 198 = 229 entries. The candidate list is capped at
-`IMPORTED_TIER_CANDIDATE_CAP = 233` (`corpus.py`), so re-pinning stays deterministic if the
-upstream datasets grow; `corpus pin` skips the 4 rejected candidates without re-probing them.
+(`--cache-dir` overrides the cache root). The fetch is incremental: files already in the cache
+with a matching sha256 are not downloaded again, and unrelated cache files (STL siblings, files
+from a larger `--limit` fetch) are left alone. The tier was pinned from `nist-pmi --limit 60`
+(all 33 files) and `freecad-library --limit 200` (recorded as `IMPORTED_TIER_FETCH` in
+`datasets.py`); probing kept 31 + 198 = 229 entries. Re-pinning is deterministic because
+`corpus pin` never reorders or edits the manifest's existing imported entries: it takes the
+dataset-cache candidate list with already-pinned file ids first, then new candidates sorted by
+`(dataset, file_id)`, truncated so the total never exceeds
+`IMPORTED_TIER_CANDIDATE_CAP = 233` (`corpus.py`). With 229 entries pinned, a re-pin against a
+larger cache probes at most the 4 smallest new candidates; `corpus pin` skips the 4 rejected
+candidates without re-probing them.
 Each rejection is recorded with its reason in `corpus/imported_rejected.json`: one NIST file
 segfaults the OCCT STEP importer, one NIST file imports invalid with negative volume, one
 FreeCAD blob is 0 bytes upstream, and one FreeCAD STEP is an empty 8 KB stub. Do not re-pin from a bare `--dataset all` fetch: its default limit (25)
