@@ -57,11 +57,42 @@ def _report(args) -> int:
     from .runner import load_grid
     from .runner.results import latest, read_results
 
-    all_records = read_results(args.results)
+    target = args.results
+    if target.is_dir():
+        all_records = []
+        for path in sorted(target.glob("*.jsonl")):
+            all_records.extend(read_results(path))
+        cache = target / "cache"
+    else:
+        all_records = read_results(target)
+        cache = target.parent / "cache"
     sha = args.git_sha or (all_records[-1]["git_sha"] if all_records else "")
     records = list(latest(all_records, sha).values())
     converters = sorted({r["converter"] for r in records})
-    return _finish(records, args.gate, load_grid(args.grid), converters, sha)
+    grid = load_grid(args.grid)
+    if args.output is not None:
+        from .runner.grid import steps_for
+        from .runner.report import build_html, viewer_key, viewer_payload, worst_parts
+
+        viewers = {}
+        for record in worst_parts(records):
+            try:
+                spec = grid.row(record["operator"], float(record["severity"]))
+                steps = [(name, float(sev)) for name, sev in steps_for(spec)]
+            except (KeyError, ValueError, TypeError):
+                continue
+            try:
+                payload = viewer_payload(
+                    record["part"], steps, record["seed"], cache, record["converter"]
+                )
+            except Exception:
+                continue
+            if payload is not None:
+                viewers[viewer_key(record)] = payload
+        args.output.write_text(build_html(records, grid.name, viewers))
+        print(f"wrote {args.output} ({args.output.stat().st_size} bytes)")
+        return 0
+    return _finish(records, args.gate, grid, converters, sha)
 
 
 def _compare(args) -> int:
@@ -112,6 +143,13 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--git-sha", default=None)
     report.add_argument("--grid", default="smoke")
     report.add_argument("--gate", action="store_true")
+    report.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="write a self-contained HTML report instead of the text table",
+    )
 
     compare = sub.add_parser("compare", help="compare two results files with noise bands")
     compare.add_argument("run_a", type=Path)
