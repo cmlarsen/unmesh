@@ -178,10 +178,12 @@ def test_flipped_mesh_winding_still_builds_faceted(tmp_path):
     assert occ.volume_of(occ.read_step(path)) == pytest.approx(abs(signed_volume(tris)), rel=1e-9)
 
 
-def test_unsupported_surface_reports_reason(tmp_path):
+def test_plate_with_bore_is_written_analytic(tmp_path):
     report = step.write(load("plate_with_bore"), tmp_path / "p.step")
-    assert not report.valid
-    assert any("cylinder" in i for i in report.issues)
+    assert report.valid and report.verified and report.fallback is None
+    assert report.shells[0].volume == pytest.approx(30 * 20 * 6 - math.pi * 16 * 6, rel=1e-12)
+    shape, types = reimported_faces(tmp_path / "p.step")
+    assert types.count(GeomAbs_Plane) == 6 and len(types) == 7
 
 
 def test_tolerance_limit_triggers_fallback(tmp_path):

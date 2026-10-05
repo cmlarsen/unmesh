@@ -23,7 +23,7 @@ from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Shell, ShapeFix
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell
+from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell, TopoDS_Solid
 
 from .topology import BuildError, FacePlan, ShellPlan
 
@@ -147,6 +147,36 @@ def make_solid(outer_shell, cavities):
     for c in cavities:
         mk2.Add(c)
     return mk2.Solid()
+
+
+def new_pool() -> _Pool:
+    return _Pool()
+
+
+def make_oriented_solid(outer_shell, cavities):
+    builder = BRep_Builder()
+    solid = TopoDS_Solid()
+    builder.MakeSolid(solid)
+    builder.Add(solid, outer_shell)
+    if not volume_of(solid) > 0:
+        raise BuildError("the outer shell built from the IR encloses a negative volume")
+    for c in cavities:
+        builder.Add(solid, c)
+    check_orientation(solid)
+    return solid
+
+
+def check_orientation(shape) -> None:
+    total = volume_of(shape)
+    if not total > 0:
+        raise BuildError(f"the solid built from the IR has non-positive volume {total:.6g}")
+    for shell in _shells_of(shape)[1:]:
+        probe = TopoDS_Solid()
+        builder = BRep_Builder()
+        builder.MakeSolid(probe)
+        builder.Add(probe, shell)
+        if not volume_of(probe) < 0:
+            raise BuildError("a cavity shell built from the IR faces into the material")
 
 
 def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):

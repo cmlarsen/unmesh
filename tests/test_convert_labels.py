@@ -122,19 +122,17 @@ def test_bad_labels_raise(mutate):
         unmesh.convert_from_labels(tris, mutate(labels))
 
 
-def test_writer_falls_back_on_curved_regions(tmp_path):
+def test_writer_builds_curved_regions(tmp_path):
     pytest.importorskip("OCP")
     from unmesh import step
 
     tris, labels = washer(n=24)
     ir, _ = unmesh.convert_from_labels(tris, labels)
     report = step.write(ir, tmp_path / "w.step", mesh=tris)
-    assert report.valid
-    assert report.fallback == "faceted"
-    assert "cylinder" in report.fallback_reason
-    bare = step.write(ir, tmp_path / "bare.step")
-    assert not bare.valid
-    assert not (tmp_path / "bare.step").exists()
+    assert report.valid and report.verified
+    assert report.fallback is None
+    assert {f.surface_type for f in report.faces} >= {"cylinder", "plane"}
+    assert not report.edge_fallbacks
 
 
 def torus(big=20.0, small=4.0, nu=48, nv=24):
@@ -214,7 +212,7 @@ def ball(r=5.0, n=24, rows=12):
 
 
 @pytest.mark.parametrize("shape", ["torus", "sphere"])
-def test_writer_falls_back_on_doubly_curved_regions(tmp_path, shape):
+def test_writer_builds_doubly_curved_regions(tmp_path, shape):
     pytest.importorskip("OCP")
     from unmesh import step
 
@@ -222,6 +220,6 @@ def test_writer_falls_back_on_doubly_curved_regions(tmp_path, shape):
     ir, rep = unmesh.convert_from_labels(tris, labels)
     assert rep.region_counts == {shape: 1}
     report = step.write(ir, tmp_path / "w.step", mesh=tris)
-    assert report.valid
-    assert report.fallback == "faceted"
-    assert f"{shape} surfaces are not supported" in report.fallback_reason
+    assert report.valid and report.verified
+    assert report.fallback is None
+    assert [f.surface_type for f in report.faces] == [shape]
