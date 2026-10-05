@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -243,11 +244,135 @@ def test_allow_missing_skips_new_grid_only(tmp_path, monkeypatch, capsys):
         raise module.MissingGridFile(f"artifact holds no {select}.jsonl")
 
     monkeypatch.setattr(module, "download_artifact", missing)
+    calls = []
+
+    def absent(repo, path, sha):
+        calls.append((repo, path, sha))
+        return False
+
+    monkeypatch.setattr(module, "grid_exists_at_sha", absent)
     out = tmp_path / "baseline.jsonl"
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved", allow_missing=True))
     assert module.main() == 0
-    assert "new cells only" in capsys.readouterr().out
+    assert "predates the grid" in capsys.readouterr().out
+    assert calls == [(REPO, "harness/grids/smoke_curved.json", BASE_SHA)]
     assert not out.exists()
+
+
+def test_bootstrap_for_missing_grid_truth_table(module):
+    assert (
+        module.bootstrap_for_missing_grid(allow_missing=True, grid_present_at_baseline=False)
+        is True
+    )
+    assert (
+        module.bootstrap_for_missing_grid(allow_missing=True, grid_present_at_baseline=True)
+        is False
+    )
+    assert (
+        module.bootstrap_for_missing_grid(allow_missing=False, grid_present_at_baseline=False)
+        is False
+    )
+    assert (
+        module.bootstrap_for_missing_grid(allow_missing=False, grid_present_at_baseline=True)
+        is False
+    )
+
+
+def test_grid_path(module):
+    assert module.grid_path("smoke_curved") == "harness/grids/smoke_curved.json"
+
+
+def test_grid_exists_at_sha_maps_404_to_absent(module, monkeypatch):
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+    assert module.grid_exists_at_sha(REPO, "harness/grids/smoke_curved.json", BASE_SHA) is True
+
+    def not_found(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="gh: Not Found (HTTP 404)")
+
+    monkeypatch.setattr(module.subprocess, "run", not_found)
+    assert module.grid_exists_at_sha(REPO, "harness/grids/smoke_curved.json", BASE_SHA) is False
+
+    def bad_ref(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            1, args[0], stderr=f"gh: No commit found for the ref {BASE_SHA} (HTTP 404)"
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", bad_ref)
+    with pytest.raises(subprocess.CalledProcessError):
+        module.grid_exists_at_sha(REPO, "harness/grids/smoke_curved.json", BASE_SHA)
+
+    def rate_limited(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            1, args[0], stderr="gh: API rate limit exceeded (HTTP 403)"
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", rate_limited)
+    with pytest.raises(subprocess.CalledProcessError):
+        module.grid_exists_at_sha(REPO, "harness/grids/smoke_curved.json", BASE_SHA)
+
+
+def test_missing_grid_file_fails_when_grid_exists_at_baseline_sha(tmp_path, monkeypatch, capsys):
+    module = load_module("ci_baseline_grid_present")
+    _main_tree_with_compare(tmp_path)
+    monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
+    monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
+
+    def missing(repo, run_id, artifact, dest, select=None):
+        raise module.MissingGridFile(f"artifact holds no {select}.jsonl")
+
+    monkeypatch.setattr(module, "download_artifact", missing)
+    monkeypatch.setattr(module, "grid_exists_at_sha", lambda repo, path, sha: True)
+    out = tmp_path / "baseline.jsonl"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved", allow_missing=True))
+    assert module.main() == 1
+    assert "exists at baseline" in capsys.readouterr().out
+    assert not out.exists()
+
+
+def test_grid_check_failure_fails_closed(tmp_path, monkeypatch, capsys):
+    module = load_module("ci_baseline_gridcheck_fail")
+    _main_tree_with_compare(tmp_path)
+    monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
+    monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
+
+    def missing(repo, run_id, artifact, dest, select=None):
+        raise module.MissingGridFile(f"artifact holds no {select}.jsonl")
+
+    monkeypatch.setattr(module, "download_artifact", missing)
+
+    def boom(repo, path, sha):
+        raise subprocess.CalledProcessError(
+            1, ["gh", "api"], stderr="gh: API rate limit exceeded (HTTP 403)"
+        )
+
+    monkeypatch.setattr(module, "grid_exists_at_sha", boom)
+    out = tmp_path / "baseline.jsonl"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved", allow_missing=True))
+    assert module.main() == 1
+    assert "cannot verify" in capsys.readouterr().out
+    assert not out.exists()
+
+
+def test_present_grid_file_downloads_normally(tmp_path, monkeypatch, capsys):
+    module = load_module("ci_baseline_present_file")
+    _main_tree_with_compare(tmp_path)
+    monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
+    monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
+    out = tmp_path / "baseline.jsonl"
+
+    def present(repo, run_id, artifact, dest, select=None):
+        dest.write_text('{"part": "box", "status": "ok"}\n')
+        return True
+
+    monkeypatch.setattr(module, "download_artifact", present)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved", allow_missing=True))
+    assert module.main() == 0
+    assert "baseline ready" in capsys.readouterr().out
+    assert out.exists()
 
 
 def test_missing_grid_file_fails_without_allow_missing(tmp_path, monkeypatch):
