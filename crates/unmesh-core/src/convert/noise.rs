@@ -391,4 +391,72 @@ pub(super) mod tests {
     pub fn grid_sigma(v: &[V3], nx: usize, ny: usize) -> f64 {
         sigma_of(v, grid_faces(nx, ny)).unwrap()
     }
+
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn uniform(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        }
+    }
+
+    fn cylinder(radius: f64, nu: usize, nv: usize, noise: f64, seed: u64) -> Vec<V3> {
+        let mut rng = Lcg(seed);
+        let mut v = Vec::new();
+        for i in 0..nu {
+            let a = (3.0 / radius) * i as f64 / (nu - 1) as f64;
+            for j in 0..nv {
+                let r = radius + noise * rng.uniform();
+                v.push([r * a.cos(), r * a.sin(), 10.0 * j as f64 / (nv - 1) as f64]);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn clean_curved_tessellation_gives_zero_sigma() {
+        for (radius, nv) in [(2.0, 2), (30.0, 2), (2.0, 12)] {
+            let v = cylinder(radius, 24, nv, 0.0, 1);
+            let sigma = grid_sigma(&v, 24, nv);
+            assert!(sigma < 2e-5, "r={radius} nv={nv}: sigma={sigma}");
+        }
+    }
+
+    #[test]
+    fn sigma_tracks_noise_independent_of_curvature() {
+        let std = 0.01 / 3f64.sqrt();
+        for radius in [2.0, 8.0, 1e6] {
+            let v = cylinder(radius, 40, 40, 0.01, 7);
+            let sigma = grid_sigma(&v, 40, 40);
+            assert!(
+                (0.75 * std..1.25 * std).contains(&sigma),
+                "r={radius}: sigma={sigma} vs std={std}"
+            );
+        }
+    }
+
+    #[test]
+    fn sharp_edges_do_not_read_as_noise() {
+        let tris = super::super::tests::grid_box([0.0; 3], [10.0, 20.0, 30.0], 4, false);
+        let mut v: Vec<V3> = Vec::new();
+        let mut faces = Vec::new();
+        for t in tris {
+            let mut ids = [0u32; 3];
+            for (k, p) in t.iter().enumerate() {
+                ids[k] = match v.iter().position(|q| q == p) {
+                    Some(i) => i as u32,
+                    None => {
+                        v.push(*p);
+                        v.len() as u32 - 1
+                    }
+                };
+            }
+            faces.push(ids);
+        }
+        assert_eq!(sigma_of(&v, faces), Some(0.0));
+    }
 }
