@@ -112,6 +112,51 @@ def test_cell_only_in_b_is_listed_not_flagged():
     assert "ONLY-B" in format_comparison(comp)
 
 
+def noisy_cell(part="noisy-part", seed=0, **fields):
+    return record(
+        part=part,
+        operator="noise_isotropic",
+        severity=0.02,
+        seed=seed,
+        f1=0.5,
+        faces=14,
+        regions=16,
+        matched=7,
+        valid=False,
+        fallback=True,
+        under_report=False,
+        dev_input_max=0.006,
+        **fields,
+    )
+
+
+def test_new_grid_cells_bootstrap_as_only_b():
+    old_a = seeds([1.0, 1.0, 1.0])
+    new_cells = [noisy_cell(seed=i) for i in range(3)]
+    comp = run(old_a, old_a + new_cells)
+    assert not comp.regressions
+    assert not comp.only_a and len(comp.only_b) == 1
+    assert comp.only_b[0][0] == "noisy-part"
+
+
+def test_stable_bad_compare_only_cell_is_unchanged():
+    old = seeds([1.0, 1.0, 1.0]) + [noisy_cell(seed=i) for i in range(3)]
+    new = seeds([1.0, 1.0, 1.0]) + [noisy_cell(seed=i) for i in range(3)]
+    comp = run(old, new)
+    assert not comp.regressions and not comp.improvements
+    assert not comp.only_a and not comp.only_b
+
+
+def test_bootstrap_still_flags_existing_cell_regressions():
+    old = seeds([1.0, 1.0, 1.0])
+    new_cells = [noisy_cell(seed=i) for i in range(3)]
+    comp = run(old, seeds([0.9, 0.9, 0.9]) + new_cells)
+    assert any(v.metric == "f1" and v.verdict == "REGRESSION" for v in comp.regressions)
+    assert len(comp.only_b) == 1
+    comp = run(old + [record(part="old-part")], old)
+    assert [v.metric for v in comp.regressions] == ["missing"]
+
+
 def test_dropped_seed_in_b_is_a_regression():
     comp = run(seeds([1.0, 1.0, 1.0]), seeds([1.0, 1.0]))
     assert [v.metric for v in comp.regressions] == ["seeds"]

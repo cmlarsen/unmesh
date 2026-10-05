@@ -24,6 +24,17 @@
       "seeds": [
         0
       ],
+      "parts": [
+        "round_boss-0000",
+        "counterbore-0000",
+        "countersink-0000",
+        "revolved_cone-0000",
+        "revolved_torus-0000",
+        "chamfer_same_chord-0000",
+        "through_bore-0000",
+        "blind_bore-0000",
+        "bore_chamfer-0000"
+      ],
       "floors": {
         "f1_cell": 1.0,
         "regions_equal_faces": true,
@@ -43,11 +54,68 @@
       "seeds": [
         0
       ],
+      "parts": [
+        "round_boss-0000",
+        "counterbore-0000",
+        "countersink-0000",
+        "revolved_cone-0000",
+        "revolved_torus-0000",
+        "chamfer_same_chord-0000",
+        "through_bore-0000",
+        "blind_bore-0000",
+        "bore_chamfer-0000"
+      ],
       "floors": {
         "f1_cell": 1.0,
         "regions_equal_faces": true,
         "dev_input_max": 0.015,
         "fallback_max": 0
+      }
+    },
+    {
+      "operator": "noise_isotropic",
+      "severity": 0.02,
+      "steps": [
+        [
+          "noise_isotropic",
+          0.02
+        ]
+      ],
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "parts": [
+        "through_bore-0000",
+        "countersink-0000",
+        "straight_fillet-0000",
+        "circular_fillet-0000"
+      ],
+      "floors": {
+        "compare_only": true
+      }
+    },
+    {
+      "operator": "refine",
+      "severity": 0.5,
+      "steps": [
+        [
+          "refine",
+          0.5
+        ]
+      ],
+      "seeds": [
+        0
+      ],
+      "parts": [
+        "through_bore-0000",
+        "countersink-0000",
+        "straight_fillet-0000",
+        "circular_fillet-0000"
+      ],
+      "floors": {
+        "compare_only": true
       }
     }
   ],
@@ -58,7 +126,8 @@
   ],
   "categories": [
     "curved",
-    "ambiguity"
+    "ambiguity",
+    "chamfer_fillet"
   ],
   "parts": [
     "round_boss-0000",
@@ -66,6 +135,11 @@
     "countersink-0000",
     "revolved_cone-0000",
     "revolved_torus-0000",
-    "chamfer_same_chord-0000"
+    "chamfer_same_chord-0000",
+    "through_bore-0000",
+    "blind_bore-0000",
+    "bore_chamfer-0000",
+    "straight_fillet-0000",
+    "circular_fillet-0000"
   ]
 }

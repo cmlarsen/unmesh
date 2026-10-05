@@ -29,9 +29,16 @@ FACE_LABEL_SENSITIVE_OPS = frozenset(
 )
 
 
-def ambiguity_rejected_ops(cells: list[dict[str, Any]]) -> list[str]:
+def ambiguity_rejected_ops(
+    cells: list[dict[str, Any]], categories: dict[str, str] | None = None
+) -> list[str]:
     rejected = []
     for spec in cells:
+        if categories is not None:
+            wanted = spec.get("parts")
+            ids = wanted if wanted is not None else list(categories)
+            if not any(categories.get(p) == "ambiguity" for p in ids):
+                continue
         for name, _ in steps_for(spec):
             if name in FACE_LABEL_SENSITIVE_OPS and name not in rejected:
                 rejected.append(name)
@@ -102,6 +109,9 @@ class Grid:
         for converter in converters:
             for entry in self.entries:
                 for spec in self.cells:
+                    wanted = spec.get("parts")
+                    if wanted is not None and entry["id"] not in wanted:
+                        continue
                     for seed in spec.get("seeds", self.seeds):
                         if (entry["id"], spec["operator"], float(spec["severity"]), seed) in skip:
                             continue
@@ -156,14 +166,6 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
                     f"{spec['operator']!r}: preset cells must be labeled with their "
                     "preset name"
                 )
-    if "ambiguity" in raw.get("categories", []):
-        rejected = ambiguity_rejected_ops(raw["cells"])
-        if rejected:
-            raise ValueError(
-                f"grid {name} selects ambiguity parts but rows {rejected} read face "
-                "labels: pair members share triangles but carry different truth faces, "
-                "so those rows diverge by design"
-            )
     entries = select(load_manifest(manifest_path), raw["corpus_grid"])
     if "categories" in raw:
         wanted = set(raw["categories"])
@@ -189,6 +191,32 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         ]
         if not entries:
             raise KeyError(f"grid {name} selects no indistinguishable parts")
+    known = {e["id"] for e in entries}
+    for spec in raw["cells"]:
+        wanted = spec.get("parts")
+        if wanted is not None:
+            unknown = [p for p in wanted if p not in known]
+            if unknown:
+                raise KeyError(
+                    f"grid {name} row {spec['operator']} lists unknown parts: {unknown[:5]}"
+                )
+            if not wanted:
+                raise KeyError(f"grid {name} row {spec['operator']} selects no parts")
+        floors = spec.get("floors", {})
+        if floors.get("compare_only") and [k for k in floors if k != "compare_only"]:
+            raise ValueError(
+                f"grid {name} row {spec['operator']} mixes compare_only with absolute "
+                "floors: compare-only rows carry no absolute floors"
+            )
+    if "ambiguity" in raw.get("categories", []):
+        by_id = {e["id"]: e["strata"].get("category", "planar") for e in entries}
+        rejected = ambiguity_rejected_ops(raw["cells"], by_id)
+        if rejected:
+            raise ValueError(
+                f"grid {name} selects ambiguity parts but rows {rejected} read face "
+                "labels: pair members share triangles but carry different truth faces, "
+                "so those rows diverge by design"
+            )
     return Grid(
         raw["name"],
         raw["corpus_grid"],

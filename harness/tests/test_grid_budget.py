@@ -109,21 +109,43 @@ def test_smoke_curved_grid_shape():
     assert grid.corpus_grid == "smoke"
     assert grid.seeds == [0, 1, 2]
     assert sorted(e["id"] for e in grid.entries) == [
+        "blind_bore-0000",
+        "bore_chamfer-0000",
         "chamfer_same_chord-0000",
+        "circular_fillet-0000",
         "counterbore-0000",
         "countersink-0000",
         "revolved_cone-0000",
         "revolved_torus-0000",
         "round_boss-0000",
+        "straight_fillet-0000",
+        "through_bore-0000",
     ]
     assert [(c["operator"], float(c["severity"])) for c in grid.cells] == [
         ("identity", 0.0),
         ("float32", 1.0),
+        ("noise_isotropic", 0.02),
+        ("refine", 0.5),
     ]
-    for spec in grid.cells:
+    absolute = grid.cells[0]
+    for spec in grid.cells[:2]:
         assert spec.get("seeds", grid.seeds) == [0]
         assert spec["floors"]["f1_cell"] == 1.0
-    assert len(grid.expand(["unmesh"], "s")) == 12
+    assert len(absolute["parts"]) == 9
+    assert grid.cells[1]["parts"] == absolute["parts"]
+    assert "circular_fillet-0000" not in absolute["parts"]
+    assert "straight_fillet-0000" not in absolute["parts"]
+    for spec in grid.cells[2:]:
+        assert spec["floors"] == {"compare_only": True}
+        assert sorted(spec["parts"]) == [
+            "circular_fillet-0000",
+            "countersink-0000",
+            "straight_fillet-0000",
+            "through_bore-0000",
+        ]
+    assert grid.cells[2].get("seeds", grid.seeds) == [0, 1, 2]
+    assert grid.cells[3].get("seeds", grid.seeds) == [0]
+    assert len(grid.expand(["unmesh"], "s")) == 9 + 9 + 12 + 4
 
 
 def _plan(name):
