@@ -119,7 +119,8 @@ def aggregate(records: list[dict[str, Any]], grid_hash: str) -> dict[str, Any]:
             if vals:
                 row[name] = _stats(vals)
         ok = [r for r in rs if r.get("status") == "ok"]
-        row["ok_rate"] = sum(1 for _ in ok) / len(rs)
+        scored = [r for r in rs if r.get("status") != "skipped"]
+        row["ok_rate"] = len(ok) / len(scored) if scored else None
         if ok:
             row["valid_rate"] = sum(1 for r in ok if r.get("valid") is True) / len(ok)
             row["fallback_rate"] = sum(1 for r in ok if r.get("fallback") is True) / len(ok)

@@ -92,12 +92,19 @@ class Grid:
         label = f"{cell.part}|{cell.operator}|{cell.severity}|{cell.seed}|{cell.git_sha}"
         return int(hashlib.sha256(label.encode()).hexdigest(), 16) % of < take
 
-    def expand(self, converters: list[str], git_sha: str) -> list[tuple[Cell, dict[str, Any]]]:
+    def expand(
+        self,
+        converters: list[str],
+        git_sha: str,
+        skip: frozenset[tuple[str, str, float, int]] = frozenset(),
+    ) -> list[tuple[Cell, dict[str, Any]]]:
         out = []
         for converter in converters:
             for entry in self.entries:
                 for spec in self.cells:
                     for seed in spec.get("seeds", self.seeds):
+                        if (entry["id"], spec["operator"], float(spec["severity"]), seed) in skip:
+                            continue
                         cell = Cell(
                             entry["id"],
                             spec["operator"],

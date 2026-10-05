@@ -16,12 +16,18 @@ def target_edge_mm(severity: float, diagonal: float) -> float:
     return diagonal * DIAGONAL_FRACTION_AT_ZERO * 0.1**severity
 
 
+class UnsupportedSurface(ValueError):
+    pass
+
+
 def implicit(face: FaceInfo, p: np.ndarray) -> np.ndarray:
     prm = face.params
     if face.surface == "plane":
         return (p - np.array(prm["origin"])) @ np.array(prm["normal"])
     if face.surface == "sphere":
         return np.linalg.norm(p - np.array(prm["center"]), axis=1) - prm["radius"]
+    if face.surface not in ("cylinder", "torus", "cone"):
+        raise UnsupportedSurface(f"no implicit function for surface {face.surface!r}")
     origin = np.array(prm.get("origin", prm.get("apex", prm.get("center"))))
     axis = np.array(prm["axis"])
     v = p - origin
@@ -122,7 +128,10 @@ def refine(mesh, severity, rng):
             x = (np.array(p) + np.array(q)) / 2
             faces = [mesh.faces[f] for f in sorted(edge_faces[k])]
             if any(f.surface != "plane" for f in faces):
-                x = project_onto(faces, x)
+                try:
+                    x = project_onto(faces, x)
+                except UnsupportedSurface:
+                    pass
             mids[k] = tuple(x.tolist())
         new_tris, new_ids, new_origin = [], [], []
         for t, f, o in zip(tris, fids, origin, strict=True):

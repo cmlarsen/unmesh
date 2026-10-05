@@ -112,8 +112,25 @@ def _min_angle(a, b, c) -> float:
 
 
 def _canonical_key(poly, i: int, m: int):
+
     a, b, c = poly[(i - 1) % m], poly[i], poly[(i + 1) % m]
     return (_min_angle(a, b, c), tuple(sorted((a, b, c))))
+
+
+def _on_diagonal(a, b, c, poly, eps) -> bool:
+    dx, dy = c[0] - a[0], c[1] - a[1]
+    denom = dx * dx + dy * dy
+    if denom <= 0.0:
+        return False
+    for q in poly:
+        if q == a or q == b or q == c:
+            continue
+        t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / denom
+        if 0.0 < t < 1.0:
+            px, py = a[0] + t * dx, a[1] + t * dy
+            if (q[0] - px) ** 2 + (q[1] - py) ** 2 <= eps:
+                return True
+    return False
 
 
 def _clip(poly, scheme: str, rng) -> list[tuple] | None:
@@ -144,6 +161,8 @@ def _clip(poly, scheme: str, rng) -> list[tuple] | None:
         for i in range(m):
             a, b, c = poly[(i - 1) % m], poly[i], poly[(i + 1) % m]
             if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) <= eps:
+                continue
+            if _on_diagonal(a, b, c, poly, eps):
                 continue
             if all(
                 min(

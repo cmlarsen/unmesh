@@ -177,8 +177,8 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
     output_faces = len(ir.regions)
     if len(face_id) != len(tris):
         raise ValueError(f"face_id has {len(face_id)} entries for {len(tris)} triangles")
-    if len(face_id) and (face_id.min() < 0 or face_id.max() >= truth_faces):
-        raise ValueError(f"face_id outside [0, {truth_faces})")
+    if len(face_id) and (face_id.min() < -1 or face_id.max() >= truth_faces):
+        raise ValueError(f"face_id outside [-1, {truth_faces})")
     from .recovery import match_faces
 
     matches, _ = match_faces(clean, face_id, ir)
@@ -271,7 +271,7 @@ def score_topology(clean, face_id: np.ndarray, tris: np.ndarray, ir) -> dict[str
             if 0 <= t < len(tris) and t not in owned_region:
                 owned_region[t] = r.id
     gt_groups = [
-        np.nonzero(np.array([face_shell[f] == i for f in face_id], dtype=bool))[0]
+        np.nonzero(np.array([f >= 0 and face_shell[f] == i for f in face_id], dtype=bool))[0]
         for i in range(len(clean.shells))
     ]
     ir_groups = []

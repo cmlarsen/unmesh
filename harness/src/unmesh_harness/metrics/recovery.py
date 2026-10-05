@@ -419,8 +419,9 @@ def _segmentation(
     region_size = np.zeros(n_regions, dtype=np.int64)
     for r in ir.regions:
         region_size[r.id] = len(r.triangles)
-    face_size = np.bincount(np.asarray(face_id), minlength=n_faces)
-    covered = owner >= 0
+    known = np.asarray(face_id) >= 0
+    face_size = np.bincount(np.asarray(face_id)[known], minlength=n_faces)
+    covered = (owner >= 0) & known
     inter = np.zeros((n_faces, n_regions), dtype=np.int64)
     np.add.at(inter, (np.asarray(face_id)[covered], owner[covered]), 1)
     union = face_size[:, None] + region_size[None, :] - inter
@@ -443,7 +444,11 @@ def _segmentation(
         members = np.nonzero(owner == r.id)[0]
         if len(members) == 0:
             continue
-        _, counts = np.unique(np.asarray(face_id)[members], return_counts=True)
+        vals = np.asarray(face_id)[members]
+        vals = vals[vals >= 0]
+        if len(vals) == 0:
+            continue
+        _, counts = np.unique(vals, return_counts=True)
         if len(counts) >= 2 and counts.max() / len(members) <= SPLIT_SHARE:
             under += 1
     return {

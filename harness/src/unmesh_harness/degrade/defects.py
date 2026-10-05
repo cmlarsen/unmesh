@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .core import register
-from .refine import _expand, _key, _split_triangle, project_onto
+from .refine import UnsupportedSurface, _expand, _key, _split_triangle, project_onto
 
 
 @register(
@@ -44,7 +44,10 @@ def slivers(mesh, severity, rng):
                 continue
             faces = [mesh.faces[f] for f in sorted(edge_faces[k])]
             if any(f.surface != "plane" for f in faces):
-                x = project_onto(faces, x)
+                try:
+                    x = project_onto(faces, x)
+                except UnsupportedSurface:
+                    pass
                 if tuple(x.tolist()) in k:
                     continue
             mids[k] = tuple(x.tolist())
@@ -140,7 +143,10 @@ def t_junctions(mesh, severity, rng):
                 continue
             face = mesh.faces[fids[ti]]
             if face.surface != "plane":
-                x = project_onto([face], x)
+                try:
+                    x = project_onto([face], x)
+                except UnsupportedSurface:
+                    pass
                 if tuple(x.tolist()) in (a, b):
                     continue
             p = tuple(x.tolist())

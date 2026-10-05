@@ -25,6 +25,7 @@ class RunSummary:
     ran: int
     seconds: float
     sha: str = ""
+    skipped_inapplicable: int = 0
 
 
 def check_extension_fresh() -> None:
@@ -46,6 +47,18 @@ def check_extension_fresh() -> None:
 
 def results_path(out: Path, grid: Grid) -> Path:
     return out / f"{grid.name}.jsonl"
+
+
+def first_inapplicable_op(steps: list[tuple[str, float]], mesh) -> str | None:
+    from ..degrade import OPERATORS, applies
+
+    if not steps:
+        return None
+    name, _ = steps[0]
+    if name in OPERATORS and OPERATORS[name].applies_to is not None:
+        if not applies(name, mesh):
+            return name
+    return None
 
 
 def hidden_results_path(out: Path, grid: Grid) -> Path:
@@ -80,8 +93,15 @@ def run_grid(
     skipped = len(grid.expand(converters, sha)) - len(cells)
     if not cells:
         log(f"nothing to run: {skipped} cells already complete in {path}")
+        records = list(latest(read_results(path), sha).values())
         return RunSummary(
-            path, list(latest(read_results(path), sha).values()), skipped, 0, 0.0, sha
+            path,
+            records,
+            skipped,
+            0,
+            0.0,
+            sha,
+            sum(1 for r in records if r.get("status") == "skipped"),
         )
 
     cache = out / "cache"
@@ -107,13 +127,15 @@ def run_grid(
         lambda cell, result: append_result(path, cell, result),
     )
     shutil.rmtree(work, ignore_errors=True)
+    records = list(latest(read_results(path), sha).values())
     return RunSummary(
         path,
-        list(latest(read_results(path), sha).values()),
+        records,
         skipped,
         ran,
         time.perf_counter() - started,
         sha,
+        sum(1 for r in records if r.get("status") == "skipped"),
     )
 
 
@@ -180,13 +202,35 @@ def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=F
 
     cell_jobs = []
     failed_prep = []
+    labeled: dict[str, Any] = {}
+
+    def clean_mesh(part: str):
+        if part not in labeled:
+            from ..labels import LabeledMesh
+
+            labeled[part] = LabeledMesh.load(cache / f"{part}.labeled.npz")
+        return labeled[part]
+
     for cell, spec in cells:
+        steps = [(name, float(sev)) for name, sev in steps_for(spec)]
+        if cell.part in ready:
+            skipped_op = first_inapplicable_op(steps, clean_mesh(cell.part))
+            if skipped_op is not None:
+                emit(
+                    cell,
+                    {
+                        "status": "skipped",
+                        "skipped_operator": skipped_op,
+                        "error": f"{skipped_op} does not apply to {cell.part}",
+                    },
+                )
+                continue
         task = {
             "kind": "cell",
             "entry": entries[cell.part],
             "cache": str(cache),
             "work": str(work),
-            "steps": steps_for(spec),
+            "steps": steps,
             "samples_per_mm2": grid.judge_samples_per_mm2,
             "judge_truth": bool(spec.get("judge_truth")),
             "step_deviation": grid.checks_step(cell),

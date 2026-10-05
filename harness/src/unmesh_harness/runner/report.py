@@ -146,7 +146,7 @@ def worst_parts(records: list[dict[str, Any]], n: int = WORST_N) -> list[dict[st
 
 
 def failed_cells(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in records if r.get("status") != "ok"]
+    return [r for r in records if r.get("status") not in ("ok", "skipped")]
 
 
 def viewer_payload(
@@ -195,12 +195,14 @@ def build_html(
     worst = worst_parts(records)
     viewers = viewers or {}
     ok = [r for r in records if r.get("status") == "ok"]
+    skipped = [r for r in records if r.get("status") == "skipped"]
     converters = sorted({str(r.get("converter", "?")) for r in records})
     data = {
         "grid": grid_name,
         "converters": converters,
         "cells": len(records),
         "ok": len(ok),
+        "skipped": len(skipped),
         "heat": heat,
         "heat_all": heatmap_overall(records),
         "curves": curves,
@@ -585,7 +587,8 @@ function renderWorst() {
 }
 document.getElementById("grid").textContent = DATA.grid;
 document.getElementById("meta").textContent = DATA.cells + " cells, " +
-  DATA.ok + " ok, " + (DATA.failed_total || 0) + " failed, converters: " +
+  DATA.ok + " ok, " + (DATA.skipped || 0) + " skipped, " +
+  (DATA.failed_total || 0) + " failed, converters: " +
   DATA.converters.join(", ");
 fill("f-conv", uniq(DATA.heat, "converter"));
 fill("f-fam", uniq(DATA.heat, "family"));

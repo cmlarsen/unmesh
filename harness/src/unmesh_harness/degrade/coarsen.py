@@ -204,7 +204,7 @@ def coarsen(mesh, severity, rng):
     mesh.face_id = np.array([face[i] for i in kept], dtype=mesh.face_id.dtype)
 
     def remap(pt):
-        return list(rep[_find(root, lookup[tuple(pt)])])
+        return list(rep[_find(root, lookup[tuple(pt)])]) if tuple(pt) in lookup else list(pt)
 
     if mesh.vertices:
         mesh.vertices = [remap(p) for p in mesh.vertices]

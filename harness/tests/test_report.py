@@ -174,3 +174,53 @@ def test_worst_and_failed_lists():
     assert data["failed_total"] == 1
     assert data["failed"][0]["part"] == "p-9"
     assert "Timeouts and errors" in _page_data(records)[0]
+
+
+def _ok_record(part="p-0", f1=1.0, **fields):
+    return {
+        "part": part,
+        "converter": "unmesh",
+        "family": "planar",
+        "strata": {"face_bucket": "1-10", "feature_bucket": "0-10"},
+        "operator": "coarsen",
+        "severity": 0.5,
+        "seed": 0,
+        "status": "ok",
+        "f1": f1,
+        "mean_triangle_iou": f1,
+        "dev_input_p99": 0.001,
+        "valid": True,
+        "under_report": False,
+        **fields,
+    }
+
+
+def _skipped_record(part="p-9"):
+    return {
+        "part": part,
+        "converter": "unmesh",
+        "family": "planar",
+        "strata": {"face_bucket": "1-10", "feature_bucket": "0-10"},
+        "operator": "crack_seam",
+        "severity": 0.5,
+        "seed": 0,
+        "status": "skipped",
+        "skipped_operator": "crack_seam",
+        "error": "crack_seam does not apply",
+    }
+
+
+def test_failed_cells_excludes_skipped():
+    from unmesh_harness.runner.report import failed_cells
+
+    records = [_ok_record(), _skipped_record(), _ok_record("p-1", status="timeout", error="boom")]
+    assert [r["part"] for r in failed_cells(records)] == ["p-1"]
+
+
+def test_html_counts_skipped_and_excludes_them_from_means():
+    records = [_ok_record("p-0", f1=0.5), _ok_record("p-1", f1=1.0), _skipped_record()]
+    _, data = _page_data(records)
+    assert data["cells"] == 3 and data["ok"] == 2 and data["skipped"] == 1
+    assert data["failed_total"] == 0 and data["failed"] == []
+    (marginal,) = [r for r in data["heat_all"] if r["operator"] == "coarsen"]
+    assert marginal["n"] == 2 and marginal["f1"] == 0.75

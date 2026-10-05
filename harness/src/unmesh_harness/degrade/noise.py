@@ -67,17 +67,8 @@ def noise_normal(mesh, severity, rng):
     }
 
 
-@register(
-    "noise_off_plane",
-    "noise",
-    "identity",
-    "vertices interior to a single planar face (every incident triangle on that face) moved "
-    "along its normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um; refine "
-    "first, since planar faces have no interior vertices otherwise",
-)
-def noise_off_plane(mesh, severity, rng):
+def _interior_planar(mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     uniq, inverse = vertex_table(mesh)
-    amp = amplitude_mm(severity)
     corners = inverse.reshape(-1, 3)
     lo = np.full(len(uniq), np.iinfo(np.int64).max, dtype=np.int64)
     hi = np.full(len(uniq), -1, dtype=np.int64)
@@ -86,9 +77,29 @@ def noise_off_plane(mesh, severity, rng):
         np.minimum.at(lo, corners[:, corner], ids)
         np.maximum.at(hi, corners[:, corner], ids)
     planar = np.array([f.surface == "plane" for f in mesh.faces], dtype=bool)
+    interior = (
+        (lo == hi) & planar[np.clip(lo, 0, len(planar) - 1)]
+        if planar.any()
+        else np.zeros(len(uniq), dtype=bool)
+    )
+    return interior, lo, planar
+
+
+@register(
+    "noise_off_plane",
+    "noise",
+    "identity",
+    "vertices interior to a single planar face (every incident triangle on that face) moved "
+    "along its normal by a scalar drawn uniformly from [-A, A], A = severity * 50 um; refine "
+    "first, since planar faces have no interior vertices otherwise",
+    applies_to=lambda mesh: bool(_interior_planar(mesh)[0].any()),
+)
+def noise_off_plane(mesh, severity, rng):
+    uniq, inverse = vertex_table(mesh)
+    amp = amplitude_mm(severity)
+    interior, lo, planar = _interior_planar(mesh)
     if not planar.any():
         return {"skipped": "no planar faces"}
-    interior = (lo == hi) & planar[np.clip(lo, 0, len(planar) - 1)]
     if not interior.any():
         raise ValueError(
             "noise_off_plane has no vertex interior to a planar face; apply refine first"

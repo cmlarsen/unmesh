@@ -43,6 +43,8 @@ def _finite(value: Any) -> float | None:
 def metric_samples(records: list[dict[str, Any]], name: str) -> list[float]:
     out: list[float] = []
     for r in records:
+        if r.get("status") == "skipped":
+            continue
         ok = r.get("status") == "ok"
         if name == "f1":
             if ok and r.get("f1") is None and r.get("faces") == 0:
@@ -88,8 +90,8 @@ def _rate_bad(record: dict[str, Any], name: str) -> bool:
 def _rate_verdict(
     key: tuple, name: str, rec_a: list[dict[str, Any]], rec_b: list[dict[str, Any]]
 ) -> CellVerdict | None:
-    by_a = {r.get("seed"): r for r in rec_a}
-    by_b = {r.get("seed"): r for r in rec_b}
+    by_a = {r.get("seed"): r for r in rec_a if r.get("status") != "skipped"}
+    by_b = {r.get("seed"): r for r in rec_b if r.get("status") != "skipped"}
     shared = [s for s in by_a if s in by_b]
     bad_a = {s: _rate_bad(by_a[s], name) for s in shared}
     bad_b = {s: _rate_bad(by_b[s], name) for s in shared}
@@ -118,10 +120,17 @@ class CellVerdict:
 
 
 @dataclass
+class CoverageChange:
+    key: tuple
+    note: str
+
+
+@dataclass
 class Comparison:
     verdicts: list[CellVerdict] = field(default_factory=list)
     only_a: list[tuple] = field(default_factory=list)
     only_b: list[tuple] = field(default_factory=list)
+    coverage_changed: list[CoverageChange] = field(default_factory=list)
     unchanged: int = 0
     error: str | None = None
 
@@ -134,6 +143,14 @@ class Comparison:
         return [v for v in self.verdicts if v.verdict == "IMPROVEMENT"]
 
 
+def _scored(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [r for r in records if r.get("status") != "skipped"]
+
+
+def _all_skipped(records: list[dict[str, Any]]) -> bool:
+    return bool(records) and all(r.get("status") == "skipped" for r in records)
+
+
 def compare_groups(
     groups_a: dict[tuple, list[dict[str, Any]]],
     groups_b: dict[tuple, list[dict[str, Any]]],
@@ -141,6 +158,9 @@ def compare_groups(
     out = Comparison()
     for key in sorted(groups_a, key=str):
         if key not in groups_b:
+            if _all_skipped(groups_a[key]):
+                out.coverage_changed.append(CoverageChange(key, "skipped in A, absent in B"))
+                continue
             out.only_a.append(key)
             out.verdicts.append(
                 CellVerdict(key, "missing", 1.0, 0.0, len(groups_a[key]), 0.0, 0, 0.0, "REGRESSION")
@@ -148,14 +168,27 @@ def compare_groups(
             continue
         rec_a = groups_a[key]
         rec_b = groups_b[key]
-        seeds_a = {r.get("seed") for r in rec_a}
+        scored_a = _scored(rec_a)
+        scored_b = _scored(rec_b)
+        if not scored_a and not scored_b:
+            continue
+        if not scored_a:
+            out.coverage_changed.append(CoverageChange(key, "skipped in A, scored in B"))
+            continue
+        if not scored_b:
+            out.coverage_changed.append(CoverageChange(key, "scored in A, skipped in B"))
+            continue
+        by_a = {r.get("seed"): r for r in scored_a}
+        by_b = {r.get("seed"): r for r in scored_b}
         seeds_b = {r.get("seed") for r in rec_b}
-        if seeds_a - seeds_b:
+        skipped_a = {r.get("seed") for r in rec_a if r.get("status") == "skipped"}
+        skipped_b = {r.get("seed") for r in rec_b if r.get("status") == "skipped"}
+        if set(by_a) - seeds_b:
             out.verdicts.append(
                 CellVerdict(
                     key,
                     "seeds",
-                    float(len(seeds_a)),
+                    float(len(seeds_b) + len(set(by_a) - seeds_b)),
                     0.0,
                     len(rec_a),
                     float(len(seeds_b)),
@@ -165,6 +198,15 @@ def compare_groups(
                 )
             )
             continue
+        notes = []
+        dropped = sorted(set(by_a) & skipped_b, key=str)
+        if dropped:
+            notes.append(f"seed(s) {dropped} scored in A but skipped in B")
+        added = sorted(skipped_a & set(by_b), key=str)
+        if added:
+            notes.append(f"seed(s) {added} skipped in A but scored in B")
+        if notes:
+            out.coverage_changed.append(CoverageChange(key, "; ".join(notes)))
         for metric in METRICS:
             if metric.name in RATE_NOISELESS:
                 verdict = _rate_verdict(key, metric.name, rec_a, rec_b)
@@ -227,6 +269,9 @@ def compare_groups(
                 )
     for key in sorted(groups_b, key=str):
         if key not in groups_a:
+            if _all_skipped(groups_b[key]):
+                out.coverage_changed.append(CoverageChange(key, "absent in A, skipped in B"))
+                continue
             out.only_b.append(key)
     return out
 
@@ -305,9 +350,15 @@ def format_comparison(comp: Comparison, label_a: str = "A", label_b: str = "B") 
         lines.append(f"ONLY-A      {'':<14} {key[0]} {key[1]}@{_fmt_severity(key[2])}  ({label_a})")
     for key in comp.only_b:
         lines.append(f"ONLY-B      {'':<14} {key[0]} {key[1]}@{_fmt_severity(key[2])}  ({label_b})")
+    for change in comp.coverage_changed:
+        key = change.key
+        lines.append(
+            f"COVERAGE-CHANGED {'':<14} {key[0]} {key[1]}@{_fmt_severity(key[2])}  ({change.note})"
+        )
     lines.append(
         f"{len(comp.regressions)} regression(s), {len(comp.improvements)} improvement(s), "
         f"{comp.unchanged} unchanged cell-metric(s), "
-        f"{len(comp.only_a) + len(comp.only_b)} missing cell(s)"
+        f"{len(comp.only_a) + len(comp.only_b)} missing cell(s), "
+        f"{len(comp.coverage_changed)} coverage-changed cell(s)"
     )
     return "\n".join(lines)
