@@ -33,8 +33,8 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise over the quiet population below the largest decade-plus residual gap, and refits at five times that noise, floored at the larger of 1e-6 of the diagonal and 5e-7 of the largest absolute coordinate. The quiet pool is trusted whenever it holds at least 8 triangles of planar near-exact evidence (residual within 3× the floor), whatever its share of the mesh area — there is no area-share requirement, and a lone 2-triangle tessellation quad cannot trigger trust on its own. A single supported region is its own quiet pool. With no such evidence the estimator pools every supported region instead. Residual differences below 1e-9× the floor are numerical noise, not a population boundary, for the gap search. Becomes `ir.tolerances.linear`. |
-| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region, where σ is the quiet-pool noise; when the estimator falls back to every supported region there is no widening. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh before segmenting: five times the estimated vertex noise σ, floored at the larger of 1e-6 of the bounding-box diagonal and 5e-7 of the largest absolute coordinate, and capped at 5e-4 of the diagonal. σ is curvature-independent: around every welded vertex the converter takes each smooth sector of its fan (triangles joined across edges under 30°), gathers the sector's 2-ring without crossing an edge of 30° or more or tilting past 60° from the sector normal, fits a height-field quadric in the frame of the sector normal (a plane when there are too few points for three degrees of freedom), trims the worst quarter of the points twice (least trimmed squares), and takes the residual RMS over the kept points' degrees of freedom. σ is the area-weighted median of those per-sector values. A quadric absorbs plane, cylinder, cone and sphere curvature, so a clean tessellation gives σ near zero and a noisy mesh gives σ near the noise's standard deviation along the normal. Becomes `ir.tolerances.linear`. |
+| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region, with σ the quadric noise estimate above (with an explicit `linear_tolerance`, σ is a fifth of it). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
 
@@ -50,11 +50,14 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
-A clean all-planar mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the
-tolerance scales with the part's units) and a noisy one a tolerance that follows its noise, so snapping
+A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the tolerance scales
+with the part's units), curved or not, and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
-On a mesh whose area is mostly curvature with no near-exact population, the estimator falls back to
-pooling every supported region, so the tolerance follows the curvature instead of the floor.
+Two limits follow from the median. Noise confined to less than half of the area (for example, only on
+the planar faces) is not seen, and the tolerance stays near the floor. And where most vertices sit on
+tangent seams between different surfaces (a box with every edge and corner filleted, tessellated
+coarsely), no neighbourhood is one quadric, so curvature reads as noise and the tolerance rises
+toward the 5e-4 cap.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
