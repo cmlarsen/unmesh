@@ -376,6 +376,36 @@ def test_split_runs_reversed_edge_keeps_samples_on_points():
     assert segs[0].end.point == segs[1].points[0] == (20.0, 0.0, 0.0)
 
 
+@pytest.mark.parametrize(
+    "samples",
+    [
+        [1.0, 1.0, 2.8, 3.2, 10.0, 10.0],
+        [1.0, 1.0, 2.7, 2.9, 3.1, 10.0, 10.0],
+    ],
+)
+def test_split_runs_direction_independent_inside_band(samples):
+    xs = [10.0 * i for i in range(len(samples))]
+    fwd = _split_runs(make_directed(xs, samples, True), 3.0, (0, 1))
+    rev = _split_runs(make_directed(xs, samples, False), 3.0, (0, 1))
+    assert len(fwd) == len(rev) == 2
+
+    def splits(segs):
+        return sorted(
+            {
+                v.point
+                for s in segs
+                for v in (s.start, s.end)
+                if isinstance(v, _Split)
+            }
+        )
+
+    def runs(segs):
+        return [(s.dihedral < 3.0, s.dihedral, sorted(s.points)) for s in segs]
+
+    assert splits(fwd) and splits(fwd) == splits(rev)
+    assert runs(fwd) == runs(rev)[::-1]
+
+
 def test_directed_samples_follow_reversed_points():
     mesh = tessellate(mirror(equal_tee(), Plane.YZ), 0.01, 0.2)
     adj = next(
