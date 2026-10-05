@@ -6,7 +6,8 @@ use super::linalg::{V3, dot, scale, sub};
 use super::surface::Surface;
 use super::topology::CompMeta;
 use crate::ir::{
-    Adjacency, Boundary, Ir, Region, Residual, Shell, Source, Tolerances, Vertex, validate,
+    Adjacency, Boundary, Ir, Orientation, Region, Residual, Shell, Source, Tolerances, Vertex,
+    validate,
 };
 use crate::mesh::Point;
 
@@ -20,6 +21,14 @@ pub struct Asm<'a> {
     pub nbr: &'a [[u32; 3]],
     pub metas: &'a [CompMeta],
     pub orig: &'a [Point],
+}
+
+fn orientation(reversed: bool) -> Orientation {
+    if reversed {
+        Orientation::Reversed
+    } else {
+        Orientation::Same
+    }
 }
 
 pub fn assemble(
@@ -49,6 +58,40 @@ pub fn assemble(
                     }),
                 )
             }
+            Surface::Cylinder {
+                origin,
+                axis,
+                radius,
+                reversed,
+            } => (
+                crate::ir::Surface::Cylinder {
+                    origin,
+                    axis,
+                    radius,
+                    orientation: orientation(reversed),
+                },
+                Some(Residual {
+                    rms: fr.rms,
+                    max: fr.max.max(fr.sag),
+                }),
+            ),
+            Surface::Cone {
+                apex,
+                axis,
+                half_angle,
+                reversed,
+            } => (
+                crate::ir::Surface::Cone {
+                    apex,
+                    axis,
+                    half_angle,
+                    orientation: orientation(reversed),
+                },
+                Some(Residual {
+                    rms: fr.rms,
+                    max: fr.max.max(fr.sag),
+                }),
+            ),
             Surface::Facets => {
                 let mut local: FxHashMap<u32, u32> = FxHashMap::default();
                 let mut vertices = Vec::new();
@@ -204,6 +247,7 @@ mod tests {
             },
             rms: 0.0,
             max: 0.0,
+            sag: 0.0,
             comp: 0,
         }
     }
@@ -214,6 +258,7 @@ mod tests {
             surface: Surface::Facets,
             rms: 0.0,
             max: 0.0,
+            sag: 0.0,
             comp: 0,
         }
     }

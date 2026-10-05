@@ -149,7 +149,7 @@ pub fn run(args: ProjectArgs<'_>) -> Projected {
     }
     for fr in finals {
         dev_max = dev_max.max(if fr.surface.is_analytic() {
-            fr.max
+            fr.max.max(fr.sag)
         } else {
             0.0
         });

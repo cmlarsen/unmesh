@@ -41,6 +41,7 @@ pub struct Region {
     pub verts: Vec<(u32, f64)>,
     pub rms: f64,
     pub max: f64,
+    pub sag: f64,
 }
 
 pub struct Scratch {
@@ -216,6 +217,7 @@ pub fn build_regions(
                 verts,
                 rms,
                 max,
+                sag: 0.0,
             }
         })
         .collect()
@@ -351,6 +353,7 @@ pub struct Final {
     pub surface: Surface,
     pub rms: f64,
     pub max: f64,
+    pub sag: f64,
     pub comp: usize,
 }
 
@@ -390,7 +393,6 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
 pub struct RunArgs<'a> {
     pub vc: &'a [V3],
     pub faces: &'a [[u32; 3]],
-    pub nbr: &'a [[u32; 3]],
     pub info: &'a [TriInfo],
     pub label: &'a [u32],
     pub n_seg: usize,
@@ -403,7 +405,6 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
     let RunArgs {
         vc,
         faces,
-        nbr,
         info,
         label,
         n_seg,
@@ -411,7 +412,9 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         snap_deg,
         scratch,
     } = args;
-    merge_and_rebuild(vc, faces, info, nbr, label, n_seg, tol, snap_deg, scratch)
+    let mut regions = build_regions(vc, faces, info, label, n_seg, tol, scratch);
+    super::curved::refine_regions(vc, faces, info, &mut regions, tol, snap_deg);
+    (label.to_vec(), regions)
 }
 
 pub fn resplit_loose(
@@ -537,6 +540,7 @@ pub fn finalize(
                 surface: r.surface,
                 rms: r.rms,
                 max: r.max,
+                sag: r.sag,
                 comp: comp_of[r.faces[0] as usize] as usize,
             });
         } else {
@@ -547,6 +551,7 @@ pub fn finalize(
                     surface: Surface::Facets,
                     rms: 0.0,
                     max: 0.0,
+                    sag: 0.0,
                     comp: comp_of[r.faces[0] as usize] as usize,
                 });
                 finals.len() - 1
@@ -561,6 +566,7 @@ pub fn finalize(
                 surface: Surface::Facets,
                 rms: 0.0,
                 max: 0.0,
+                sag: 0.0,
                 comp: ci,
             });
         }
