@@ -245,11 +245,16 @@ fn on_surface(surface: &Surface, p: Point) -> Point {
 /// triangles with every corner projected onto the surface (a facets region's own triangles). The
 /// nearest point of the IR to a query is found on the flat footprint triangles, over all regions,
 /// then moved onto its region's analytic surface by the closed-form projection. That removes the
-/// chord error of the flat triangle inside a face, except within one chord of a footprint boundary.
+/// chord error of the flat triangle inside a face, except within one chord of a footprint boundary:
+/// there the nearest flat triangle can belong to a neighbouring curved region, whose projected point
+/// sits a sagitta away. A sample of the input mesh is therefore also measured to the projection of
+/// itself onto the surface of the region that owns its triangle. That point lies in the owner's patch
+/// by construction, so the smaller of the two is still an upper bound on the distance to the IR.
 pub struct Footprint<'a> {
     mesh: TriMesh,
     tri_region: Vec<u32>,
     surfaces: Vec<&'a Surface>,
+    owner: Vec<Option<u32>>,
 }
 
 impl Footprint<'_> {
@@ -260,8 +265,12 @@ impl Footprint<'_> {
         dist(*p, on_surface(surface, q))
     }
 
-    fn distances(&self, pts: &[Point]) -> Vec<f64> {
-        par_map(pts, |p| self.distance(p))
+    fn owned_distance(&self, p: &Point, input_tri: u32) -> f64 {
+        let d = self.distance(p);
+        match self.owner.get(input_tri as usize) {
+            Some(&Some(r)) => d.min(dist(*p, on_surface(self.surfaces[r as usize], *p))),
+            _ => d,
+        }
     }
 }
 
@@ -273,10 +282,20 @@ fn build_footprint<'a>(ir: &'a Ir, it: &IrTriangles) -> Result<Footprint<'a>, Ju
         .zip(&it.region)
         .map(|(t, &r)| t.map(|c| on_surface(surfaces[r as usize], c)))
         .collect();
+    let mut owner = vec![None; ir.source.triangle_count as usize];
+    for (ri, r) in ir.regions.iter().enumerate() {
+        if r.surface.is_facets() {
+            continue;
+        }
+        for &id in &r.triangles {
+            owner[id as usize] = Some(ri as u32);
+        }
+    }
     Ok(Footprint {
         mesh: build_trimesh(&tris, "IR footprint")?,
         tri_region: it.region.clone(),
         surfaces,
+        owner,
     })
 }
 
@@ -404,6 +423,7 @@ fn compare(
     setup: &Setup<'_>,
     reference: &[Triangle],
     what: &'static str,
+    owned: bool,
     opts: &JudgeOptions,
     salt: u64,
 ) -> Result<Compared, JudgeError> {
@@ -433,9 +453,23 @@ fn compare(
         .iter()
         .map(|s| point_at(&reference[s.tri as usize], s.b, s.c))
         .collect();
-    let reverse = footprint.distances(&ref_points);
+    let reverse_at = |p: &Point, tri: u32| {
+        if owned {
+            footprint.owned_distance(p, tri)
+        } else {
+            footprint.distance(p)
+        }
+    };
+    let reverse = par_map(
+        &ref_samples
+            .iter()
+            .zip(&ref_points)
+            .map(|(s, p)| (s.tri, *p))
+            .collect::<Vec<_>>(),
+        |(tri, p)| reverse_at(p, *tri),
+    );
     let reverse_refined = refine_top(&ref_samples, &reverse, &|s| {
-        footprint.distance(&point_at(&reference[s.tri as usize], s.b, s.c))
+        reverse_at(&point_at(&reference[s.tri as usize], s.b, s.c), s.tri)
     });
 
     let comparison = Comparison {
@@ -460,7 +494,7 @@ pub fn judge(
         samples,
         footprint,
     };
-    let (input_cmp, forward, refined) = compare(&setup, input, "input mesh", opts, 1)?;
+    let (input_cmp, forward, refined) = compare(&setup, input, "input mesh", true, opts, 1)?;
     let mut region_max = vec![0.0_f64; ir.regions.len()];
     for (s, d) in setup.samples.iter().zip(&forward) {
         let slot = &mut region_max[setup.it.region[s.tri as usize] as usize];
@@ -471,7 +505,7 @@ pub fn judge(
         *slot = slot.max(v);
     }
     let truth_cmp = truth
-        .map(|t| compare(&setup, t, "truth mesh", opts, 2).map(|c| c.0))
+        .map(|t| compare(&setup, t, "truth mesh", false, opts, 2).map(|c| c.0))
         .transpose()?;
     Ok(JudgeResult {
         input: input_cmp,

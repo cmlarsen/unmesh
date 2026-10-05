@@ -219,6 +219,107 @@ def test_adversarial_plugins_fail_the_gate(tmp_path, monkeypatch):
     assert flagged == {f"adversaries:{n}" for n in ADVERSARY_NAMES}, verdict.violations
 
 
+ORACLE_ADVERSARIES = """
+import hashlib
+import json
+from pathlib import Path
+
+import numpy as np
+
+import unmesh
+
+CELLS = json.loads((Path(__file__).parent / "oracle_cells.json").read_text())
+
+
+def _convert(p, scale):
+    tris = np.ascontiguousarray(unmesh.read_stl(p), dtype=np.float64)
+    cell = CELLS[hashlib.sha256(tris.tobytes()).hexdigest()]
+    return cell["ir"], None, json.dumps({"max_deviation": cell["honest"] * scale})
+
+
+def honest(p):
+    return _convert(p, 1.0)
+
+
+def halved(p):
+    return _convert(p, 0.5)
+
+
+def zero(p):
+    return _convert(p, 0.0)
+"""
+
+
+def _honest_deviation(mesh, n=16):
+    from unmesh_harness.labels import distance_to_surface
+
+    bary = np.array([(i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)])
+    weights = np.column_stack([1 - bary.sum(axis=1), bary])
+    worst = 0.0
+    for face in mesh.faces:
+        tris = mesh.tris[mesh.face_id == face.id]
+        if len(tris):
+            pts = np.einsum("kv,tvd->tkd", weights, tris).reshape(-1, 3)
+            worst = max(worst, float(distance_to_surface(face, pts).max()))
+    return worst
+
+
+def _oracle_cells(grid, tmp_path):
+    import hashlib
+
+    import unmesh
+    from unmesh_harness.degrade import chain
+    from unmesh_harness.runner.grid import steps_for
+
+    cells = {}
+    for entry in grid.entries:
+        gt = generate(entry["family"], entry["seed"])
+        clean = tessellate(gt.solid, *grid.input_deflection)
+        for spec in grid.cells:
+            steps = [(name, float(sev)) for name, sev in steps_for(spec)]
+            for seed in spec.get("seeds", grid.seeds):
+                degraded = chain(clean, steps, seed)
+                stl = tmp_path / "oracle.stl"
+                degraded.write_stl(stl)
+                tris = np.ascontiguousarray(unmesh.read_stl(stl), dtype=np.float64)
+                degraded = dataclasses.replace(degraded, tris=tris)
+                cells[hashlib.sha256(tris.tobytes()).hexdigest()] = {
+                    "ir": build_oracle_ir(degraded).dumps(),
+                    "honest": _honest_deviation(degraded),
+                }
+    return cells
+
+
+@pytest.mark.parametrize("part", ["plate_pockets-0000", "straight_fillet-0001", "counterbore-0000"])
+def test_under_reporting_is_flagged_on_planar_and_curved_cells(part, tmp_path, monkeypatch):
+    entry = next(e for e in select(load_manifest(), "smoke") if e["id"] == part)
+    grid = load_grid("smoke")
+    grid = dataclasses.replace(
+        grid,
+        entries=[entry],
+        cells=[grid.row("identity", 0.0), grid.row("noise_isotropic", 0.1)],
+        seeds=[1],
+    )
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "oracle_cells.json").write_text(json.dumps(_oracle_cells(grid, tmp_path)))
+    (plugins / "oracle_adversaries.py").write_text(ORACLE_ADVERSARIES)
+    monkeypatch.syspath_prepend(str(plugins))
+    names = ["honest", "halved", "zero"]
+    converters = [f"oracle_adversaries:{n}" for n in names]
+    summary = run_grid(
+        grid, converters, tmp_path / "out", jobs=2, sha="s", timeout=120, log=lambda *_: None
+    )
+    flags = {
+        (r["converter"].split(":")[1], r["operator"]): r["under_report"] for r in summary.records
+    }
+    assert len(flags) == 6, summary.records
+    for operator in ("identity", "noise_isotropic"):
+        assert flags[("honest", operator)] is False, summary.records
+        assert flags[("halved", operator)] is True
+        assert flags[("zero", operator)] is True
+
+
 def row_records(grid, **changes):
     out = []
     for cell, _ in grid.expand(["unmesh"], "s"):
