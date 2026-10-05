@@ -6,10 +6,35 @@ const SMOOTH_DIHEDRAL_DEG: f64 = 15.0;
 const MAX_TILT_DEG: f64 = 60.0;
 const MAX_PATCH_FACES: usize = 256;
 const KEEP_FRACTION: f64 = 0.75;
+const LTS_MIN_POINTS: usize = 12;
 const MIN_DOF: usize = 3;
 const C_STEPS: usize = 2;
-const TRIM_CONSISTENCY: f64 = 1.5;
 const NP: usize = 6;
+const LTS_SELECTION_SHRINK: f64 = 0.77;
+const MEDIAN_CAP: f64 = 4.0;
+const POOL_INFO: f64 = 200.0;
+const CHI2_LOW_Z: f64 = -2.33;
+const CHI2_HIGH_Z: f64 = 4.26;
+const PLANE_F_CRIT: f64 = 3.0;
+const REWEIGHT_STEPS: usize = 10;
+
+struct Sample {
+    var: f64,
+    dof: usize,
+    points: usize,
+    pool: (f64, usize),
+}
+
+impl Sample {
+    fn median_unbiased(&self) -> f64 {
+        self.var.sqrt() / chi2_quantile(self.dof, 0.0).sqrt()
+    }
+}
+
+fn chi2_quantile(dof: usize, z: f64) -> f64 {
+    let h = 2.0 / (9.0 * dof as f64);
+    (1.0 - h + z * h.sqrt()).max(0.0).powi(3)
+}
 
 struct Marks {
     mark: Vec<u32>,
@@ -84,7 +109,7 @@ pub fn estimate_sigma(
     let mut seen_face = Marks::new(faces.len());
     let mut ring = Marks::new(v.len());
     let mut seen_vert = Marks::new(v.len());
-    let mut samples: Vec<(f64, f64)> = Vec::new();
+    let mut samples: Vec<(f64, f64, Sample)> = Vec::new();
     let mut pts: Vec<V3> = Vec::new();
     let mut queue: Vec<u32> = Vec::new();
     let mut parent: Vec<usize> = Vec::new();
@@ -178,25 +203,55 @@ pub fn estimate_sigma(
                     }
                 }
             }
-            if let Some(rms) = quadric_rms(v[vi], n, &pts) {
-                samples.push((rms, area / 3.0));
+            if let Some(fit) = quadric_fit(v[vi], n, &pts) {
+                samples.push((fit.median_unbiased(), area / 3.0, fit));
             }
         }
     }
-    weighted_median(&mut samples)
+    let median = weighted_median(&mut samples)?;
+    let info: f64 = samples
+        .iter()
+        .map(|(_, _, fit)| fit.pool.1 as f64 / fit.points as f64)
+        .sum();
+    let pooled = pooled_sigma(&samples, median);
+    let shrink = POOL_INFO * POOL_INFO / (POOL_INFO * POOL_INFO + info * info);
+    Some((shrink * pooled * pooled + (1.0 - shrink) * median * median).sqrt())
 }
 
-fn weighted_median(samples: &mut [(f64, f64)]) -> Option<f64> {
+fn pooled_sigma(samples: &[(f64, f64, Sample)], median: f64) -> f64 {
+    let mut sigma = median;
+    for _ in 0..REWEIGHT_STEPS {
+        let (mut num, mut den) = (0.0, 0.0);
+        let var = sigma * sigma;
+        for (_, _, fit) in samples {
+            let (v, dof) = fit.pool;
+            if v > var * chi2_quantile(dof, CHI2_LOW_Z).max(1e-6)
+                && v <= var * chi2_quantile(dof, CHI2_HIGH_Z)
+            {
+                let w = dof as f64 / fit.points as f64;
+                num += w * v;
+                den += w;
+            }
+        }
+        if den <= 0.0 {
+            break;
+        }
+        sigma = (num / den).sqrt().min(MEDIAN_CAP * median);
+    }
+    sigma
+}
+
+fn weighted_median(samples: &mut [(f64, f64, Sample)]) -> Option<f64> {
     let total: f64 = samples.iter().map(|s| s.1).sum();
     if samples.is_empty() || total <= 0.0 {
         return None;
     }
     samples.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut acc = 0.0;
-    for &(r, w) in samples.iter() {
+    for (r, w, _) in samples.iter() {
         acc += w;
         if acc >= 0.5 * total {
-            return Some(r);
+            return Some(*r);
         }
     }
     samples.last().map(|s| s.0)
@@ -212,7 +267,7 @@ fn frame(n: V3) -> (V3, V3) {
     (t1, cross(n, t1))
 }
 
-fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
+fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
     let (t1, t2) = frame(n);
     let mut local: Vec<(f64, f64, f64)> = pts
         .iter()
@@ -234,15 +289,38 @@ fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
     }
     let all: Vec<usize> = (0..local.len()).collect();
     let (mut coef, mut rank) = solve(&local, &all, NP)?;
+    let (plane, plane_rank) = solve(&local, &all, 3)?;
+    let plane_ss: f64 = local.iter().map(|p| resid(&plane, *p).powi(2)).sum();
+    let plane_fit = || {
+        let dof = local.len().checked_sub(plane_rank).filter(|&d| d > 0)?;
+        Some(Sample {
+            var: plane_ss / dof as f64,
+            dof,
+            points: local.len(),
+            pool: (plane_ss / dof as f64, dof),
+        })
+    };
     if local.len() < rank + MIN_DOF {
-        let (coef, rank) = solve(&local, &all, 3)?;
-        let dof = local.len().checked_sub(rank).filter(|&d| d > 0)?;
-        let ss: f64 = local.iter().map(|p| resid(&coef, *p).powi(2)).sum();
-        return Some(median_unbiased_rms(ss, dof));
+        return plane_fit();
     }
-    let keep = ((KEEP_FRACTION * local.len() as f64).ceil() as usize)
-        .max(rank + MIN_DOF)
-        .min(local.len());
+    let quad_ss: f64 = local.iter().map(|p| resid(&coef, *p).powi(2)).sum();
+    let extra = rank.saturating_sub(plane_rank);
+    let plane_suffices = extra == 0
+        || (plane_ss - quad_ss) * ((local.len() - rank) as f64)
+            <= PLANE_F_CRIT * extra as f64 * quad_ss;
+    if plane_suffices && local.len() < LTS_MIN_POINTS {
+        return plane_fit();
+    }
+    let plane_pool = plane_suffices
+        .then(|| plane_fit().map(|p| p.pool))
+        .flatten();
+    let keep = if local.len() < LTS_MIN_POINTS {
+        local.len()
+    } else {
+        ((KEEP_FRACTION * local.len() as f64).ceil() as usize)
+            .max(rank + MIN_DOF)
+            .min(local.len())
+    };
     let mut order: Vec<(f64, usize)> = Vec::with_capacity(local.len());
     let mut subset: Vec<usize> = Vec::with_capacity(keep);
     for _ in 0..C_STEPS {
@@ -262,12 +340,13 @@ fn quadric_rms(center: V3, n: V3, pts: &[V3]) -> Option<f64> {
     res.sort_by(f64::total_cmp);
     let ss: f64 = res[..keep].iter().sum();
     let dof = keep.checked_sub(rank).filter(|&d| d >= MIN_DOF)?;
-    Some(TRIM_CONSISTENCY * median_unbiased_rms(ss, dof))
-}
-
-fn median_unbiased_rms(ss: f64, dof: usize) -> f64 {
-    let k = dof as f64;
-    (ss / k).sqrt() * (1.0 - 2.0 / (9.0 * k)).powf(-1.5)
+    let var = ss / dof as f64 / trimmed_variance(keep as f64 / local.len() as f64);
+    Some(Sample {
+        var,
+        dof,
+        points: local.len(),
+        pool: plane_pool.unwrap_or((var, dof)),
+    })
 }
 
 fn basis(x: f64, y: f64) -> [f64; NP] {
@@ -369,6 +448,33 @@ fn jacobi(mut a: M6) -> ([f64; NP], M6) {
     (vals, v)
 }
 
+fn trimmed_variance(kept: f64) -> f64 {
+    if kept >= 1.0 {
+        return 1.0;
+    }
+    let (mut lo, mut hi) = (0.0, 10.0);
+    for _ in 0..60 {
+        let q = 0.5 * (lo + hi);
+        if erf(q / std::f64::consts::SQRT_2) < kept {
+            lo = q;
+        } else {
+            hi = q;
+        }
+    }
+    let q = 0.5 * (lo + hi);
+    let pdf = (-0.5 * q * q).exp() / (2.0 * std::f64::consts::PI).sqrt();
+    LTS_SELECTION_SHRINK * (1.0 - 2.0 * q * pdf / kept)
+}
+
+fn erf(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = t
+        * (0.254829592
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let y = 1.0 - poly * (-x * x).exp();
+    if x < 0.0 { -y } else { y }
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     use super::super::segment::tri_info;
@@ -410,12 +516,22 @@ pub(super) mod tests {
     }
 
     fn cylinder(radius: f64, nu: usize, nv: usize, noise: f64, seed: u64) -> Vec<V3> {
+        noisy_cylinder(radius, nu, nv, seed, |rng| noise * rng.uniform())
+    }
+
+    fn noisy_cylinder(
+        radius: f64,
+        nu: usize,
+        nv: usize,
+        seed: u64,
+        mut draw: impl FnMut(&mut Lcg) -> f64,
+    ) -> Vec<V3> {
         let mut rng = Lcg(seed);
         let mut v = Vec::new();
         for i in 0..nu {
             let a = (3.0 / radius) * i as f64 / (nu - 1) as f64;
             for j in 0..nv {
-                let r = radius + noise * rng.uniform();
+                let r = radius + draw(&mut rng);
                 v.push([r * a.cos(), r * a.sin(), 10.0 * j as f64 / (nv - 1) as f64]);
             }
         }
@@ -444,6 +560,32 @@ pub(super) mod tests {
         }
     }
 
+    fn gaussian(rng: &mut Lcg) -> f64 {
+        let u = 0.5 * (rng.uniform() + 1.0);
+        let w = 0.5 * (rng.uniform() + 1.0);
+        (-2.0 * u.max(1e-300).ln()).sqrt() * (2.0 * std::f64::consts::PI * w).cos()
+    }
+
+    #[test]
+    fn sigma_matches_gaussian_and_uniform_sd() {
+        for radius in [2.0, 8.0, 1e6] {
+            for seed in 0..4 {
+                let g = noisy_cylinder(radius, 40, 40, seed, |r| 0.004 * gaussian(r));
+                let u = noisy_cylinder(radius, 40, 40, seed, |r| 0.01 * r.uniform());
+                let rg = grid_sigma(&g, 40, 40) / 0.004;
+                let ru = grid_sigma(&u, 40, 40) / (0.01 / 3f64.sqrt());
+                assert!(
+                    (0.93..1.07).contains(&rg),
+                    "r={radius} seed={seed}: gauss {rg}"
+                );
+                assert!(
+                    (0.95..1.12).contains(&ru),
+                    "r={radius} seed={seed}: uniform {ru}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn cylinder_to_cone_crease_does_not_read_as_noise() {
         let rings = [(10.0, -8.5), (10.0, 0.0), (14.0, 13.7)];
@@ -458,9 +600,7 @@ pub(super) mod tests {
         assert!(sigma < 1e-5, "sigma={sigma}");
     }
 
-    #[test]
-    fn sharp_edges_do_not_read_as_noise() {
-        let tris = super::super::tests::grid_box([0.0; 3], [10.0, 20.0, 30.0], 4, false);
+    fn indexed(tris: Vec<[V3; 3]>) -> (Vec<V3>, Vec<[u32; 3]>) {
         let mut v: Vec<V3> = Vec::new();
         let mut faces = Vec::new();
         for t in tris {
@@ -476,6 +616,42 @@ pub(super) mod tests {
             }
             faces.push(ids);
         }
+        (v, faces)
+    }
+
+    #[test]
+    fn sigma_is_stable_on_a_coarse_noisy_box() {
+        let sd = 0.002;
+        let mut ratios = Vec::new();
+        for seed in 0..10 {
+            let tris = super::super::tests::grid_box([0.0; 3], [40.0, 30.0, 20.0], 2, false);
+            let (mut v, faces) = indexed(tris);
+            assert_eq!(faces.len(), 48);
+            let mut rng = Lcg(seed);
+            for p in v.iter_mut() {
+                for c in p.iter_mut() {
+                    *c += sd * gaussian(&mut rng);
+                }
+            }
+            let ratio = sigma_of(&v, faces).unwrap() / sd;
+            assert!(
+                (0.65..1.35).contains(&ratio),
+                "seed {seed}: sigma/sd = {ratio}"
+            );
+            ratios.push(ratio);
+        }
+        let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
+        assert!((0.9..1.1).contains(&mean), "mean sigma/sd = {mean}");
+    }
+
+    #[test]
+    fn sharp_edges_do_not_read_as_noise() {
+        let (v, faces) = indexed(super::super::tests::grid_box(
+            [0.0; 3],
+            [10.0, 20.0, 30.0],
+            4,
+            false,
+        ));
         assert_eq!(sigma_of(&v, faces), Some(0.0));
     }
 }
