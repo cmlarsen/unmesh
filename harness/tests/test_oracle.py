@@ -3,15 +3,57 @@ from collections import Counter
 
 import numpy as np
 import pytest
-from build123d import Box, Cone, Cylinder, Plane, Sphere, Torus, fillet, mirror
+from build123d import Box, Cone, Cylinder, Plane, Pos, Rotation, Sphere, Torus, fillet, mirror
 
 from unmesh.ir import Ir, validate
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.groundtruth import generate
-from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, tessellate
-from unmesh_harness.oracle import build_oracle_ir
+from unmesh_harness.labels import (
+    DEFLECTION_SETTINGS,
+    TANGENT_THRESHOLD_DEG,
+    EdgeAdjacency,
+    LabeledMesh,
+    tessellate,
+)
+from unmesh_harness.oracle import _Directed, _Split, _split_runs, build_oracle_ir
 
 from .cases import entry_shape, smoke_by_deflection
+
+
+def equal_tee():
+    return Cylinder(5, 20) + (Pos(0, 0, 0) * Rotation(0, 90, 0) * Cylinder(5, 20))
+
+
+def tangent_boss():
+    wall = Rotation(0, 90, 0) * Cylinder(5, 20)
+    return wall + (Pos(0, 0, 7.5) * Cylinder(5, 15))
+
+
+def crossing_side(mesh, vertex):
+    a, b = vertex.regions
+    thr = math.radians(TANGENT_THRESHOLD_DEG)
+    pos = tuple(vertex.position)
+    for adj in mesh.adjacency:
+        if (adj.face_a, adj.face_b) != (a, b) or len(adj.dihedral_samples) != len(adj.points):
+            continue
+        pts = [tuple(p) for p in adj.points]
+        kinds = [s < thr for s in adj.dihedral_samples]
+        if pos in pts:
+            j = pts.index(pos)
+            if any(kinds[k] != kinds[j] for k in (j - 1, j + 1) if 0 <= k < len(kinds)):
+                return True
+        for k in range(len(pts) - 1):
+            on_segment = (
+                abs(
+                    math.dist(pos, pts[k])
+                    + math.dist(pos, pts[k + 1])
+                    - math.dist(pts[k], pts[k + 1])
+                )
+                < 1e-9
+            )
+            if on_segment and kinds[k] != kinds[k + 1]:
+                return True
+    return False
 
 
 def surface_normals(surface, pts):
@@ -221,3 +263,85 @@ def test_labeled_mesh_round_trip_builds_same_ir(tmp_path):
     mesh.save(tmp_path / "m.npz")
     back = LabeledMesh.load(tmp_path / "m.npz")
     assert build_oracle_ir(back).dumps() == build_oracle_ir(mesh).dumps()
+
+
+def check_mid_edge_splits(shape):
+    mesh = tessellate(shape, 0.01, 0.2)
+    ir = build_oracle_ir(mesh)
+    assert validate(ir) == []
+    changed = [v for v in ir.vertices if v.role == "kind_change"]
+    assert changed
+    assert all(crossing_side(mesh, v) for v in changed)
+    for adj in ir.adjacencies:
+        for b in adj.boundaries:
+            assert (b.dihedral_deg < TANGENT_THRESHOLD_DEG) == (b.kind == "tangent")
+    return mesh, ir
+
+
+def test_equal_tee_mid_edge_kind_change():
+    mesh, ir = check_mid_edge_splits(equal_tee())
+    pairs = {(a.face_a, a.face_b) for a in mesh.adjacency}
+    split_pairs = {tuple(sorted(v.regions)) for v in ir.vertices if v.role == "kind_change"}
+    assert split_pairs
+    assert split_pairs <= pairs
+    assert any(b.kind == "tangent" for a in ir.adjacencies for b in a.boundaries if not b.closed)
+
+
+def test_boss_part_loop_kind_change():
+    mesh, ir = check_mid_edge_splits(tangent_boss())
+    assert any(b.kind == "tangent" for a in ir.adjacencies for b in a.boundaries if not b.closed)
+
+
+def make_directed(points, samples_deg):
+    adj = EdgeAdjacency(
+        edge_id=0,
+        face_a=0,
+        face_b=1,
+        curve="line",
+        tangent=False,
+        dihedral=math.radians(45.0),
+        dihedral_min=math.radians(min(samples_deg)),
+        dihedral_max=math.radians(max(samples_deg)),
+        points=[[float(x), 0.0, 0.0] for x in points],
+        start_vertex=0,
+        end_vertex=1,
+        forward_in_a=True,
+        dihedral_samples=[math.radians(s) for s in samples_deg],
+    )
+    return _Directed(adj)
+
+
+def test_split_runs_inserts_far_crossing():
+    d = make_directed([0.0, 10.0, 20.0], [1.0, 1.0, 10.0])
+    segs = _split_runs(d, 3.0, (0, 1))
+    assert len(segs) == 2
+    assert isinstance(segs[0].end, _Split) and segs[0].end is segs[1].start
+    assert segs[0].points[-1] == segs[1].points[0] == segs[0].end.point
+    assert segs[0].points[-1][0] == pytest.approx(10.0 + (3.0 - 1.0) / 9.0 * 10.0)
+    assert segs[0].dihedral == pytest.approx(1.0)
+    assert segs[1].dihedral == pytest.approx(10.0)
+
+
+def test_split_runs_splits_at_near_node():
+    d = make_directed([0.0, 10.0, 20.0], [1.0, 2.9, 10.0])
+    segs = _split_runs(d, 3.0, (0, 1))
+    assert len(segs) == 2
+    assert segs[0].points[-1] == segs[1].points[0] == (10.0, 0.0, 0.0)
+    assert segs[0].dihedral == pytest.approx(1.95)
+    assert segs[1].dihedral == pytest.approx(6.45)
+
+
+def test_split_runs_interior_tangent_run():
+    d = make_directed([0.0, 10.0, 20.0, 30.0, 40.0], [10.0, 10.0, 1.0, 10.0, 10.0])
+    segs = _split_runs(d, 3.0, (0, 1))
+    assert len(segs) == 3
+    assert [s.dihedral > 3.0 for s in (segs[0], segs[2])] == [True, True]
+    assert segs[1].dihedral == pytest.approx(1.0)
+    assert len(segs[1].points) == 3
+
+
+def test_split_runs_no_crossing_keeps_whole_edge():
+    d = make_directed([0.0, 10.0, 20.0], [10.0, 20.0, 30.0])
+    (seg,) = _split_runs(d, 3.0, (0, 1))
+    assert seg.points == d.points and seg.dihedral == d.dihedral
+    assert (seg.start, seg.end) == (0, 1)

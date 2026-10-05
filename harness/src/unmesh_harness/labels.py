@@ -97,6 +97,7 @@ class EdgeAdjacency:
     start_vertex: int
     end_vertex: int
     forward_in_a: bool
+    dihedral_samples: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -247,6 +248,46 @@ def _edge_dihedral(edge, face_a, face_b, samples: int = 16) -> tuple[float, floa
     return float(np.median(angles)), min(angles), max(angles)
 
 
+def _polygon_params(poly, count: int) -> list[float] | None:
+    if not poly.HasParameters() or poly.NbNodes() != count:
+        return None
+    try:
+        return [poly.Parameter(i) for i in range(1, count + 1)]
+    except Exception:
+        return None
+
+
+def _edge_dihedral_profile(edge, face_a, face_b, params: list[float]) -> list[float] | None:
+    samplers = []
+    for face in (face_a, face_b):
+        curve2d = BRep_Tool.CurveOnSurface_s(edge, face, 0.0, 1.0)
+        if curve2d is None:
+            return None
+        samplers.append(
+            (
+                curve2d,
+                BRep_Tool.Surface_s(face),
+                face.Orientation() == TopAbs_REVERSED,
+            )
+        )
+    angles = []
+    try:
+        for t in params:
+            normals = []
+            for curve2d, surf, reversed_face in samplers:
+                uv = curve2d.Value(t)
+                props = GeomLProp_SLProps(surf, uv.X(), uv.Y(), 1, 1e-9)
+                if not props.IsNormalDefined():
+                    return None
+                n = np.array(_vec(props.Normal()))
+                normals.append(-n if reversed_face else n)
+            cos = float(np.clip(normals[0] @ normals[1], -1.0, 1.0))
+            angles.append(math.acos(cos))
+    except Exception:
+        return None
+    return angles
+
+
 def _forward_in_face(face, edge) -> bool:
     exp = TopExp_Explorer(face, TopAbs_EDGE)
     while exp.More():
@@ -295,6 +336,7 @@ def tessellate(
 
     canonical: dict[tuple, tuple[float, float, float]] = {}
     polylines: dict[int, list[tuple[float, float, float]]] = {}
+    polyparams: dict[int, list[float] | None] = {}
     tri_blocks: list[np.ndarray] = []
     id_blocks: list[np.ndarray] = []
     faces: list[FaceInfo] = []
@@ -335,7 +377,9 @@ def tessellate(
                     key = ("e", eid, k)
                 nodes[node - 1] = canonical.setdefault(key, nodes[node - 1])
                 line.append(nodes[node - 1])
-            polylines.setdefault(eid, line)
+            if eid not in polylines:
+                polylines[eid] = line
+                polyparams[eid] = _polygon_params(poly, len(idx))
 
         pts = np.array(nodes, dtype=np.float64)
         t = np.array(
@@ -372,6 +416,16 @@ def tessellate(
             continue
         fa, fb = (TopoDS.Face_s(face_map.FindKey(i)) for i in (ia, ib))
         dihedral, dihedral_min, dihedral_max = _edge_dihedral(edge, fa, fb)
+        params = polyparams[ei]
+        if params is None:
+            first, last = BRep_Tool.Range_s(edge)
+            n = len(polylines[ei])
+            params = [first if n == 1 else first + (last - first) * i / (n - 1) for i in range(n)]
+        profile = _edge_dihedral_profile(edge, fa, fb, params)
+        samples: list[float] = []
+        if profile is not None and len(profile) == len(polylines[ei]):
+            samples = profile
+            dihedral_min, dihedral_max = min(profile), max(profile)
         v_first = TopExp.FirstVertex_s(edge)
         v_last = TopExp.LastVertex_s(edge)
         adjacency.append(
@@ -388,6 +442,7 @@ def tessellate(
                 start_vertex=vertex_map.FindIndex(v_first) - 1,
                 end_vertex=vertex_map.FindIndex(v_last) - 1,
                 forward_in_a=_forward_in_face(fa, edge),
+                dihedral_samples=samples,
             )
         )
 

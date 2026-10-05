@@ -61,6 +61,87 @@ class _Directed:
         self.start = adj.start_vertex if fwd else adj.end_vertex
         self.end = adj.end_vertex if fwd else adj.start_vertex
         self.dihedral = math.degrees(adj.dihedral)
+        samples = [math.degrees(s) for s in adj.dihedral_samples]
+        self.samples = samples if (fwd or not samples) else samples[::-1]
+        if len(self.samples) != len(self.points):
+            self.samples = []
+
+
+class _Split:
+    def __init__(self, point: tuple[float, ...], faces: tuple[int, int]):
+        self.point = point
+        self.faces = faces
+
+
+class _Seg:
+    def __init__(self, points, dihedral: float, start, end):
+        self.points = points
+        self.dihedral = dihedral
+        self.start = start
+        self.end = end
+
+
+def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> list[_Seg]:
+    if len(d.samples) != len(d.points) or not d.samples:
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    kinds = [s < threshold_deg for s in d.samples]
+    cuts = [i for i in range(len(kinds) - 1) if kinds[i] != kinds[i + 1]]
+    if not cuts:
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    pts = [tuple(p) for p in d.points]
+    n = len(pts)
+    cum = [0.0]
+    for p, q in zip(pts, pts[1:], strict=False):
+        cum.append(cum[-1] + math.dist(p, q))
+    total = cum[-1]
+    joints: list[tuple[tuple[float, ...], int, int, bool]] = []
+    for c, i in enumerate(cuts):
+        lo, hi = d.samples[i], d.samples[i + 1]
+        f = (threshold_deg - lo) / (hi - lo)
+        cross = cum[i] + f * (cum[i + 1] - cum[i])
+        near = i + 1 if cross - cum[i] >= cum[i + 1] - cross else i
+        if total > 0.0 and min(cross - cum[i], cum[i + 1] - cross) > 0.01 * total:
+            joints.append(
+                (
+                    tuple(a + f * (b - a) for a, b in zip(pts[i], pts[i + 1], strict=True)),
+                    i,
+                    i + 1,
+                    True,
+                )
+            )
+        elif (
+            (c == 0 and near == 0)
+            or (c + 1 == len(cuts) and near == n - 1)
+            or (joints and not joints[-1][3] and joints[-1][1] == near)
+        ):
+            joints.append(
+                (
+                    tuple(a + f * (b - a) for a, b in zip(pts[i], pts[i + 1], strict=True)),
+                    i,
+                    i + 1,
+                    True,
+                )
+            )
+        else:
+            joints.append((pts[near], near, near, False))
+    splits = [_Split(point, pair) for point, _, _, _ in joints]
+    segs = []
+    for k, ((point, lo, _, inserted), split) in enumerate(zip(joints, splits, strict=True)):
+        if k == 0:
+            first, lead = 0, None
+            start: int | _Split = d.start
+        else:
+            first = joints[k - 1][2]
+            lead = joints[k - 1][0] if joints[k - 1][3] else None
+        run = ([lead] if lead is not None else []) + list(pts[first : lo + 1])
+        if inserted:
+            run.append(point)
+        segs.append(_Seg(run, float(np.median(d.samples[first : lo + 1])), start, split))
+        start = split
+    _, _, last_first, _ = joints[-1]
+    tail = ([joints[-1][0]] if joints[-1][3] else []) + list(pts[last_first:])
+    segs.append(_Seg(tail, float(np.median(d.samples[last_first:])), splits[-1], d.end))
+    return segs
 
 
 def _walk(first, outgoing, used, roles):
@@ -99,33 +180,37 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     def kind_of(deg: float) -> str:
         return "tangent" if deg < tangent_threshold_deg else "transversal"
 
-    by_pair: dict[tuple[int, int], list[_Directed]] = defaultdict(list)
-    faces_at: dict[int, set[int]] = defaultdict(set)
-    ends_at: dict[int, list[str]] = defaultdict(list)
+    by_pair: dict[tuple[int, int], list[_Seg]] = defaultdict(list)
+    faces_at: dict = defaultdict(set)
+    ends_at: dict = defaultdict(list)
     for adj in mesh.adjacency:
-        d = _Directed(adj)
-        by_pair[(adj.face_a, adj.face_b)].append(d)
-        kind = kind_of(d.dihedral)
-        for v in (adj.start_vertex, adj.end_vertex):
-            faces_at[v].update((adj.face_a, adj.face_b))
-            ends_at[v].append(kind)
+        pair = (adj.face_a, adj.face_b)
+        for seg in _split_runs(_Directed(adj), tangent_threshold_deg, pair):
+            by_pair[pair].append(seg)
+            kind = kind_of(seg.dihedral)
+            for v in (seg.start, seg.end):
+                faces_at[v].update(pair)
+                ends_at[v].append(kind)
 
-    roles: dict[int, str] = {}
+    def position_of(v) -> tuple[float, ...]:
+        return v.point if isinstance(v, _Split) else tuple(mesh.vertices[v])
+
+    roles: dict = {}
     for v, faces in faces_at.items():
         if len(faces) >= 3:
             roles[v] = "junction"
         elif len(faces) == 2 and sorted(ends_at[v]) == ["tangent", "transversal"]:
             roles[v] = "kind_change"
 
-    order = sorted(roles, key=lambda v: tuple(mesh.vertices[v]))
+    order = sorted(roles, key=position_of)
     vertex_id = {v: i for i, v in enumerate(order)}
     vertices = [
         Vertex(
             vertex_id[v],
             roles[v],
-            tuple(mesh.vertices[v]),
+            position_of(v),
             sorted(faces_at[v]),
-            [tuple(mesh.vertices[v])],
+            [position_of(v)],
         )
         for v in order
     ]
@@ -133,7 +218,7 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     adjacencies = []
     for pair in sorted(by_pair):
         edges = by_pair[pair]
-        outgoing: dict[int, list[_Directed]] = defaultdict(list)
+        outgoing: dict = defaultdict(list)
         for e in edges:
             outgoing[e.start].append(e)
         used: set[int] = set()

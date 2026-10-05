@@ -181,3 +181,28 @@ def test_npz_and_stl_round_trip(tmp_path):
     assert stl.shape == mesh.tris.shape
     assert np.allclose(stl, mesh.tris, atol=1e-5)
     assert closed_manifold_problems(stl.astype(np.float64))[0] == []
+
+
+def test_tee_dihedral_profile_spans_threshold():
+    from build123d import Pos, Rotation
+
+    tee = Cylinder(5, 20) + (Pos(0, 0, 0) * Rotation(0, 90, 0) * Cylinder(5, 20))
+    mesh = tessellate(tee, 0.01, 0.2)
+    crossed = [
+        a
+        for a in mesh.adjacency
+        if len(a.dihedral_samples) == len(a.points)
+        and min(a.dihedral_samples) < math.radians(TANGENT_THRESHOLD_DEG) < max(a.dihedral_samples)
+    ]
+    assert crossed
+    for a in crossed:
+        assert math.degrees(a.dihedral_min) < TANGENT_THRESHOLD_DEG
+        assert math.degrees(a.dihedral_max) > TANGENT_THRESHOLD_DEG
+
+
+def test_box_dihedral_profile_has_no_crossing():
+    mesh = tessellate(Box(10, 20, 30), 0.1, 0.5)
+    assert len(mesh.adjacency) == 12
+    for a in mesh.adjacency:
+        assert len(a.dihedral_samples) == len(a.points)
+        assert all(math.degrees(s) >= TANGENT_THRESHOLD_DEG for s in a.dihedral_samples)
