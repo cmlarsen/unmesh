@@ -174,7 +174,7 @@ def _exact_votes(
 
 def _canonical_knn(tree: cKDTree, points: np.ndarray, k: int) -> np.ndarray:
     wide = min(2 * k, len(tree.data))
-    dist, idx = tree.query(points, k=wide)
+    dist, idx = tree.query(points, k=wide, workers=-1 if len(points) >= 4096 else 1)
     dist = np.asarray(dist, dtype=np.float32).reshape(len(points), wide)
     key = dist.view(np.int32).astype(np.int64) << 32
     key |= np.asarray(idx, dtype=np.int64).reshape(len(points), wide)
@@ -701,14 +701,17 @@ class _Projector:
 
         return self.search(P, accept)[0]
 
-    def rebase(self, V: np.ndarray, F: np.ndarray, S: np.ndarray) -> np.ndarray:
-        want = self.labels[S]
+    def rebase(self, V: np.ndarray, F: np.ndarray, S: np.ndarray, settled: np.ndarray):
+        todo = np.nonzero(~settled)[0]
+        want = self.labels[S[todo]]
 
         def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
             return self.labels[flat] == want[rows]
 
-        tri = self.search(V[F].mean(axis=1), accept)[1]
-        return np.where(self.labels[tri] == want, tri, S)
+        tri = self.search(V[F[todo]].mean(axis=1), accept)[1]
+        S = S.copy()
+        S[todo] = np.where(self.labels[tri] == want, tri, S[todo])
+        return S, np.ones(len(F), dtype=bool)
 
 
 _PROJECT_KNN = 16
@@ -739,13 +742,13 @@ def _features(
 
 
 def _split_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
     lengths = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
     long_mask = lengths > limit
     if not long_mask.any():
-        return V, F, L, 0
+        return V, F, L, settled, 0
     edges = np.unique(np.sort(E[long_mask], axis=1), axis=0)
     raw = (V[edges[:, 0]] + V[edges[:, 1]]) / 2.0
     mids = proj(raw, edges, proj.incidence(F, L), require_all=True)
@@ -825,7 +828,8 @@ def _split_pass(
         undo = np.unique(F2[bad])
         undo = undo[undo >= base]
         V[undo] = raw[undo - base]
-    return V, F2, np.concatenate(labels), len(edges)
+    settled = np.concatenate([settled[plain], np.zeros(len(F2) - len(plain), dtype=bool)])
+    return V, F2, np.concatenate(labels), settled, len(edges)
 
 
 def _stars(
@@ -844,11 +848,10 @@ def _first_independent(n: int, row: np.ndarray, res: np.ndarray, n_res: int, val
         low = np.full(n_res, n, dtype=np.int64)
         np.minimum.at(low, res, row)
         head = np.flatnonzero(np.r_[True, row[1:] != row[:-1]])
-        lowest = np.logical_and.reduceat(low[res] == row, head)
-        win = row[head[lowest]]
-        good = valid(win)
-        chosen[win[good]] = True
-        taken[res[np.isin(row, win[good])]] = True
+        win = row[head[np.logical_and.reduceat(low[res] == row, head)]]
+        good = win[valid(win)]
+        chosen[good] = True
+        taken[res[np.isin(row, good)]] = True
         done = np.zeros(n, dtype=bool)
         done[win] = True
         done[row[head[np.logical_or.reduceat(taken[res], head)]]] = True
@@ -922,8 +925,8 @@ class _CollapseCheck:
 
 
 def _collapse_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, limit: float, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     collapses = 0
     for _ in range(8):
         uniq, inverse, counts = _unique_edges(F)
@@ -969,17 +972,19 @@ def _collapse_pass(
         remap[ab[win, 0]] = len(V) + np.arange(len(win))
         remap[ab[win, 1]] = len(V) + np.arange(len(win))
         V = np.concatenate([V, check.targets[win]])
+        settled = settled & (remap[F] == F).all(axis=1)
         F = remap[F]
         alive = ~((F[:, 0] == F[:, 1]) | (F[:, 1] == F[:, 2]) | (F[:, 2] == F[:, 0]))
         F = F[alive]
         L = L[alive]
+        settled = settled[alive]
         collapses += len(win)
-    return V, F, L, collapses
+    return V, F, L, settled, collapses
 
 
 def _flip_pass(
-    V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector
-) -> tuple[np.ndarray, np.ndarray, int]:
+    V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector, settled
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     flips = 0
     for _ in range(3):
         uniq, inverse, counts = _unique_edges(F)
@@ -1057,7 +1062,10 @@ def _flip_pass(
         F = F.copy()
         F[r0[swap]] = row0[swap]
         F[r1[swap]] = row1[swap]
-    return V, F, flips
+        settled = settled.copy()
+        settled[r0[swap]] = False
+        settled[r1[swap]] = False
+    return V, F, settled, flips
 
 
 def _relax_pass(V: np.ndarray, F: np.ndarray, L: np.ndarray, proj: _Projector) -> np.ndarray:
@@ -1125,20 +1133,23 @@ def isotropic_remesh(mesh, severity, rng):
     V, F = _weld(src_tris)
     passes = remesh_passes(severity)
     splits = collapses = flips = 0
+    settled = np.zeros(len(F), dtype=bool)
     for _ in range(passes):
-        V, F, L, n = _split_pass(V, F, L, 4.0 / 3.0 * h, proj)
+        V, F, L, settled, n = _split_pass(V, F, L, 4.0 / 3.0 * h, proj, settled)
         splits += n
         V, F = _compact(V, F)
-        L = proj.rebase(V, F, L)
-        V, F, L, n = _collapse_pass(V, F, L, 4.0 / 5.0 * h, proj)
+        L, settled = proj.rebase(V, F, L, settled)
+        V, F, L, settled, n = _collapse_pass(V, F, L, 4.0 / 5.0 * h, proj, settled)
         collapses += n
         V, F = _compact(V, F)
-        L = proj.rebase(V, F, L)
-        V, F, n = _flip_pass(V, F, L, proj)
+        L, settled = proj.rebase(V, F, L, settled)
+        V, F, settled, n = _flip_pass(V, F, L, proj, settled)
         flips += n
-        L = proj.rebase(V, F, L)
-        V = _relax_pass(V, F, L, proj)
-        L = proj.rebase(V, F, L)
+        L, settled = proj.rebase(V, F, L, settled)
+        moved = _relax_pass(V, F, L, proj)
+        settled &= ~(moved != V).any(axis=1)[F].any(axis=1)
+        V = moved
+        L, settled = proj.rebase(V, F, L, settled)
     V, F, dropped = _drop_degenerate(V, F)
     mesh.tris = V[F].reshape(-1, 3, 3) + 0.0
     label = transfer_labels(
