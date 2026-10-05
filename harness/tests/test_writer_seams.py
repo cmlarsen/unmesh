@@ -71,9 +71,8 @@ def _check(family, seed, tmp_path):
     ir = force_facets(ir, region, tris)
     report = step.write(ir, tmp_path / f"{family}-{seed}.step", mesh=tris)
     assert report.valid and report.verified and report.readback.ok, report.issues
-    if len(ir.regions[region].triangles) > step.FACETED_SHARE * sum(
-        len(r.triangles) for r in ir.regions
-    ):
+    share = len(ir.regions[region].triangles) / sum(len(r.triangles) for r in ir.regions)
+    if step.FACETED_SHARE < share < 1.0:
         assert report.fallback == "faceted"
         assert "share above which the faceted solid is written" in report.fallback_reason
         return
