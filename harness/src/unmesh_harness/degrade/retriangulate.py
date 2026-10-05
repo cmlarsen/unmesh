@@ -59,46 +59,6 @@ def _area2(poly: list[tuple[float, float]]) -> float:
     return sum(a[0] * b[1] - b[0] * a[1] for a, b in pairs) / 2
 
 
-def _proper_hit(p, q, a, b) -> bool:
-    def side(x, y, z):
-        return (y[0] - x[0]) * (z[1] - x[1]) - (y[1] - x[1]) * (z[0] - x[0])
-
-    return (side(p, q, a) * side(p, q, b) < 0.0) and (side(a, b, p) * side(a, b, q) < 0.0)
-
-
-def _inside(pt, poly) -> bool:
-    c = False
-    for a, b in zip(poly, poly[1:] + poly[:1], strict=True):
-        if (a[1] > pt[1]) != (b[1] > pt[1]) and pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (
-            b[1] - a[1]
-        ) + a[0]:
-            c = not c
-    return c
-
-
-def _bridge(outer, holes) -> list | None:
-    outer = list(outer)
-    for h in holes:
-        segs = [(a, b) for a, b in zip(outer, outer[1:] + outer[:1], strict=True)]
-        segs += [(a, b) for loop in holes for a, b in zip(loop, loop[1:] + loop[:1], strict=True)]
-        best = None
-        for j, q in enumerate(h):
-            for i, p in enumerate(outer):
-                if any(_proper_hit(p, q, a, b) for a, b in segs if len({p, q, a, b}) > 2):
-                    continue
-                mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
-                if not _inside(mid, outer) or any(_inside(mid, o) for o in holes if o is not h):
-                    continue
-                d = math.dist(p, q)
-                if best is None or d < best[0]:
-                    best = (d, i, j)
-        if best is None:
-            return None
-        _, i, j = best
-        outer = outer[: i + 1] + h[j:] + h[: j + 1] + outer[i:]
-    return outer
-
-
 def _min_angle(a, b, c) -> float:
     ab, bc, ca = math.dist(a, b), math.dist(b, c), math.dist(c, a)
     if min(ab, bc, ca) <= 0.0:
@@ -111,26 +71,211 @@ def _min_angle(a, b, c) -> float:
     return min(math.acos(max(-1.0, min(1.0, x))) for x in cosines)
 
 
-def _canonical_key(poly, i: int, m: int):
+def _rings_inside(pts: np.ndarray, ring: np.ndarray) -> np.ndarray:
+    a, b = ring[None, :, :], np.roll(ring, -1, axis=0)[None, :, :]
+    x, y = pts[:, None, 0], pts[:, None, 1]
+    cross = (a[..., 1] > y) != (b[..., 1] > y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        at = (b[..., 0] - a[..., 0]) * (y - a[..., 1]) / (b[..., 1] - a[..., 1]) + a[..., 0]
+    return np.count_nonzero(cross & (x < at), axis=1) % 2 == 1
 
-    a, b, c = poly[(i - 1) % m], poly[i], poly[(i + 1) % m]
-    return (_min_angle(a, b, c), tuple(sorted((a, b, c))))
+
+def _sides(x0, x1, y0, y1, z0, z1):
+    return (y0 - x0) * (z1 - x1) - (y1 - x1) * (z0 - x0)
 
 
-def _on_diagonal(a, b, c, poly, eps) -> bool:
-    dx, dy = c[0] - a[0], c[1] - a[1]
-    denom = dx * dx + dy * dy
-    if denom <= 0.0:
-        return False
-    for q in poly:
-        if q == a or q == b or q == c:
-            continue
-        t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / denom
-        if 0.0 < t < 1.0:
+class _Segments:
+    BLOCK = 16
+
+    def __init__(self, seg_a: np.ndarray, seg_b: np.ndarray):
+        pad = -len(seg_a) % self.BLOCK
+        self.a = np.concatenate([seg_a, np.repeat(seg_a[-1:], pad, axis=0)])
+        self.b = np.concatenate([seg_b, np.repeat(seg_b[-1:], pad, axis=0)])
+        ends = np.concatenate([self.a, self.b], axis=1).reshape(-1, self.BLOCK * 2, 2)
+        self.lo, self.hi = ends.min(axis=1), ends.max(axis=1)
+
+    def crossed(self, p: np.ndarray, q: np.ndarray) -> np.ndarray:
+        lo, hi = np.minimum(p, q), np.maximum(p, q)
+        near = np.all(
+            (lo[:, None, :] <= self.hi[None, :, :]) & (hi[:, None, :] >= self.lo[None, :, :]),
+            axis=2,
+        )
+        pi, bi = np.nonzero(near)
+        idx = bi[:, None] * self.BLOCK + np.arange(self.BLOCK)[None, :]
+        a, b = self.a[idx], self.b[idx]
+        p0, p1 = p[pi, None, 0], p[pi, None, 1]
+        q0, q1 = q[pi, None, 0], q[pi, None, 1]
+        a0, a1, b0, b1 = a[..., 0], a[..., 1], b[..., 0], b[..., 1]
+        hit = (_sides(p0, p1, q0, q1, a0, a1) * _sides(p0, p1, q0, q1, b0, b1) < 0.0) & (
+            _sides(a0, a1, b0, b1, p0, p1) * _sides(a0, a1, b0, b1, q0, q1) < 0.0
+        )
+        out = np.zeros(len(p), dtype=bool)
+        out[pi[hit.any(axis=1)]] = True
+        return out
+
+
+def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, others) -> np.ndarray:
+    j, i = np.divmod(flat, n_outer)
+    p, q = outer_arr[i], hole_arr[j]
+    ok = ~segs.crossed(p, q)
+    keep = np.flatnonzero(ok)
+    mid = np.stack([(p[keep, 0] + q[keep, 0]) / 2, (p[keep, 1] + q[keep, 1]) / 2], axis=1).reshape(
+        -1, 2
+    )
+    good = _rings_inside(mid, outer_arr)
+    for o in others:
+        good &= ~_rings_inside(mid, o)
+    ok[keep] = good
+    return ok
+
+
+def _bridge(outer, holes) -> list | None:
+    outer = list(outer)
+    hole_arrs = [np.array(h, dtype=np.float64).reshape(-1, 2) for h in holes]
+    hole_edges = np.concatenate([np.stack([h, np.roll(h, -1, axis=0)], axis=1) for h in hole_arrs])
+    for k, h in enumerate(holes):
+        outer_arr = np.array(outer, dtype=np.float64)
+        edges = np.concatenate(
+            [np.stack([outer_arr, np.roll(outer_arr, -1, axis=0)], axis=1), hole_edges]
+        )
+        segs = _Segments(edges[:, 0], edges[:, 1])
+        others = [o for j, o in enumerate(hole_arrs) if j != k]
+        hole_arr = hole_arrs[k]
+        n_outer = len(outer)
+
+        approx = np.hypot(
+            hole_arr[:, None, 0] - outer_arr[None, :, 0],
+            hole_arr[:, None, 1] - outer_arr[None, :, 1],
+        ).ravel()
+        order = np.argsort(approx, kind="stable")
+        found = None
+        chunk, at = 16, 0
+        while at < len(order) and found is None:
+            flats = order[at : at + chunk]
+            good = np.flatnonzero(_pairs_ok(flats, n_outer, outer_arr, hole_arr, segs, others))
+            if len(good):
+                found = float(approx[flats[good[0]]])
+            at += chunk
+            chunk = min(chunk * 4, 1024)
+        if found is None:
+            return None
+        near = np.flatnonzero(approx <= found * (1.0 + 1e-9))
+        best = None
+        for flat in near[_pairs_ok(near, n_outer, outer_arr, hole_arr, segs, others)]:
+            j, i = divmod(int(flat), n_outer)
+            key = (math.dist(outer[i], h[j]), j, i)
+            if best is None or key < best:
+                best = key
+        _, j, i = best
+        outer = outer[: i + 1] + h[j:] + h[: j + 1] + outer[i:]
+    return outer
+
+
+class _EarState:
+    def __init__(self, poly, eps):
+        self.poly = poly
+        self.eps = eps
+        n = len(poly)
+        self.xy = np.array(poly, dtype=np.float64).reshape(-1, 2)
+        self.prev = np.roll(np.arange(n), 1)
+        self.next = np.roll(np.arange(n), -1)
+        self.alive = np.ones(n, dtype=bool)
+        self.convex = np.zeros(n, dtype=bool)
+        self.blocked = np.zeros(n, dtype=np.int64)
+        self.angle = np.full(n, np.nan)
+        self.ids_of: dict = {}
+        for i, p in enumerate(poly):
+            self.ids_of.setdefault(p, []).append(i)
+        self.size = n
+        for i in range(n):
+            self.refresh(i)
+
+    def first(self, p):
+        ids = self.ids_of.get(p)
+        return ids[0] if ids else None
+
+    def corners(self, i):
+        return self.poly[self.prev[i]], self.poly[i], self.poly[self.next[i]]
+
+    def refresh(self, i: int) -> None:
+        a, b, c = self.corners(i)
+        eps = self.eps
+        self.angle[i] = np.nan
+        self.convex[i] = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) > eps
+        if not self.convex[i]:
+            return
+        live = np.flatnonzero(self.alive)
+        self.blocked[i] = int(np.count_nonzero(self._blocks(a, b, c, self.xy[live])))
+
+    def _blocks(self, a, b, c, q):
+        eps = self.eps
+        q0, q1 = q[:, 0], q[:, 1]
+        same = (
+            ((q0 == a[0]) & (q1 == a[1]))
+            | ((q0 == b[0]) & (q1 == b[1]))
+            | ((q0 == c[0]) & (q1 == c[1]))
+        )
+        inside = (
+            ((b[0] - a[0]) * (q1 - a[1]) - (b[1] - a[1]) * (q0 - a[0]) > eps)
+            & ((c[0] - b[0]) * (q1 - b[1]) - (c[1] - b[1]) * (q0 - b[0]) > eps)
+            & ((a[0] - c[0]) * (q1 - c[1]) - (a[1] - c[1]) * (q0 - c[0]) > eps)
+        )
+        dx, dy = c[0] - a[0], c[1] - a[1]
+        denom = dx * dx + dy * dy
+        if denom > 0.0:
+            t = ((q0 - a[0]) * dx + (q1 - a[1]) * dy) / denom
             px, py = a[0] + t * dx, a[1] + t * dy
-            if (q[0] - px) ** 2 + (q[1] - py) ** 2 <= eps:
-                return True
-    return False
+            inside |= (0.0 < t) & (t < 1.0) & ((q0 - px) ** 2 + (q1 - py) ** 2 <= eps)
+        return inside & ~same
+
+    def blocked_by(self, q, ids):
+        xy = self.xy
+        a, b, c = xy[self.prev[ids]], xy[ids], xy[self.next[ids]]
+        a0, a1, b0, b1, c0, c1 = a[:, 0], a[:, 1], b[:, 0], b[:, 1], c[:, 0], c[:, 1]
+        eps = self.eps
+        same = (
+            ((q[0] == a0) & (q[1] == a1))
+            | ((q[0] == b0) & (q[1] == b1))
+            | ((q[0] == c0) & (q[1] == c1))
+        )
+        inside = (
+            ((b0 - a0) * (q[1] - a1) - (b1 - a1) * (q[0] - a0) > eps)
+            & ((c0 - b0) * (q[1] - b1) - (c1 - b1) * (q[0] - b0) > eps)
+            & ((a0 - c0) * (q[1] - c1) - (a1 - c1) * (q[0] - c0) > eps)
+        )
+        dx, dy = c0 - a0, c1 - a1
+        denom = dx * dx + dy * dy
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = ((q[0] - a0) * dx + (q[1] - a1) * dy) / denom
+        px, py = a0 + t * dx, a1 + t * dy
+        inside |= (
+            (denom > 0.0) & (0.0 < t) & (t < 1.0) & ((q[0] - px) ** 2 + (q[1] - py) ** 2 <= eps)
+        )
+        return inside & ~same
+
+    def candidates(self) -> np.ndarray:
+        return np.flatnonzero(self.alive & self.convex & (self.blocked == 0))
+
+    def min_angle(self, i: int) -> float:
+        if np.isnan(self.angle[i]):
+            self.angle[i] = _min_angle(*self.corners(i))
+        return float(self.angle[i])
+
+    def remove(self, i: int) -> None:
+        p, n = int(self.prev[i]), int(self.next[i])
+        self.alive[i] = False
+        self.ids_of[self.poly[i]].remove(i)
+        self.next[p], self.prev[n] = n, p
+        self.size -= 1
+        ids = np.flatnonzero(self.alive & self.convex)
+        ids = ids[(ids != p) & (ids != n)]
+        if len(ids):
+            self.blocked[ids] -= self.blocked_by(self.poly[i], ids)
+        self.refresh(p)
+        self.refresh(n)
+
+    def remaining(self) -> list:
+        return [self.poly[i] for i in np.flatnonzero(self.alive)]
 
 
 def _clip(poly, scheme: str, rng) -> list[tuple] | None:
@@ -152,39 +297,27 @@ def _clip(poly, scheme: str, rng) -> list[tuple] | None:
 
         convex = [p for k, p in enumerate(poly) if _cross_at(k, poly) > eps]
         focus = convex[int(rng.integers(len(convex)))] if convex else poly[0]
+    state = _EarState(poly, eps)
     tris = []
-    guard = len(poly) * len(poly) + 10
-    while len(poly) > 3 and guard > 0:
-        guard -= 1
-        m = len(poly)
-        cands = []
-        for i in range(m):
-            a, b, c = poly[(i - 1) % m], poly[i], poly[(i + 1) % m]
-            if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) <= eps:
-                continue
-            if _on_diagonal(a, b, c, poly, eps):
-                continue
-            if all(
-                min(
-                    (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]),
-                    (c[0] - b[0]) * (q[1] - b[1]) - (c[1] - b[1]) * (q[0] - b[0]),
-                    (a[0] - c[0]) * (q[1] - c[1]) - (a[1] - c[1]) * (q[0] - c[0]),
-                )
-                <= eps
-                for q in poly
-                if q != a and q != b and q != c
-            ):
-                cands.append(i)
-        if not cands:
+    while state.size > 3:
+        cands = state.candidates()
+        if not len(cands):
             return None
         if scheme == "fan":
-            ai = poly.index(focus) if focus in poly else None
-            pool = [i for i in cands if ai is None or i != ai] or cands
-            near = [i for i in pool if ai is None or i in ((ai - 1) % m, (ai + 1) % m)]
-            pick = min(near or pool)
+            ai = state.first(focus)
+            pool = cands[cands != ai] if ai is not None else cands
+            if not len(pool):
+                pool = cands
+            if ai is None:
+                pick = int(pool[0])
+            else:
+                near = pool[(pool == state.prev[ai]) | (pool == state.next[ai])]
+                pick = int(near[0] if len(near) else pool[0])
         elif scheme == "strip":
-            if focus is not None and focus[0] in poly and focus[1] in poly:
-                ai, ci = poly.index(focus[0]), poly.index(focus[1])
+            ai = ci = None
+            if focus is not None:
+                ai, ci = state.first(focus[0]), state.first(focus[1])
+            if ai is not None and ci is not None:
                 want, alt = (ci, ai) if side > 0 else (ai, ci)
                 if want != alt and want in cands:
                     pick = want
@@ -192,29 +325,28 @@ def _clip(poly, scheme: str, rng) -> list[tuple] | None:
                 elif alt in cands:
                     pick = alt
                 else:
-                    pick = min(cands)
+                    pick = int(cands[0])
                     focus = None
             else:
-                pick = cands[int(rng.integers(len(cands)))]
+                pick = int(cands[int(rng.integers(len(cands)))])
         else:
-            if scheme == "canonical":
-                pick = max(cands, key=lambda i: _canonical_key(poly, i, m))
+            for i in cands[np.isnan(state.angle[cands])]:
+                state.min_angle(int(i))
+            angles = state.angle[cands]
+            ties = cands[angles == angles.max()]
+            if scheme == "canonical" and len(ties) > 1:
+                pick = max((int(i) for i in ties), key=lambda i: tuple(sorted(state.corners(i))))
             else:
-                pick = max(
-                    cands,
-                    key=lambda i: (
-                        _min_angle(poly[(i - 1) % m], poly[i], poly[(i + 1) % m]),
-                        -i,
-                    ),
-                )
-        a, b, c = poly[(pick - 1) % m], poly[pick], poly[(pick + 1) % m]
+                pick = int(ties[0])
+        a, b, c = state.corners(pick)
         tris.append((a, b, c))
         if scheme == "strip":
             focus = (a, c)
-        del poly[pick]
-    if len(poly) != 3 or abs(_area2(poly)) <= eps:
+        state.remove(pick)
+    rest = state.remaining()
+    if len(rest) != 3 or abs(_area2(rest)) <= eps:
         return None
-    tris.append((poly[0], poly[1], poly[2]))
+    tris.append((rest[0], rest[1], rest[2]))
     return tris
 
 
