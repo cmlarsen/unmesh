@@ -20,7 +20,7 @@ Rules every operator follows:
 
 - `defect`-family operators intentionally break the mesh (open seams, holes, extra shells, duplicated or reversed triangles). Triangles copied from the mesh keep their source `face_id`; brand-new synthetic triangles (stray shells and fin triangles) get `face_id` -1 (unknown face), which the oracle excludes from every region. Operators that change the triangle count report no displacement.
 
-- `processing`-family operators (decimation, remeshing, smoothing) rebuild or move the triangulation the way mesh-processing pipelines do. Every output triangle takes the `face_id` of its nearest source face by triangle-centroid distance to each source face's analytic surface (centroid distance for non-analytic faces), with a per-triangle `metadata["label_confidence"]` in [0, 1] (`d2 / (d1 + d2)` for the nearest vs second-nearest source face; 1.0 on single-face meshes). Metrics that score per-triangle labels should mask triangles below 0.9 confidence. The face table, adjacency, vertices and shells stay the clean truth, except the smoothing operators move shared vertices so their edge polylines move with the mesh. Watertightness is per operator: smoothing, quadric decimation and isotropic remeshing preserve it, voxel remeshing does not.
+- `processing`-family operators (decimation, remeshing, smoothing, vertex clustering) rebuild or move the triangulation the way mesh-processing pipelines do. Topology-changing operators relabel every output triangle from the clean labeled source mesh: source triangles are densely sampled (barycentric lattice at bbox-diagonal / 400 plus the centroid), a cKDTree over the samples proposes candidate source triangles for the output triangle's centroid and 3 edge midpoints (midpoints pulled 10% toward the centroid, off exact shared edges), each probe votes its exactly containing triangle or else its nearest-sample majority, and the triangle takes the 4-probe majority with `label_confidence` the agreeing fraction. Coplanar faces sharing one surface keep their trimmed labels. Metrics that score per-triangle labels mask triangles below 0.9 confidence. The face table, adjacency, vertices and shells stay the clean truth, except the smoothing operators move shared vertices so their edge polylines move with the mesh. Smoothing keeps connectivity, so it keeps the original labels exactly at confidence 1.0 with the displacement capped to severity * 1% of the bbox diagonal. Quadric decimation targets keep ratio 1 - 0.9 * severity with a 4-triangle floor. Watertightness is per operator: smoothing and isotropic remeshing preserve it, quadric decimation and vertex clustering do not.
 
 ## Defect disposition
 
@@ -63,11 +63,11 @@ Whether the converter is expected to REPAIR a defect (same analytic IR as the cl
 | `truncated_digits` | precision | identity | coordinates written with 3 significant digits (9 digits at severity 0+, 6 at 0.5) |
 | `inch_round_trip` | precision | identity | mm converted to inches, written with 3 decimals (25 um grid), converted back (7 decimals at severity 0+, 5 at 0.5) |
 | `far_translation` | precision | identity | part translated up to 1e6 mm (1 km) along a random direction, rounded to float32 there (ulp 62 um), translated back exactly |
-| `quadric_decimation` | processing | identity | keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), quadric-error ordered edge collapses to the edge midpoint with link-condition and fold guards, best effort without removing any face's last triangle |
-| `isotropic_remesh` | processing | identity | uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, /25 at severity 1); 1 + round(2*severity) passes splitting edges longer than 4/3 of target conformingly at midpoints and collapsing edges shorter than 4/5 of target to midpoints under manifold guards |
-| `laplacian_smoothing` | processing | identity | round(20 * severity) umbrella passes (lambda 0.5) moving each distinct vertex toward its neighbour mean (20 at severity 1); displacement scales with the local chord length, so coarse meshes move more; connectivity unchanged, shared vertices move once so the mesh stays watertight |
-| `taubin_smoothing` | processing | identity | max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53, 10 pairs at severity 1) shrinking less than Laplacian; displacement scales with the local chord length; connectivity unchanged, shared vertices move once so the mesh stays watertight |
-| `voxel_remesh` | processing | identity | vertex clustering on voxels of diagonal * 0.005 * 10**severity (diagonal/200 at severity 0+, /20 at severity 1): corners in the same voxel merge at their mean, degenerate and duplicate triangles drop; clustering can join thin walls, so watertightness is not guaranteed |
+| `quadric_decimation` | processing | identity | keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), fast quadric-error decimation to the error-optimal position (fast-simplification, MIT) with a 4-triangle floor; no face-preservation guard, faces lost to the target show up as low-confidence or missing labels, and collapsing can crack the mesh, so watertightness is not guaranteed |
+| `isotropic_remesh` | processing | identity | uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, /25 at severity 1); split edges longer than 4/3 of target, collapse shorter than 4/5, flip toward valence 6, tangential relax and reproject to the source |
+| `laplacian_smoothing` | processing | identity | max(1, round(20 * severity)) umbrella passes (lambda 0.5) capped to a max displacement of severity * 1% of the bounding-box diagonal (1% at severity 1); connectivity unchanged, labels kept exactly, shared vertices move once so the mesh stays watertight |
+| `taubin_smoothing` | processing | identity | max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53) capped to a max displacement of severity * 1% of the bounding-box diagonal; connectivity unchanged, labels kept exactly, shared vertices move once so the mesh stays watertight |
+| `vertex_clustering` | processing | identity | vertex clustering on cells of min(median edge * (1.0 + 1.5 * severity), diagonal / 8) (about one median edge at severity 0+, capped so minimal meshes survive): corners in the same cell merge at their mean, degenerate and duplicate triangles drop; clustering can join thin walls, so watertightness is not guaranteed |
 
 Noise amplitude A is `severity * 50 um` and is a hard bound: isotropic noise draws uniformly from a ball of radius A, the others a scalar uniformly from [-A, A] along their direction. Every noise history entry records `amplitude_mm`, `distribution` and the realised `max_displacement_mm`. `truncated_digits` uses `round(9 - 6 * severity)` significant digits; `inch_round_trip` uses `round(7 - 4 * severity)` inch decimals. Both can collapse short edges at high severity and so document that they do not guarantee watertightness there.
 
@@ -87,7 +87,7 @@ Quantitative comparison of each preset's mesh statistics against real exports fr
 
 ## Displacement sheet
 
-Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation and processing families, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. Meshes without a planar face skip `noise_off_plane` with history params `{"skipped": "no planar faces"}`.
+Seed 20260101. Displacement is measured in the original frame, per triangle corner, against the undegraded mesh (against the refined mesh for chains that start with `refine`; `-` for the tessellation family and the topology-changing processing operators, whose triangle counts or corner correspondences change - see Tessellation statistics below). `closed` is a closed manifold after an exact weld; `IR valid` is the oracle IR built from the degraded mesh passing `validate`. Binary operators are sampled at 0 and 1 only. `refine -> noise_off_plane` fixes refine at severity 0.3 (diagonal / 20) and sweeps the noise severity. Meshes without a planar face skip `noise_off_plane` with history params `{"skipped": "no planar faces"}`.
 
 | parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
 |---|---|---|---|---|---|---|---|
@@ -162,20 +162,20 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | smoke (46) | `far_translation` | 0.5 | 12.867 | 22.141 | 1.0 | yes | yes |
 | smoke (46) | `far_translation` | 1.0 | 26.049 | 43.983 | 1.0 | yes | yes |
 | smoke (46) | `quadric_decimation` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `quadric_decimation` | 0.5 | - | - | 0.5 | yes | no |
-| smoke (46) | `quadric_decimation` | 1.0 | - | - | 0.3 | yes | no |
+| smoke (46) | `quadric_decimation` | 0.5 | - | - | 0.5 | no | no |
+| smoke (46) | `quadric_decimation` | 1.0 | - | - | 0.1 | no | no |
 | smoke (46) | `isotropic_remesh` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `isotropic_remesh` | 0.5 | - | - | 8.0 | yes | no |
-| smoke (46) | `isotropic_remesh` | 1.0 | - | - | 14.5 | yes | no |
-| smoke (46) | `laplacian_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `laplacian_smoothing` | 0.5 | - | - | 1.0 | yes | no |
-| smoke (46) | `laplacian_smoothing` | 1.0 | - | - | 1.0 | yes | no |
-| smoke (46) | `taubin_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `taubin_smoothing` | 0.5 | - | - | 1.0 | yes | no |
-| smoke (46) | `taubin_smoothing` | 1.0 | - | - | 1.0 | yes | no |
-| smoke (46) | `voxel_remesh` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `voxel_remesh` | 0.5 | - | - | 0.9 | no | no |
-| smoke (46) | `voxel_remesh` | 1.0 | - | - | 0.7 | no | no |
+| smoke (46) | `isotropic_remesh` | 0.5 | - | - | 7.9 | yes | no |
+| smoke (46) | `isotropic_remesh` | 1.0 | - | - | 14.2 | yes | no |
+| smoke (46) | `laplacian_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `laplacian_smoothing` | 0.5 | 184.668 | 826.676 | 1.0 | yes | yes |
+| smoke (46) | `laplacian_smoothing` | 1.0 | 418.353 | 1653.351 | 1.0 | yes | yes |
+| smoke (46) | `taubin_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (46) | `taubin_smoothing` | 0.5 | 157.375 | 826.676 | 1.0 | yes | yes |
+| smoke (46) | `taubin_smoothing` | 1.0 | 318.738 | 1653.351 | 1.0 | yes | yes |
+| smoke (46) | `vertex_clustering` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (46) | `vertex_clustering` | 0.5 | - | - | 0.4 | no | no |
+| smoke (46) | `vertex_clustering` | 1.0 | - | - | 0.4 | no | no |
 | filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `refine` | 0.5 | - | - | 20.7 | yes | yes |
 | filleted box | `refine` | 1.0 | - | - | 224.8 | yes | yes |
@@ -247,20 +247,20 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `far_translation` | 0.5 | 14.641 | 21.493 | 1.0 | yes | yes |
 | filleted box | `far_translation` | 1.0 | 27.426 | 42.182 | 1.0 | yes | yes |
 | filleted box | `quadric_decimation` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `quadric_decimation` | 0.5 | - | - | 0.5 | yes | yes |
-| filleted box | `quadric_decimation` | 1.0 | - | - | 0.1 | yes | yes |
+| filleted box | `quadric_decimation` | 0.5 | - | - | 0.5 | no | no |
+| filleted box | `quadric_decimation` | 1.0 | - | - | 0.1 | no | no |
 | filleted box | `isotropic_remesh` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `isotropic_remesh` | 0.5 | - | - | 0.9 | yes | yes |
-| filleted box | `isotropic_remesh` | 1.0 | - | - | 1.6 | yes | yes |
-| filleted box | `laplacian_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `laplacian_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
-| filleted box | `laplacian_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
-| filleted box | `voxel_remesh` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `voxel_remesh` | 0.5 | - | - | 0.6 | no | yes |
-| filleted box | `voxel_remesh` | 1.0 | - | - | 0.1 | no | yes |
+| filleted box | `isotropic_remesh` | 1.0 | - | - | 1.3 | yes | yes |
+| filleted box | `laplacian_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `laplacian_smoothing` | 0.5 | 70.300 | 173.205 | 1.0 | yes | yes |
+| filleted box | `laplacian_smoothing` | 1.0 | 160.267 | 346.410 | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 0.5 | 62.203 | 173.205 | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 1.0 | 123.478 | 346.410 | 1.0 | yes | yes |
+| filleted box | `vertex_clustering` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `vertex_clustering` | 0.5 | - | - | 0.2 | yes | yes |
+| filleted box | `vertex_clustering` | 1.0 | - | - | 0.2 | yes | yes |
 
 ## Tessellation statistics
 
@@ -310,40 +310,50 @@ Seed 20260101. Chord length is over unique mesh edges; aspect ratio is Lmax^2 / 
 
 ## Processing statistics
 
-Seed 20260101. Per-operator stats over the same meshes as above. `conf<0.9` is the fraction of output triangles whose `label_confidence` is below 0.9; metrics that score per-triangle labels should mask those triangles. `closed` and `IR valid` are as in the displacement sheet.
+Seed 20260101. Per-operator stats over the same meshes as above, plus one aggregate row per operator over the full smoke set. `conf<0.9` is the fraction of output triangles whose `label_confidence` is below 0.9; metrics that score per-triangle labels mask those triangles. `faces lost` counts clean faces with no output triangle at confidence 0.9 or above. `closed` and `IR valid` are as in the displacement sheet.
 
-| mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 |
-|---|---|---|---|---|---|---|---|
-| cylinder | `-` | - | 164 | yes | yes | 1.000 | 0.000 |
-| cylinder | `quadric_decimation` | 0.5 | 90 | yes | yes | 0.996 | 0.000 |
-| cylinder | `quadric_decimation` | 1.0 | 16 | yes | yes | 0.869 | 0.688 |
-| cylinder | `isotropic_remesh` | 0.5 | 676 | yes | yes | 0.994 | 0.000 |
-| cylinder | `isotropic_remesh` | 1.0 | 908 | yes | yes | 0.984 | 0.033 |
-| cylinder | `laplacian_smoothing` | 0.5 | 164 | yes | no | 0.855 | 0.646 |
-| cylinder | `laplacian_smoothing` | 1.0 | 164 | yes | no | 0.824 | 0.835 |
-| cylinder | `taubin_smoothing` | 0.5 | 164 | yes | yes | 0.895 | 0.293 |
-| cylinder | `taubin_smoothing` | 1.0 | 164 | yes | no | 0.905 | 0.299 |
-| cylinder | `voxel_remesh` | 0.5 | 164 | yes | yes | 0.999 | 0.000 |
-| cylinder | `voxel_remesh` | 1.0 | 100 | yes | yes | 0.997 | 0.000 |
-| ngon | `-` | - | 104 | yes | yes | 1.000 | 0.000 |
-| ngon | `quadric_decimation` | 0.5 | 56 | yes | yes | 0.824 | 0.536 |
-| ngon | `quadric_decimation` | 1.0 | 40 | yes | no | 0.704 | 0.675 |
-| ngon | `isotropic_remesh` | 0.5 | 986 | yes | yes | 0.935 | 0.232 |
-| ngon | `isotropic_remesh` | 1.0 | 1596 | yes | yes | 0.919 | 0.321 |
-| ngon | `laplacian_smoothing` | 0.5 | 104 | yes | no | 0.507 | 1.000 |
-| ngon | `laplacian_smoothing` | 1.0 | 104 | yes | no | 0.503 | 1.000 |
-| ngon | `taubin_smoothing` | 0.5 | 104 | yes | no | 0.633 | 0.933 |
-| ngon | `taubin_smoothing` | 1.0 | 104 | yes | yes | 0.622 | 0.933 |
-| ngon | `voxel_remesh` | 0.5 | 104 | yes | yes | 1.000 | 0.000 |
-| ngon | `voxel_remesh` | 1.0 | 104 | yes | yes | 1.000 | 0.000 |
-| fillet | `-` | - | 40 | yes | yes | 1.000 | 0.000 |
-| fillet | `quadric_decimation` | 0.5 | 22 | yes | no | 0.810 | 0.727 |
-| fillet | `quadric_decimation` | 1.0 | 10 | yes | no | 0.726 | 0.800 |
-| fillet | `isotropic_remesh` | 0.5 | 230 | yes | yes | 0.959 | 0.152 |
-| fillet | `isotropic_remesh` | 1.0 | 412 | yes | yes | 0.932 | 0.221 |
-| fillet | `laplacian_smoothing` | 0.5 | 40 | yes | no | 0.512 | 1.000 |
-| fillet | `laplacian_smoothing` | 1.0 | 40 | yes | no | 0.503 | 1.000 |
-| fillet | `taubin_smoothing` | 0.5 | 40 | yes | no | 0.647 | 1.000 |
-| fillet | `taubin_smoothing` | 1.0 | 40 | yes | no | 0.657 | 0.925 |
-| fillet | `voxel_remesh` | 0.5 | 16 | yes | yes | 0.953 | 0.125 |
-| fillet | `voxel_remesh` | 1.0 | 12 | yes | no | 0.981 | 0.000 |
+| mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 | faces lost |
+|---|---|---|---|---|---|---|---|---|
+| cylinder | `-` | - | 164 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `quadric_decimation` | 0.5 | 90 | no | yes | 1.000 | 0.000 | 0 |
+| cylinder | `quadric_decimation` | 1.0 | 16 | no | no | 1.000 | 0.000 | 2 |
+| cylinder | `isotropic_remesh` | 0.5 | 826 | yes | yes | 0.970 | 0.087 | 0 |
+| cylinder | `isotropic_remesh` | 1.0 | 940 | yes | yes | 0.983 | 0.048 | 0 |
+| cylinder | `laplacian_smoothing` | 0.5 | 164 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `laplacian_smoothing` | 1.0 | 164 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `taubin_smoothing` | 0.5 | 164 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `taubin_smoothing` | 1.0 | 164 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `vertex_clustering` | 0.5 | 44 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `vertex_clustering` | 1.0 | 44 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `-` | - | 104 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `quadric_decimation` | 0.5 | 57 | no | no | 1.000 | 0.000 | 11 |
+| ngon | `quadric_decimation` | 1.0 | 10 | no | no | 1.000 | 0.000 | 19 |
+| ngon | `isotropic_remesh` | 0.5 | 1170 | yes | yes | 0.942 | 0.197 | 0 |
+| ngon | `isotropic_remesh` | 1.0 | 1388 | yes | yes | 0.936 | 0.207 | 0 |
+| ngon | `laplacian_smoothing` | 0.5 | 104 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `laplacian_smoothing` | 1.0 | 104 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `taubin_smoothing` | 0.5 | 104 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `taubin_smoothing` | 1.0 | 104 | yes | yes | 1.000 | 0.000 | 0 |
+| ngon | `vertex_clustering` | 0.5 | 76 | yes | no | 0.934 | 0.184 | 9 |
+| ngon | `vertex_clustering` | 1.0 | 76 | yes | no | 0.934 | 0.184 | 9 |
+| fillet | `-` | - | 40 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `quadric_decimation` | 0.5 | 22 | no | no | 1.000 | 0.000 | 3 |
+| fillet | `quadric_decimation` | 1.0 | 4 | no | no | 1.000 | 0.000 | 6 |
+| fillet | `isotropic_remesh` | 0.5 | 230 | yes | yes | 0.926 | 0.209 | 0 |
+| fillet | `isotropic_remesh` | 1.0 | 618 | yes | no | 0.958 | 0.121 | 1 |
+| fillet | `laplacian_smoothing` | 0.5 | 40 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `laplacian_smoothing` | 1.0 | 40 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `taubin_smoothing` | 0.5 | 40 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `taubin_smoothing` | 1.0 | 40 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `vertex_clustering` | 0.5 | 4 | no | no | 0.375 | 1.000 | 7 |
+| fillet | `vertex_clustering` | 1.0 | 4 | no | no | 0.375 | 1.000 | 7 |
+| smoke (46) | `quadric_decimation` | 0.5 | 7904 | no | no | 1.000 | 0.000 | 156 |
+| smoke (46) | `quadric_decimation` | 1.0 | 1614 | no | no | 1.000 | 0.000 | 401 |
+| smoke (46) | `isotropic_remesh` | 0.5 | 32980 | yes | no | 0.949 | 0.164 | 40 |
+| smoke (46) | `isotropic_remesh` | 1.0 | 38908 | yes | no | 0.950 | 0.156 | 84 |
+| smoke (46) | `laplacian_smoothing` | 0.5 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (46) | `laplacian_smoothing` | 1.0 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (46) | `taubin_smoothing` | 0.5 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (46) | `taubin_smoothing` | 1.0 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (46) | `vertex_clustering` | 0.5 | 3906 | no | no | 0.919 | 0.264 | 361 |
+| smoke (46) | `vertex_clustering` | 1.0 | 2460 | no | no | 0.884 | 0.365 | 387 |
