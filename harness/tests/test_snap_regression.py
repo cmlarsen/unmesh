@@ -5,11 +5,13 @@ import pytest
 from build123d import Box, Cylinder, Keep, Plane, Pos, split
 
 import unmesh
+from unmesh_harness import degrade
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import tessellate
 from unmesh_harness.metrics.recovery import score_recovery
 
 LIN, ANG = 0.01, 0.2
+REFINE_SEED = 0
 
 
 @pytest.mark.parametrize("part_id", ["circular_fillet-0000", "round_slot_through-0000"])
@@ -55,3 +57,26 @@ def test_deliberate_tilt_on_curved_part_stays_unsnapped(width, tilt_deg):
     assert measured is not None, "tilted top face missing from the IR"
     assert measured > 0.5, f"tilt {tilt_deg} deg was snapped to the axis"
     assert measured == pytest.approx(tilt_deg, abs=0.3), measured
+
+
+def test_clean_curved_part_recovers_planes_after_refine():
+    mesh = tessellate(generate("circular_fillet", 0).solid, LIN, ANG)
+    refined = degrade.apply("refine", mesh, 1.0, REFINE_SEED)
+    ir, report = unmesh.convert(refined.tris)
+    result = score_recovery(refined, refined.face_id, ir)
+    lost = [
+        d["face"] for d in result["faces_detail"] if d["type"] == "plane" and not d["recovered"]
+    ]
+    assert lost == [], ("circular_fillet-0000", lost)
+    assert report.max_deviation <= 0.02, report.max_deviation
+
+
+@pytest.mark.parametrize("width,tilt_deg", [(1.0, 0.8), (1.0, 1.5), (1.0, 2.5), (3.0, 0.8)])
+def test_deliberate_tilt_on_curved_part_stays_unsnapped_after_refine(width, tilt_deg):
+    mesh = tessellate(tilted_boss(width, tilt_deg), LIN, ANG)
+    refined = degrade.apply("refine", mesh, 1.0, REFINE_SEED)
+    ir, _ = unmesh.convert(refined.tris)
+    measured = top_tilt_deg(ir, np.asarray(refined.tris), width)
+    assert measured is not None, "tilted top face missing from the IR"
+    assert measured > 0.5, f"tilt {tilt_deg} deg was snapped to the axis"
+    assert measured == pytest.approx(tilt_deg, abs=0.05), measured

@@ -358,7 +358,7 @@ mod tests {
                 verts.push((v.len() as u32 - 1, 1.0));
             }
             regions.push(Region {
-                faces: vec![0],
+                faces: (0..nv as u32).collect(),
                 surface: Surface::Plane {
                     normal: [0.0, 0.0, 1.0],
                     offset: 0.0,
@@ -395,6 +395,13 @@ mod tests {
     fn pool_falls_back_to_all_when_quiet_set_is_small() {
         let est = pool_case(&[1e-9, 1.0], &[1.0, 3.0]);
         assert!(est.sigma > 0.1, "sigma={}", est.sigma);
+    }
+
+    #[test]
+    fn pool_uses_near_exact_pool_despite_large_curved_area() {
+        let est = pool_case_nv(&[1e-9, 1.0, 1.2], &[1.0, 10.0, 10.0], &[60, 60, 60], 1e-3);
+        assert!(est.sigma < 1e-6, "sigma={}", est.sigma);
+        assert_eq!(est.sigma, est.snap_sigma);
     }
 
     #[test]
