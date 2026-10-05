@@ -172,8 +172,8 @@ fn finish(
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
-            sigma = est;
-            tol = tol.min((NOISE_FACTOR * sigma).max(fl));
+            tol = tol.min((NOISE_FACTOR * est).max(fl));
+            sigma = est.min(tol / NOISE_FACTOR);
         }
     }
     let (label2, mut regions) = fit_once(tol);
