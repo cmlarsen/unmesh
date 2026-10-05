@@ -59,26 +59,36 @@ def _edge_owner(loops: list[list[int]]) -> dict[tuple[int, int], int]:
 def _absorb_degenerate(
     vertices: np.ndarray, loops: list[list[int]], degenerate: np.ndarray
 ) -> None:
-    for i in np.flatnonzero(degenerate):
-        a, b, c = loops[i]
-        p = vertices[[a, b, c]]
-        d = p - p[0]
-        axis = d[np.argmax(np.linalg.norm(d, axis=1))]
-        t = p @ axis
-        lo, hi = int(np.argmin(t)), int(np.argmax(t))
-        mid = 3 - lo - hi
-        tri = [a, b, c]
-        u, v, m = tri[lo], tri[hi], tri[mid]
-        if tri[(tri.index(u) + 1) % 3] != v:
-            u, v = v, u
-        owner = _edge_owner(loops)
-        j = owner.get((v, u))
-        if j is None or j == i or degenerate[j]:
-            raise BuildError("a zero-area triangle has no neighbour to absorb it")
-        loop = loops[j]
-        k = loop.index(v)
-        loop.insert(k + 1, m)
-        loops[i] = []
+    owner = _edge_owner(loops)
+    pending = [int(i) for i in np.flatnonzero(degenerate)]
+    while pending:
+        deferred = []
+        for i in pending:
+            tri = loops[i]
+            p = vertices[tri]
+            d = p - p[0]
+            t = p @ d[np.argmax(np.linalg.norm(d, axis=1))]
+            lo, hi = int(np.argmin(t)), int(np.argmax(t))
+            u, v, m = tri[lo], tri[hi], tri[3 - lo - hi]
+            if tri[(lo + 1) % 3] != v:
+                u, v = v, u
+            j = owner.get((v, u))
+            if j is None or j == i:
+                raise BuildError("a zero-area triangle has no neighbour to absorb it")
+            if degenerate[j]:
+                deferred.append(i)
+                continue
+            for a, b in zip(tri, tri[1:] + tri[:1], strict=True):
+                del owner[(a, b)]
+            loop = loops[j]
+            loop.insert(loop.index(v) + 1, m)
+            del owner[(v, u)]
+            owner[(v, m)] = owner[(m, u)] = j
+            loops[i] = []
+            degenerate[i] = False
+        if len(deferred) == len(pending):
+            raise BuildError("zero-area triangles have no neighbour to absorb them")
+        pending = deferred
 
 
 def _hull_faces(vertices: np.ndarray, tris: np.ndarray, outward: np.ndarray, ok: np.ndarray):

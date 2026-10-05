@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -74,6 +75,8 @@ class WriteReport:
     max_boundary_deviation: float = 0.0
     open_shells: list[int] = field(default_factory=list)
     readback: ReadBack | None = None
+    verified: bool = False
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -188,51 +191,6 @@ def _signed_volume(t: np.ndarray) -> float:
     return float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
 
 
-def _inside(tris: np.ndarray, point: np.ndarray) -> bool:
-    direction = np.array([1.0, 0.372185571, 0.591327399])
-    a = tris[:, 0]
-    e1 = tris[:, 1] - a
-    e2 = tris[:, 2] - a
-    pvec = np.cross(direction, e2)
-    det = np.einsum("ij,ij->i", e1, pvec)
-    valid = np.abs(det) > 1e-18
-    inv = np.where(valid, 1.0 / np.where(valid, det, 1.0), 0.0)
-    tvec = point - a
-    u = np.einsum("ij,ij->i", tvec, pvec) * inv
-    qvec = np.cross(tvec, e1)
-    v = np.einsum("ij,j->i", qvec, direction) * inv
-    dist = np.einsum("ij,ij->i", e2, qvec) * inv
-    hits = (
-        valid
-        & (u >= -1e-9)
-        & (u <= 1.0 + 1e-9)
-        & (v >= -1e-9)
-        & (u + v <= 1.0 + 1e-9)
-        & (dist > 1e-9)
-    )
-    return bool(np.count_nonzero(hits) % 2 == 1)
-
-
-def _nesting(closed: dict[int, np.ndarray]) -> dict[int, bool]:
-    ids = list(closed)
-    parent: dict[int, int | None] = {}
-    for i in ids:
-        probe = closed[i][0][0]
-        vols = {
-            j: abs(_signed_volume(closed[j])) for j in ids if j != i and _inside(closed[j], probe)
-        }
-        parent[i] = min(vols, key=vols.__getitem__, default=None)
-    expect = {}
-    for i in ids:
-        depth = 0
-        p = parent[i]
-        while p is not None:
-            depth += 1
-            p = parent[p]
-        expect[i] = depth % 2 == 0
-    return expect
-
-
 def _orient_closed(
     vertices: np.ndarray, raw: dict[int, np.ndarray], expect: dict[int, bool]
 ) -> dict[int, np.ndarray]:
@@ -281,7 +239,7 @@ def _faceted(ir: Ir, tris: np.ndarray, topology, faceted):
                 continue
             if any(not ir.shells[idx].closed for idx in raw):
                 raise topology.BuildError("a cavity shell is open")
-            expect = _nesting({idx: vertices[f] for idx, f in raw.items()})
+            expect = {idx: ir.shells[idx].role == "outer" for idx in raw}
             oriented = _orient_closed(vertices, raw, expect)
             g.shape = faceted.Body(
                 faceted.shell_faces(vertices, oriented[outer], outer=True),
@@ -360,12 +318,18 @@ def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float
 
 
 def _volume_tolerance(g: _Group) -> float:
-    return READBACK_RELATIVE * abs(g.expected) + g.area * (g.tolerance + g.moved)
+    return READBACK_RELATIVE * abs(g.expected) + g.area * g.tolerance
 
 
 def write(
-    ir: Ir, path: str | os.PathLike, options: WriteOptions | None = None, *, mesh=None
+    ir: Ir,
+    path: str | os.PathLike,
+    options: WriteOptions | None = None,
+    *,
+    mesh=None,
+    verify: bool = True,
 ) -> WriteReport:
+    started = time.perf_counter()
     ir.validate()
     options = options or WriteOptions()
     try:
@@ -391,6 +355,7 @@ def write(
     written = groups if complete else []
     issues = []
     readback = None
+    timings: dict[str, float] = {}
     if written:
         if fallback == "faceted":
             faceted.write(
@@ -401,18 +366,24 @@ def write(
             )
         else:
             occ.write_step(occ.compound_of([g.shape for g in written]), path)
-        readback = _verify(path, written, occ, fallback == "faceted", options.max_shape_tolerance)
-        if not readback.ok:
-            mismatch = "; ".join(readback.issues)
-            issues.append(f"read-back of the written file does not match: {mismatch}")
+        timings["write_s"] = time.perf_counter() - started
+        if verify:
+            mark = time.perf_counter()
+            readback = _verify(
+                path, written, occ, fallback == "faceted", options.max_shape_tolerance
+            )
+            timings["readback_s"] = time.perf_counter() - mark
+            if not readback.ok:
+                mismatch = "; ".join(readback.issues)
+                issues.append(f"read-back of the written file does not match: {mismatch}")
     else:
         issues.append("nothing was written")
     faces = [f for g in written for f in g.faces] if fallback is None else []
     if fallback is None and not complete and reason is not None:
         issues.append(reason)
     return WriteReport(
-        valid=complete and len(written) == n_outer and readback is not None and readback.ok,
-        solids=readback.solids if readback is not None else 0,
+        valid=complete and len(written) == n_outer and (readback is None or readback.ok),
+        solids=readback.solids if readback is not None else _solid_count(written, occ, fallback),
         max_shape_tolerance=max((g.tolerance for g in written), default=0.0),
         faces=faces,
         fallback=fallback,
@@ -429,4 +400,12 @@ def write(
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
         open_shells=[g.outer for g in written if g.kind == "shell"],
         readback=readback,
+        verified=readback is not None,
+        timings=timings,
     )
+
+
+def _solid_count(written: list[_Group], occ, fallback) -> int:
+    if fallback == "faceted":
+        return sum(1 for g in written if g.kind == "solid")
+    return sum(occ.count_solids(g.shape) for g in written)

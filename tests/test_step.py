@@ -578,28 +578,23 @@ def test_fold_faces_first_still_read_back_with_the_mesh_sign(tmp_path):
     )
 
 
-def test_readback_catches_a_file_the_reader_inverts(tmp_path, monkeypatch):
-    from unmesh._writer import faceted
+def test_readback_catches_an_inverted_reimport(tmp_path, monkeypatch):
+    real = occ.read_back
 
-    real = faceted.write
+    def inverted(path):
+        solids, shells = real(path)
+        for solid in solids:
+            solid.volume = -solid.volume
+        return solids, shells
 
-    def probes_last(path, vertices, bodies, open_shells, **kw):
-        moved = []
-        for b in bodies:
-            faces, k = b.outer.faces, b.outer.probes
-            moved.append(faceted.Body(faceted.ShellFaces(faces[k:] + faces[:k]), b.voids))
-        real(path, vertices, moved, open_shells, **kw)
-
-    monkeypatch.setattr(faceted, "write", probes_last)
-    tris = rough_cone()
-    folds = fold_faces(tris)
-    tris = tris[folds + [k for k in range(len(tris)) if k not in set(folds)]]
-    ir, _ = unmesh.convert(tris)
-    report = step.write(ir, tmp_path / "inv.step", mesh=tris)
+    monkeypatch.setattr(occ, "read_back", inverted)
+    ir, bad = shifted_box()
+    report = step.write(bad, tmp_path / "inv.step", mesh=mesh_from_ir(ir))
     assert report.fallback == "faceted"
-    assert not report.valid
-    assert report.readback.volume == pytest.approx(-signed_volume(tris), rel=1e-9)
+    assert not report.valid and report.verified
+    assert report.readback.volume == pytest.approx(-1000.0, rel=1e-9)
     assert any("volume" in i for i in report.readback.issues)
+    assert not report.shells[0].valid
 
 
 def step_entities(path):
@@ -682,3 +677,148 @@ def test_zero_area_triangle_is_absorbed_into_its_neighbour(tmp_path):
     shape, types = reimported_faces(path)
     assert occ.volume_of(shape) == pytest.approx(1.0, rel=1e-9)
     assert len(types) == 6
+
+
+def step_topology_errors(path):
+    import re
+
+    ents = step_entities(path)
+
+    def refs(text):
+        return [int(r) for r in re.findall(r"#(\d+)", text)]
+
+    errors = []
+    for sid, (kind, args) in ents.items():
+        if kind not in ("CLOSED_SHELL", "OPEN_SHELL"):
+            continue
+        uses: dict[tuple[int, bool], int] = {}
+        for face in refs(args):
+            fkind, fargs = ents[face]
+            if fkind != "ADVANCED_FACE" or not fargs.endswith(".T."):
+                errors.append(f"shell {sid}: face {face} is {fkind} {fargs[-4:]}")
+            for bound in refs(fargs.rsplit(",", 1)[0].split(")")[0]):
+                bkind, bargs = ents[bound]
+                forward = bargs.endswith(".T.")
+                ends = []
+                for oe in refs(ents[refs(bargs)[0]][1]):
+                    oargs = ents[oe][1]
+                    edge = refs(oargs)[0]
+                    start, end = refs(ents[edge][1])[:2]
+                    sense = oargs.endswith(".T.") == forward
+                    uses[(edge, sense)] = uses.get((edge, sense), 0) + 1
+                    ends.append((start, end) if oargs.endswith(".T.") else (end, start))
+                for (_, e), (s2, _) in zip(ends, ends[1:] + ends[:1], strict=True):
+                    if e != s2:
+                        errors.append(f"shell {sid}: loop of face {face} is not connected")
+                        break
+        for (edge, sense), n in uses.items():
+            if n != 1:
+                errors.append(f"shell {sid}: edge {edge} used {n} times with sense {sense}")
+            if kind == "CLOSED_SHELL" and (edge, not sense) not in uses:
+                errors.append(f"shell {sid}: edge {edge} used only with sense {sense}")
+    return errors
+
+
+def test_emitted_step_topology_is_consistent(tmp_path):
+    cases = {
+        "cone": rough_cone(),
+        "cone_cavity": rough_cone_with_cavity(),
+        "touching": touching_cavity(),
+    }
+    for name, tris in cases.items():
+        ir, _ = unmesh.convert(tris)
+        path = tmp_path / f"{name}.step"
+        if name == "touching":
+            ir = break_first_region(ir)
+        assert step.write(ir, path, mesh=tris).fallback == "faceted"
+        assert step_topology_errors(path) == [], name
+    ir, box, stray = box_plus_stray_ir()
+    path = tmp_path / "stray.step"
+    report = step.write(break_first_region(ir), path, mesh=np.concatenate([box, stray]))
+    assert report.fallback == "faceted" and report.valid
+    assert step_topology_errors(path) == []
+    kinds = [k for k, _ in step_entities(path).values()]
+    assert kinds.count("OPEN_SHELL") == 1 and kinds.count("CLOSED_SHELL") == 1
+
+
+def touching_cavity():
+    o = np.array([0.0, 0.0, 0.0])
+    a = np.array([1.0, 0.5, 0.5])
+    b = np.array([0.5, 1.0, 0.5])
+    c = np.array([0.5, 0.5, 1.0])
+    inward = np.array([[o, a, b], [o, c, a], [o, b, c], [a, c, b]])
+    return np.concatenate([box_tris((0.0, 0.0, 0.0), 4.0), inward])
+
+
+@pytest.fixture
+def deadline():
+    import signal
+
+    def expire(signum, frame):
+        raise TimeoutError("step.write did not return within 60 s")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.alarm(60)
+    yield
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous)
+
+
+def test_cavity_touching_the_outer_wall_at_a_vertex(tmp_path, deadline):
+    tris = touching_cavity()
+    expected = 64.0 - 1.0 / 12.0
+    assert signed_volume(tris) == pytest.approx(expected, rel=1e-12)
+    ir, _ = unmesh.convert(tris)
+    assert [(s.closed, s.role) for s in ir.shells] == [(True, "outer"), (True, "cavity")]
+    path = tmp_path / "t.step"
+    report = step.write(break_first_region(ir), path, mesh=tris)
+    assert report.fallback == "faceted" and report.valid and report.readback.ok
+    assert report.solids == 1
+    assert occ.volume_of(occ.read_step(path)) == pytest.approx(expected, rel=1e-9)
+
+
+def test_cavity_sharing_outer_walls_is_written_and_flagged(tmp_path, deadline):
+    tris = np.concatenate([box_tris((0.0, 0.0, 0.0), 4.0), box_tris((0.0, 0.0, 0.0), 1.0, True)])
+    ir, _ = unmesh.convert(tris)
+    assert [(s.closed, s.role) for s in ir.shells] == [(True, "outer"), (True, "cavity")]
+    path = tmp_path / "w.step"
+    report = step.write(break_first_region(ir), path, mesh=tris)
+    assert report.fallback == "faceted"
+    assert step_signed_volume(path) == pytest.approx(63.0, rel=1e-9)
+    assert step_topology_errors(path) == []
+    assert not report.valid
+    assert "re-imported 2 solids, wrote 1" in report.readback.issues
+
+
+@pytest.mark.parametrize("deferred_first", [True, False])
+def test_adjacent_zero_area_triangles_are_absorbed(tmp_path, deferred_first):
+    tris = box_tris((0.0, 0.0, 0.0), 1.0)
+    a, c, b = tris[1]
+    m1 = a + (c - a) / 4
+    m2 = a + (c - a) / 2
+    d1 = [a, c, m2]
+    d2 = [a, m2, m1]
+    degenerate = [d2, d1] if deferred_first else [d1, d2]
+    fan = [[a, m1, b], [m1, m2, b], [m2, c, b]]
+    tris = np.concatenate([tris[[0]], fan, degenerate, tris[2:]])
+    assert signed_volume(tris) == pytest.approx(1.0, rel=1e-12)
+    ir, _ = unmesh.convert(tris)
+    path = tmp_path / "z.step"
+    report = step.write(break_first_region(ir), path, mesh=tris)
+    assert report.fallback == "faceted" and report.valid and report.readback.ok
+    assert occ.volume_of(occ.read_step(path)) == pytest.approx(1.0, rel=1e-9)
+    assert step_topology_errors(path) == []
+
+
+def test_verify_false_skips_readback_and_says_so(tmp_path):
+    ir, bad = shifted_box()
+    tris = mesh_from_ir(ir)
+    unverified = step.write(bad, tmp_path / "u.step", mesh=tris, verify=False)
+    assert unverified.fallback == "faceted" and unverified.valid
+    assert unverified.verified is False and unverified.readback is None
+    assert unverified.solids == 1
+    assert set(unverified.timings) == {"write_s"}
+    verified = step.write(bad, tmp_path / "v.step", mesh=tris)
+    assert verified.verified is True and verified.readback.ok
+    assert set(verified.timings) == {"write_s", "readback_s"}
+    assert (tmp_path / "u.step").read_bytes() == (tmp_path / "v.step").read_bytes()
