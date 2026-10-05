@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +12,7 @@ from typing import Any
 
 from .execute import run_pool
 from .grid import Grid, git_sha, prep_hash, steps_for
-from .results import append_result, completed_keys, latest, read_results
+from .results import append_result, completed_keys, latest, make_record, read_results
 
 PREP_TIMEOUT_S = 120.0
 
@@ -45,6 +48,10 @@ def results_path(out: Path, grid: Grid) -> Path:
     return out / f"{grid.name}.jsonl"
 
 
+def hidden_results_path(out: Path, grid: Grid) -> Path:
+    return out / f"{grid.name}.hidden.json"
+
+
 def run_grid(
     grid: Grid,
     converters: list[str],
@@ -53,13 +60,20 @@ def run_grid(
     sha: str | None = None,
     timeout: float | None = None,
     log=print,
+    hidden: bool = False,
 ) -> RunSummary:
+    from .hidden import hidden_seeds
+
     started = time.perf_counter()
     check_extension_fresh()
     sha = sha or git_sha()
     timeout = timeout or grid.timeout_s
     jobs = jobs or os.cpu_count() or 1
+    if hidden:
+        grid = dataclasses.replace(grid, seeds=hidden_seeds())
     out.mkdir(parents=True, exist_ok=True)
+    if hidden:
+        return _run_hidden(grid, converters, out, jobs, sha, timeout, log, started)
     path = results_path(out, grid)
     done = completed_keys(read_results(path))
     cells = [(c, s) for c, s in grid.expand(converters, sha) if c.key not in done]
@@ -81,6 +95,53 @@ def run_grid(
         cache.mkdir()
         stamp.write_text(wanted)
 
+    ran = _run_cells(
+        grid,
+        sha,
+        timeout,
+        jobs,
+        cache,
+        work,
+        cells,
+        log,
+        lambda cell, result: append_result(path, cell, result),
+    )
+    shutil.rmtree(work, ignore_errors=True)
+    return RunSummary(
+        path,
+        list(latest(read_results(path), sha).values()),
+        skipped,
+        ran,
+        time.perf_counter() - started,
+        sha,
+    )
+
+
+def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunSummary:
+    from .hidden import aggregate
+
+    cells = grid.expand(converters, sha)
+    if not cells:
+        raise ValueError(f"hidden run of grid {grid.name!r} selects no cells")
+    with tempfile.TemporaryDirectory(prefix="unmesh-hidden-") as tmp:
+        cache = Path(tmp) / "cache"
+        work = Path(tmp) / "work"
+        cache.mkdir()
+        work.mkdir()
+        collected: list[dict[str, Any]] = []
+
+        def collect(cell, result):
+            collected.append(make_record(cell, result))
+
+        _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, collect)
+    path = hidden_results_path(out, grid)
+    payload = aggregate(collected, grid.grid_hash)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    log(f"hidden run: {len(collected)} cells aggregated into {path} ({len(payload['rows'])} rows)")
+    return RunSummary(path, collected, 0, len(collected), time.perf_counter() - started, sha)
+
+
+def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit) -> int:
     needed = sorted(
         {c.part for c, _ in cells if not (cache / f"{c.part}.labeled.npz").is_file()}
         | (
@@ -132,20 +193,12 @@ def run_grid(
         else:
             failed_prep.append(cell)
     for cell in failed_prep:
-        append_result(path, cell, {"status": "error", "error": "ground-truth preparation failed"})
+        emit(cell, {"status": "error", "error": "ground-truth preparation failed"})
 
     ran = 0
     for cell, result in run_pool(cell_jobs, jobs, timeout):
-        append_result(path, cell, result)
+        emit(cell, result)
         ran += 1
         if ran % 100 == 0 or ran == len(cell_jobs):
             log(f"{ran}/{len(cell_jobs)} cells")
-    shutil.rmtree(work, ignore_errors=True)
-    return RunSummary(
-        path,
-        list(latest(read_results(path), sha).values()),
-        skipped,
-        ran + len(failed_prep),
-        time.perf_counter() - started,
-        sha,
-    )
+    return ran + len(failed_prep)

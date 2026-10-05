@@ -37,7 +37,17 @@ def _run(args) -> int:
 
     converters = [c for arg in args.converter for c in arg.split(",")]
     grid = load_grid(args.grid)
-    summary = run_grid(grid, converters, args.out, args.jobs, timeout=args.timeout)
+    try:
+        summary = run_grid(
+            grid, converters, args.out, args.jobs, timeout=args.timeout, hidden=args.hidden
+        )
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
+    if args.hidden:
+        print(f"hidden run: {summary.ran} cells aggregated (no per-part data written)")
+        print(f"results: {summary.results_path}")
+        return 0
     print(f"{summary.ran} ran, {summary.skipped} skipped, {summary.seconds:.1f} s")
     print(f"results: {summary.results_path}")
     return _finish(summary.records, args.gate, grid, converters, summary.sha)
@@ -90,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--jobs", type=int, default=None)
     run.add_argument("--timeout", type=float, default=None)
     run.add_argument("--gate", action="store_true", help="exit 1 on any gate violation")
+    run.add_argument(
+        "--hidden",
+        action="store_true",
+        help="hidden-seed mode: seeds come from UNMESH_HIDDEN_SEEDS and only "
+        "aggregate metrics per operator family are written (no per-part data)",
+    )
 
     report = sub.add_parser("report", help="summarize a results file")
     report.add_argument("results", type=Path)

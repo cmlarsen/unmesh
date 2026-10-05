@@ -36,8 +36,8 @@ def read_results(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, Any]:
-    record = {
+def make_record(cell: Cell, result: dict[str, Any]) -> dict[str, Any]:
+    return {
         "part": cell.part,
         "operator": cell.operator,
         "severity": cell.severity,
@@ -48,6 +48,10 @@ def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, A
         "plugin_hash": cell.plugin_hash,
         **result,
     }
+
+
+def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, Any]:
+    record = make_record(cell, result)
     with path.open("a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
     return record

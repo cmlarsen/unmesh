@@ -177,6 +177,12 @@ No C++ is written in this project.
   repo is public, so hosted runners are free. No self-hosted runner is used: on a public repo a fork
   pull request could run its own code on one. Hidden seeds and the hold-out set run from a private
   companion repo, so their files and results never appear here.
+- **Hidden-seed runs from the private companion repo:** that repo checks out this repo at a pinned
+  sha and runs `uv run unmesh-harness run --converter unmesh --grid standard --hidden --out results`
+  with the `UNMESH_HIDDEN_SEEDS` environment variable set from a CI secret (comma-separated integer
+  seeds; the run errors if it is unset).   Hidden mode writes only `results/<grid>.hidden.json`: per-metric means and percentiles grouped by operator family, with no part ids, no per-cell rows,
+  no seed values and no meshes. The companion publishes that aggregate file only; per-part data
+  never leaves its runners and is never visible to implementation agents.
 
 ## Data and licensing
 
