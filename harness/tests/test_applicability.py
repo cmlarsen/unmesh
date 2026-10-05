@@ -205,3 +205,56 @@ def test_stray_shells_score_without_crash(box):
     ir = _oracle_ir(degraded)
     assert score_recovery(box, degraded.face_id, ir, np.eye(4))["f1"] == pytest.approx(1.0)
     assert score_topology(box, degraded.face_id, degraded.tris, ir)["faces_match"] is True
+
+
+SAMPLED_PER_CATEGORY = 20
+
+
+def _sampled_ids(grid):
+    by_cat: dict[str, list[str]] = {}
+    for entry in grid.entries:
+        by_cat.setdefault(entry["strata"].get("category", "planar"), []).append(entry["id"])
+    return {cat: ids[:SAMPLED_PER_CATEGORY] for cat, ids in sorted(by_cat.items())}
+
+
+@pytest.fixture(scope="module")
+def clean_meshes(tmp_path_factory):
+    from unmesh_harness.runner import load_grid
+    from unmesh_harness.runner.execute import prep_part
+
+    grids = {name: load_grid(name) for name in ("standard", "full")}
+    want = {}
+    for grid in grids.values():
+        for ids in _sampled_ids(grid).values():
+            for pid in ids:
+                want[pid] = next(e for e in grid.entries if e["id"] == pid)
+    cache = tmp_path_factory.mktemp("clean-meshes")
+    grid = grids["standard"]
+    for pid in sorted(want):
+        prep_part(
+            {
+                "entry": want[pid],
+                "cache": str(cache),
+                "need_truth": False,
+                "input_deflection": grid.input_deflection,
+                "truth_deflection": grid.truth_deflection,
+            }
+        )
+    return grids, {pid: LabeledMesh.load(cache / f"{pid}.labeled.npz") for pid in want}
+
+
+@pytest.mark.parametrize("grid_name", ["standard", "full"])
+def test_no_row_skipped_on_every_part_of_a_category(grid_name, clean_meshes):
+    from unmesh_harness.runner.grid import steps_for
+    from unmesh_harness.runner.run import first_inapplicable_op
+
+    grids, meshes = clean_meshes
+    grid = grids[grid_name]
+    dead = []
+    for spec in grid.cells:
+        steps = [(name, float(sev)) for name, sev in steps_for(spec)]
+        label = f"{spec.get('operator', spec.get('preset'))}@{float(spec['severity']):g}"
+        for cat, ids in _sampled_ids(grid).items():
+            if all(first_inapplicable_op(steps, meshes[pid]) is not None for pid in ids):
+                dead.append(f"{label} skipped on all {len(ids)} sampled {cat} parts")
+    assert not dead, "dead grid rows:\n" + "\n".join(dead)

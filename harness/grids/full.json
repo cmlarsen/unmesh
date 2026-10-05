@@ -425,9 +425,13 @@
    ]
   },
   {
-   "operator": "noise_off_plane",
+   "operator": "refine+noise_off_plane",
    "severity": 0.25,
    "steps": [
+    [
+     "refine",
+     0.5
+    ],
     [
      "noise_off_plane",
      0.25
@@ -435,9 +439,13 @@
    ]
   },
   {
-   "operator": "noise_off_plane",
+   "operator": "refine+noise_off_plane",
    "severity": 0.5,
    "steps": [
+    [
+     "refine",
+     0.5
+    ],
     [
      "noise_off_plane",
      0.5
@@ -445,9 +453,13 @@
    ]
   },
   {
-   "operator": "noise_off_plane",
+   "operator": "refine+noise_off_plane",
    "severity": 1.0,
    "steps": [
+    [
+     "refine",
+     0.5
+    ],
     [
      "noise_off_plane",
      1.0

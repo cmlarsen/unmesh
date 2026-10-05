@@ -49,6 +49,18 @@ def results_path(out: Path, grid: Grid) -> Path:
     return out / f"{grid.name}.jsonl"
 
 
+def first_inapplicable_op(steps: list[tuple[str, float]], mesh) -> str | None:
+    from ..degrade import OPERATORS, applies
+
+    if not steps:
+        return None
+    name, _ = steps[0]
+    if name in OPERATORS and OPERATORS[name].applies_to is not None:
+        if not applies(name, mesh):
+            return name
+    return None
+
+
 def hidden_results_path(out: Path, grid: Grid) -> Path:
     return out / f"{grid.name}.hidden.json"
 
@@ -199,21 +211,10 @@ def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=F
             labeled[part] = LabeledMesh.load(cache / f"{part}.labeled.npz")
         return labeled[part]
 
-    def inapplicable_op(part: str, steps: list) -> str | None:
-        from ..degrade import OPERATORS, applies
-
-        if not steps:
-            return None
-        name, _ = steps[0]
-        if name in OPERATORS and OPERATORS[name].applies_to is not None:
-            if not applies(name, clean_mesh(part)):
-                return name
-        return None
-
     for cell, spec in cells:
         steps = [(name, float(sev)) for name, sev in steps_for(spec)]
         if cell.part in ready:
-            skipped_op = inapplicable_op(cell.part, steps)
+            skipped_op = first_inapplicable_op(steps, clean_mesh(cell.part))
             if skipped_op is not None:
                 emit(
                     cell,

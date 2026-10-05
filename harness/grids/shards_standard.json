@@ -1,6 +1,6 @@
 {
  "grid": "standard",
- "grid_hash": "6d32ed5b1125",
+ "grid_hash": "de9549e44eec",
  "workers": 4,
  "max_shard_s": 5400,
  "counts": {

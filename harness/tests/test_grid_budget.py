@@ -32,6 +32,12 @@ def _single_ops(grid):
     return sorted({c["operator"] for c in grid.cells if c.get("steps")})
 
 
+def _op_family(op):
+    bits = op.split("+")
+    assert all(bit in OPERATORS for bit in bits), op
+    return OPERATORS[bits[-1]].family
+
+
 def test_standard_grid_shape():
     grid = load_grid("standard")
     assert grid.timeout_s == 60
@@ -56,7 +62,7 @@ def test_standard_grid_shape():
             by_op.setdefault(c["operator"], []).append(float(c["severity"]))
     for op in ops:
         assert 0.5 in by_op[op], op
-        if OPERATORS[op].family in EXTRA_SEVERITY_FAMILIES and op != "float32":
+        if _op_family(op) in EXTRA_SEVERITY_FAMILIES and op != "float32":
             assert by_op[op] == [0.5, 1.0], (op, by_op[op])
         else:
             assert by_op[op] == [0.5], (op, by_op[op])
