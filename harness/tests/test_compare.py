@@ -253,3 +253,16 @@ def test_b_without_converter_records_is_an_error(tmp_path):
     assert comp.error and "faceted" not in comp.error
     assert "unmesh" in comp.error
     assert cli_main(["compare", str(a), str(b)]) == 2
+
+
+def test_unscorable_cell_is_not_scored_as_perfect_or_zero():
+    from unmesh_harness.runner.compare import metric_samples
+    from unmesh_harness.runner.results import _cell_violations, summarize
+
+    blank = record(f1=None, recall=None, precision=None, faces=0, regions=0, matched=0)
+    assert metric_samples([blank, record(f1=0.5)], "f1") == [0.5]
+    assert not any("F1" in v for v in _cell_violations(blank, {"f1_cell": 0.9}))
+    row = summarize([blank | {"seconds": 1.0, "topology": None}])
+    assert "nan" in row.splitlines()[2]
+    comp = run(seeds([1.0, 1.0]), [blank | {"seed": 0}, blank | {"seed": 1}])
+    assert not comp.improvements

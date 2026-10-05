@@ -594,9 +594,9 @@ def test_absent_and_all_one_confidence_score_identical():
     plain = score_recovery(mesh, mesh.face_id, ir, np.eye(4))
     assert "faces_unrecoverable" not in plain
     assert json.dumps(
-        score_recovery(mesh, mesh.face_id, ir, np.eye(4), None), sort_keys=True
+        score_recovery(mesh, mesh.face_id, ir, np.eye(4), confidence=None), sort_keys=True
     ) == json.dumps(plain, sort_keys=True)
-    ones = score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.ones(len(mesh.face_id)))
+    ones = score_recovery(mesh, mesh.face_id, ir, np.eye(4), confidence=np.ones(len(mesh.face_id)))
     assert ones.pop("faces_unrecoverable") == 0
     assert json.dumps(ones, sort_keys=True) == json.dumps(plain, sort_keys=True)
 
@@ -611,7 +611,7 @@ def test_masked_mislabel_is_excluded_from_both_sides():
     assert unmasked["matched"] == len(mesh.faces) - 2
     conf = np.ones(len(wrong))
     conf[0] = 0.0
-    masked = score_recovery(mesh, wrong, ir, np.eye(4), conf)
+    masked = score_recovery(mesh, wrong, ir, np.eye(4), confidence=conf)
     assert masked["matched"] == len(mesh.faces)
     assert masked["f1"] == 1.0
 
@@ -621,7 +621,7 @@ def test_face_with_no_confident_triangles_leaves_both_denominators():
     ir = build_oracle_ir(mesh)
     conf = np.ones(len(mesh.face_id))
     conf[mesh.face_id == 0] = 0.0
-    result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), conf)
+    result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), confidence=conf)
     assert result["faces_unrecoverable"] == 1
     assert (result["faces"], result["regions"], result["matched"]) == (5, 5, 5)
     assert result["f1"] == 1.0
@@ -647,7 +647,7 @@ def test_erased_face_is_unrecoverable_only_with_confidence():
     legacy = score_recovery(mesh, face_id, ir, np.eye(4))
     assert (legacy["faces"], legacy["matched"]) == (6, 5)
     assert legacy["recall"] == pytest.approx(5 / 6)
-    scored = score_recovery(mesh, face_id, ir, np.eye(4), np.ones(len(face_id)))
+    scored = score_recovery(mesh, face_id, ir, np.eye(4), confidence=np.ones(len(face_id)))
     assert scored["faces_unrecoverable"] == 1
     assert (scored["faces"], scored["matched"], scored["f1"]) == (5, 5, 1.0)
 
@@ -662,25 +662,27 @@ def test_confident_spurious_region_still_costs_precision():
     regions.append(Region(len(ir.regions), first.surface, first.triangles[half:], None))
     split = dataclasses.replace(ir, regions=regions)
     conf = np.ones(len(mesh.face_id))
-    result = score_recovery(mesh, mesh.face_id, split, np.eye(4), conf)
+    result = score_recovery(mesh, mesh.face_id, split, np.eye(4), confidence=conf)
     assert result["regions"] == 7
     assert result["precision"] < 1.0
     conf[first.triangles[half:]] = 0.0
-    masked = score_recovery(mesh, mesh.face_id, split, np.eye(4), conf)
+    masked = score_recovery(mesh, mesh.face_id, split, np.eye(4), confidence=conf)
     assert masked["regions"] == 6
     assert masked["f1"] == 1.0
 
 
-def test_nothing_confident_scores_vacuously():
+def test_nothing_confident_is_unscorable():
     mesh = tessellate(Box(10, 10, 10), LIN, ANG)
     ir = build_oracle_ir(mesh)
-    result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.zeros(len(mesh.face_id)))
+    nothing = np.zeros(len(mesh.face_id))
+    result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), confidence=nothing)
     assert (result["faces"], result["regions"], result["faces_unrecoverable"]) == (0, 0, 6)
-    assert result["f1"] == 1.0
+    assert result["f1"] is None
+    assert result["recall"] is None and result["precision"] is None
 
 
 def test_confidence_length_mismatch_raises():
     mesh = tessellate(Box(10, 10, 10), LIN, ANG)
     ir = build_oracle_ir(mesh)
     with pytest.raises(ValueError, match="confidence"):
-        score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.ones(3))
+        score_recovery(mesh, mesh.face_id, ir, np.eye(4), confidence=np.ones(3))

@@ -168,7 +168,7 @@ def summarize(records: list[dict[str, Any]]) -> str:
     lines = [header, "-" * len(header)]
     for (converter, operator, severity), rs in sorted(groups.items()):
         ok = [r for r in rs if r["status"] == "ok"]
-        f1 = [r["f1"] for r in ok]
+        f1 = [r["f1"] for r in ok if r.get("f1") is not None]
         calib = [r["calibration"] for r in ok if r.get("calibration") is not None]
         times = [r["seconds"] for r in ok]
         devs = [r["dev_input_max"] for r in ok if r["dev_input_max"] is not None]
@@ -218,7 +218,7 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
         bad(f"under-reports ({detail})")
     if r.get("valid") is not True:
         bad(f"invalid STEP: {'; '.join(r.get('step_problems') or ['not checked'])}")
-    if "f1_cell" in floors and r["f1"] < floors["f1_cell"]:
+    if "f1_cell" in floors and r["f1"] is not None and r["f1"] < floors["f1_cell"]:
         bad(f"F1 {r['f1']:.3f} below floor {floors['f1_cell']}")
     if floors.get("regions_equal_faces") and r["regions"] != r["faces"]:
         bad(f"{r['regions']} regions for {r['faces']} ground-truth faces")

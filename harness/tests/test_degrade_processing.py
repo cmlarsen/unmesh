@@ -549,13 +549,13 @@ def oracle_score(clean: LabeledMesh, degraded: LabeledMesh) -> dict:
         degraded.face_id,
         oracle_on_degraded(clean, degraded),
         np.eye(4),
-        degraded.metadata.get(CONFIDENCE_KEY),
+        confidence=degraded.metadata.get(CONFIDENCE_KEY),
     )
 
 
 @pytest.mark.parametrize("name", PROC_OPS)
 def test_oracle_on_degraded_labels_scores_one(name, smoke_parts):
-    lost = 0
+    lost = unscorable = 0
     for pid, mesh in smoke_parts:
         for severity in ORACLE_SEVERITIES:
             out = degrade.apply(name, mesh, severity, SEED)
@@ -563,6 +563,11 @@ def test_oracle_on_degraded_labels_scores_one(name, smoke_parts):
             key = (pid, severity)
             if OPERATORS[name].preserves_watertight:
                 assert closed_manifold_problems(out.tris)[0] == [], key
+            if result["faces"] == 0:
+                assert result["faces_unrecoverable"] == len(mesh.faces), key
+                assert result["f1"] is result["recall"] is result["precision"] is None, key
+                unscorable += 1
+                continue
             assert result["recall"] == 1.0, key
             assert result["precision"] == 1.0, key
             assert result["f1"] == 1.0, key
@@ -571,9 +576,11 @@ def test_oracle_on_degraded_labels_scores_one(name, smoke_parts):
             assert result["faces"] + result["faces_unrecoverable"] == len(mesh.faces), key
             lost += result["faces_unrecoverable"]
     if name in SMOOTHING:
-        assert lost == 0
+        assert lost == unscorable == 0
     else:
         assert lost > 0
+    if name == "isotropic_remesh":
+        assert unscorable == 0
 
 
 def _normals(tris: np.ndarray) -> np.ndarray:
@@ -640,7 +647,10 @@ def test_processing_chains_keep_confidence_aligned(name, tail, smoke_pair):
         assert len(conf) == len(out.tris) == len(out.face_id)
         assert all(0.0 <= c <= 1.0 for c in conf)
         result = oracle_score(mesh, out)
-        assert result["f1"] == 1.0, (name, tail)
+        if result["faces"]:
+            assert result["f1"] == 1.0, (name, tail)
+        else:
+            assert result["f1"] is None, (name, tail)
         first = degrade.apply(name, mesh, 0.5, SEED)
         if tail[0] == "duplicate_facets":
             kept = np.asarray(conf[: len(first.tris)])

@@ -583,6 +583,7 @@ def score_recovery(
     ir: Ir,
     to_original: Any = None,
     tolerances: Tolerances = DEFAULT_TOLERANCES,
+    *,
     confidence: np.ndarray | None = None,
 ) -> dict[str, Any]:
     frame = _frame(to_original)
@@ -652,8 +653,8 @@ def score_recovery(
     faces = len(clean.faces) - len(masked | lost_faces)
     regions = len(ir.regions) - len(masked_regions | lost_regions)
     precision, recall, f1 = _prf_regions(matched, len(matched_regions), faces, regions)
-    if confidence is not None and faces == 0 and regions == 0:
-        precision = recall = f1 = 1.0
+    if confidence is not None and faces == 0:
+        precision = recall = f1 = None
     recovered_region = {d["face"]: d["region"] for d in faces_detail if d["recovered"]}
     by_type = {}
     for surface, bucket in per_type.items():
