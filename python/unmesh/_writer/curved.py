@@ -37,7 +37,15 @@ from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shell, TopoDS_Wi
 from unmesh.ir import Cone, Cylinder, Facets, Ir, Plane, Sphere, Torus
 
 from . import geometry as geo
-from .topology import BuildError, SeamGap, _boundary_nodes, _key, _signed_area
+from .topology import (
+    BuildError,
+    PatchWrite,
+    SeamGap,
+    _boundary_nodes,
+    _key,
+    _signed_area,
+    check_patch_boundary,
+)
 
 INTERSECTION_TOLERANCE = 1e-7
 EDGE_TOLERANCE = 1e-7
@@ -94,6 +102,7 @@ class CurvedShell:
     boundary_deviation: dict[int, float] = field(default_factory=dict)
     projected: list[ProjectedEdge] = field(default_factory=list)
     tangent: list[TangentEdge] = field(default_factory=list)
+    patches: dict[int, PatchWrite] = field(default_factory=dict)
 
 
 def _pnt(p) -> gp_Pnt:
@@ -730,6 +739,8 @@ class _Builder:
         self.seam_gap = seam_gap
         self.patch: dict[tuple, np.ndarray] = {}
         self.splits: dict[tuple, list[np.ndarray]] = {}
+        self.split_region: dict[tuple, int] = {}
+        self.patch_keys: dict = {}
         self.seam_records: list[tuple[SeamGap, list]] = []
         self.index = index
         self.shell = ir.shells[index]
@@ -811,6 +822,8 @@ class _Builder:
             facets = isinstance(sa, Facets) or isinstance(sb, Facets)
             seam = (b if isinstance(sa, Facets) else a) if curved and facets else None
             for bd in adj.boundaries:
+                if facets:
+                    check_patch_boundary(self.ir, a, b, bd, self.patch_keys)
                 pts = [np.asarray(p, dtype=float) for p in bd.points]
                 e = _Edge(
                     a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved and seam is None
@@ -1222,6 +1235,7 @@ class _Builder:
             inner += _subdivide(s, cuts.get(i, p), q, self.seam_gap)
             if inner:
                 self.splits[(_key(p), _key(q))] = inner
+                self.split_region[(_key(p), _key(q))] = e.seam
                 inserted += len(inner)
             runs.append((inner, at))
         head, at = runs[0]
@@ -1458,12 +1472,19 @@ class _Builder:
             dtype=float,
         )
         faces = []
-        for f in s.faces:
+        record = PatchWrite(v[np.asarray(s.faces, dtype=np.int64)])
+        self.out.patches[r] = record
+        for fi, f in enumerate(s.faces):
             corners = v[list(f)]
             n = np.cross(corners[1] - corners[0], corners[2] - corners[0])
             if np.linalg.norm(n) < 1e-14:
                 raise BuildError(f"region {r}: degenerate facets triangle")
-            for a, b, c in self.split_triangle(corners):
+            sides = [self.inserted(corners[i], corners[(i + 1) % 3]) for i in range(3)]
+            for i, side in enumerate(sides):
+                if side:
+                    seam = self.seam_of(corners[i], corners[(i + 1) % 3])
+                    record.splits.extend((fi, i, x, seam) for x in side)
+            for a, b, c in self.split_triangle(corners, sides):
                 m = np.cross(b - a, c - a)
                 if np.linalg.norm(m) < 1e-14 or not m @ n > 0:
                     raise BuildError(f"region {r}: a seam split folds a facets triangle")
@@ -1476,8 +1497,11 @@ class _Builder:
                 faces.append(face)
         return faces
 
-    def split_triangle(self, corners) -> list:
-        sides = [self.inserted(corners[i], corners[(i + 1) % 3]) for i in range(3)]
+    def seam_of(self, p, q) -> int:
+        kp, kq = _key(p), _key(q)
+        return self.split_region.get((kp, kq), self.split_region.get((kq, kp)))
+
+    def split_triangle(self, corners, sides) -> list:
         split = [i for i in range(3) if sides[i]]
         if not split:
             return [corners]

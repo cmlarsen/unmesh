@@ -15,8 +15,10 @@ from unmesh._writer import curved, occ  # noqa: E402
 from unmesh._writer import geometry as geo  # noqa: E402
 from unmesh.ir import Cylinder as IrCylinder  # noqa: E402
 from unmesh.ir import Facets  # noqa: E402
+from unmesh_harness.groundtruth import generate  # noqa: E402
 from unmesh_harness.labels import tessellate  # noqa: E402
 from unmesh_harness.oracle import build_oracle_ir, force_facets  # noqa: E402
+from unmesh_harness.oracle_fit import corpus_seeds  # noqa: E402
 
 DEFLECTION = (0.02, 0.3)
 
@@ -122,16 +124,106 @@ def test_a_flipped_facets_patch_falls_back(tmp_path):
     )
 
 
-def test_a_bulging_facets_patch_fails_verification(tmp_path):
-    _, ir, tris, sphere = _forced("sphere", _of_type("sphere"))
-    patch = ir.regions[sphere].surface
+def _largest_patch(family: str, index: int, interior: bool = True):
+    gt = generate(family, corpus_seeds([family])[family][index])
+    mesh = tessellate(gt.solid, 0.01, 0.2)
+    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
+    ir = build_oracle_ir(mesh)
+    curved_regions = [
+        r
+        for r in ir.regions
+        if r.surface.type not in ("plane", "facets")
+        and len(r.triangles) <= step.FACETED_SHARE * len(tris)
+    ]
     boundary = {tuple(p) for adj in ir.adjacencies for bd in adj.boundaries for p in bd.points}
-    inner = next(i for i, p in enumerate(patch.vertices) if tuple(p) not in boundary)
-    p = np.asarray(patch.vertices[inner])
-    patch.vertices[inner] = tuple(p + 2e-3 * geo.unit(p))
+    for r in sorted(curved_regions, key=lambda r: -len(r.triangles)):
+        corners = {tuple(map(float, p)) for t in r.triangles for p in tris[t]}
+        if corners - boundary or not interior:
+            return force_facets(ir, r.id, tris), tris, r.id
+    raise AssertionError(f"{family} has no curved region with an interior vertex")
+
+
+def _bulge(ir, region, distance):
+    patch = ir.regions[region].surface
+    boundary = {tuple(p) for adj in ir.adjacencies for bd in adj.boundaries for p in bd.points}
+    corners = {tuple(v.position) for v in ir.vertices}
+    inner = next(
+        (i for i, p in enumerate(patch.vertices) if tuple(p) not in boundary),
+        next(i for i, p in enumerate(patch.vertices) if tuple(p) not in corners),
+    )
+    normal = np.zeros(3)
+    for f in patch.faces:
+        if inner in f:
+            a, b, c = (np.asarray(patch.vertices[i]) for i in f)
+            normal += np.cross(b - a, c - a)
+    patch.vertices[inner] = tuple(np.asarray(patch.vertices[inner]) + distance * geo.unit(normal))
+
+
+@pytest.mark.parametrize("family", ["countersink", "corner_fillet"])
+@pytest.mark.parametrize("distance", [2e-3, 2e-2, 2e-1])
+def test_a_patch_vertex_off_the_mesh_is_measured_and_beyond_the_limit_falls_back(
+    family, distance, tmp_path
+):
+    ir, tris, region = _largest_patch(family, 3, interior=family != "countersink")
+    _bulge(ir, region, distance)
     report = step.write(ir, tmp_path / "bulge.step", mesh=tris)
+    assert report.valid and report.verified
+    limit = min(5 * ir.tolerances.linear, step.WriteOptions().max_deviation)
+    if family == "countersink":
+        assert report.fallback == "faceted"
+        assert f"region {region}: boundary point" in report.fallback_reason
+        assert "is not a vertex of the facets patch" in report.fallback_reason
+        if distance > limit:
+            assert f"region {region}: a facets patch vertex is" in report.fallback_reason
+    elif distance <= limit:
+        assert report.fallback is None, report.fallback_reason
+        face = next(f for f in report.faces if f.region == region)
+        assert face.max_vertex_displacement == pytest.approx(distance, rel=1e-6)
+    else:
+        assert report.fallback == "faceted"
+        assert f"region {region}: a facets patch vertex is" in report.fallback_reason
+
+
+def test_a_patch_missing_a_triangle_is_not_written_mixed(tmp_path):
+    ir, tris, region = _largest_patch("countersink", 3, interior=False)
+    patch = ir.regions[region]
+    patch.triangles = patch.triangles[1:]
+    patch.surface = Facets(patch.surface.vertices, patch.surface.faces[1:])
+    report = step.write(ir, tmp_path / "hole.step", mesh=tris)
+    assert not (report.valid and report.fallback is None)
+
+
+def test_a_flipped_patch_on_a_planar_part_falls_back(tmp_path):
+    shape = Box(10, 10, 10) - Pos(0, 0, 5) * Box(4, 4, 4)
+    mesh = tessellate(shape, *DEFLECTION)
+    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
+    ir = build_oracle_ir(mesh)
+    region = _top_plane(ir)
+    ir = force_facets(ir, region, tris)
+    good = step.write(ir, tmp_path / "good.step", mesh=tris)
+    assert good.valid and good.fallback is None and good.faceted_regions == 1
+    patch = ir.regions[region].surface
+    ir.regions[region].surface = Facets(patch.vertices, [f[::-1] for f in patch.faces])
+    for mesh_arg in (tris, None):
+        report = step.write(ir, tmp_path / "flipped.step", mesh=mesh_arg)
+        assert report.fallback == "faceted" or not report.valid
+        reason = report.fallback_reason or "; ".join(report.issues)
+        assert f"region {region}: facets triangles wind against their neighbours" in reason
+
+
+def test_patches_over_half_the_triangles_write_the_faceted_solid(tmp_path):
+    _, ir, tris, sphere = _forced("sphere", _of_type("sphere"))
+    share = len(ir.regions[sphere].triangles) / len(tris)
+    assert share > step.FACETED_SHARE
+    report = step.write(ir, tmp_path / "big.step", mesh=tris)
     assert report.valid and report.fallback == "faceted"
-    assert "differs from mesh volume" in report.fallback_reason
+    assert "over the 50% share above which the faceted solid is written" in report.fallback_reason
+    _, ir, tris, plane = _forced("sphere")
+    assert len(ir.regions[plane].triangles) / len(tris) < step.FACETED_SHARE
+    small = step.write(ir, tmp_path / "small.step", mesh=tris)
+    assert small.valid and small.fallback is None and small.faceted_regions == 1
+    unchecked = step.write(_forced("sphere", _of_type("sphere"))[1], tmp_path / "n.step")
+    assert unchecked.valid and unchecked.fallback is None
 
 
 def test_a_seam_split_never_folds_a_triangle(tmp_path, monkeypatch):

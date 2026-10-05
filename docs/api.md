@@ -175,6 +175,23 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   volume and each cavity negative. Nothing flips a face to fix it: a mismatch fails the shell. ShapeFix
   runs only on a solid that `BRepCheck_Analyzer` rejects, and the orientation is checked again after it.
 
+**Facets patches.** A part whose `facets` regions hold more than half of the IR's triangles (and
+that also has analytic regions) is written as the whole-part faceted solid when `mesh` is given,
+with `fallback_reason` naming the share: one `ADVANCED_FACE` per triangle on its own plane costs
+about 2.4 KB, so the mixed solid is several times larger and slower than the faceted one and no
+more exact (circular_fillet seed 6 with its torus forced to `facets`: 28.3 MB in 13.3 s mixed, 5.9
+MB in 1.2 s faceted). Every boundary point between a patch and its neighbour must be one of the
+patch's vertices (else the shell fails, naming the patch). In a closed shell, every edge a patch
+triangle shares must be used in opposite directions by its two faces, checked on the built faces
+before any ShapeFix runs, on planar and curved shells alike; a flipped patch fails the shell
+instead of being re-oriented by healing. When `mesh` is given, each patch triangle is matched to
+its source triangle (`triangles[i]` to `faces[i]`, up to a rotation of its corners) and every
+written corner must lie within the deviation limit of the source corner; each seam split point
+must lie within `max_seam_gap` of its curved surface and within the deviation limit plus that
+region's `residual.max` (the chord sagitta) of the source triangle's side. A patch beyond either
+bound fails the shell, named, and the measured largest distance is the patch's
+`max_vertex_displacement` in `faces`. Without `mesh`, a patch is written as given and unchecked.
+
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
 `max_shape_tolerance`. When `mesh` is given, each analytic solid's volume is also compared with the
 mesh's: the outer shell's triangles (IR shell grouping) enclose `|V|`, each cavity's subtract theirs, and
