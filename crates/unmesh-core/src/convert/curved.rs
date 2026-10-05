@@ -111,12 +111,17 @@ fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
 struct Problem<'a> {
     members: &'a [Member],
     fix_dir: bool,
+    free: Vec<usize>,
     len_step: f64,
 }
 
 impl Problem<'_> {
     fn n_axis(&self) -> usize {
         if self.fix_dir { 2 } else { 4 }
+    }
+
+    fn n_params(&self) -> usize {
+        self.n_axis() + self.free.len()
     }
 
     fn apply(&self, axis: &Axis, shape: &[f64], x: &[f64]) -> (Axis, Vec<f64>) {
@@ -128,7 +133,10 @@ impl Problem<'_> {
         };
         let c = add(axis.c, add(scale(u, x[k]), scale(v, x[k + 1])));
         let k = self.n_axis();
-        let s: Vec<f64> = shape.iter().zip(&x[k..]).map(|(s, d)| s + d).collect();
+        let mut s = shape.to_vec();
+        for (j, &slot) in self.free.iter().enumerate() {
+            s[slot] += x[k + j];
+        }
         (Axis { a, c }, s)
     }
 
@@ -157,7 +165,7 @@ fn cost(r: &[f64]) -> f64 {
 }
 
 fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f64]) {
-    let n = problem.n_axis() + shape.len();
+    let n = problem.n_params();
     let mut r0 = Vec::new();
     let mut rp = Vec::new();
     let mut rm = Vec::new();
@@ -171,8 +179,8 @@ fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f
         let m = r0.len();
         let mut jac = vec![vec![0.0; m]; n];
         for j in 0..n {
-            let h = if j >= problem.n_axis() && j - problem.n_axis() < shape.len() {
-                let s = shape[j - problem.n_axis()];
+            let h = if j >= problem.n_axis() {
+                let s = shape[problem.free[j - problem.n_axis()]];
                 problem.len_step.min(1e-7 * s.abs().max(1e-3))
             } else {
                 problem.step_size(j)
@@ -233,6 +241,7 @@ pub fn fit_joint(
     members: &[Member],
     mut axis: Axis,
     mut shape: Vec<f64>,
+    fixed: &[bool],
     fix_dir: bool,
     tol: f64,
 ) -> Joint {
@@ -245,6 +254,9 @@ pub fn fit_joint(
     let problem = Problem {
         members,
         fix_dir,
+        free: (0..shape.len())
+            .filter(|&i| !fixed.get(i).copied().unwrap_or(false))
+            .collect(),
         len_step: 1e-7 * extent,
     };
     let base: Vec<f64> = members
@@ -392,7 +404,9 @@ pub fn init_cone(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> {
 /// turns by `2π/N` at every ruling, so `r = c / (2 sin(π/N))`. Chords and
 /// turning angles are measured between rulings and do not depend on the
 /// fitted centre; only the ruling order does. `None` unless the chords and
-/// turning angles are equal and the turning angle divides the full turn.
+/// turning angles are equal within the noise `tol` allows, the mean turning
+/// angle is `2π/N` to within its own measurement uncertainty, and the chord
+/// count agrees with `N` (all `N` for a closed ring, fewer for an arc).
 pub fn tessellation_radius(pts: &[(V3, f64)], axis: &Axis, radius: f64, tol: f64) -> Option<f64> {
     let (u, v) = basis(axis.a);
     let mut polar: Vec<(f64, f64, f64)> = pts
@@ -465,12 +479,22 @@ pub fn tessellation_radius(pts: &[(V3, f64)], axis: &Axis, radius: f64, tol: f64
         return None;
     }
     let theta = turns.iter().sum::<f64>() / turns.len() as f64;
-    let spread = |xs: &[f64], m: f64| xs.iter().any(|x| (x - m).abs() > LAW_GAP_SPREAD * m.abs());
-    if theta <= 0.0 || spread(&lens, c) || spread(&turns, theta) {
+    let len_tol = (4.0 * tol).min(LAW_GAP_SPREAD * c);
+    let turn_tol = (8.0 * tol / c).min(LAW_GAP_SPREAD * theta);
+    if theta <= 0.0
+        || lens.iter().any(|l| (l - c).abs() > len_tol)
+        || turns.iter().any(|t| (t - theta).abs() > turn_tol)
+    {
         return None;
     }
     let n = (tau / theta).round();
-    if n < 3.0 || (tau / n - theta).abs() > LAW_N_REL * theta {
+    let quantum = (2.0 * tol / c / (turns.len() as f64).sqrt()).min(LAW_N_REL * theta);
+    let steps = chords.len() as f64;
+    if n < 3.0
+        || (tau / n - theta).abs() > quantum
+        || (closed && steps != n)
+        || (!closed && steps >= n)
+    {
         return None;
     }
     Some(c / (2.0 * (std::f64::consts::PI / n).sin()))
@@ -561,11 +585,11 @@ pub fn surface_of(axis: &Axis, shape: &[f64], m: &Member) -> Surface {
     }
 }
 
-/// Upper bound on the distance from any point of the triangle to the surface
-/// when its corners lie on it: the chord sagitta. Exact for a cylinder (the
-/// distance to the axis is convex, so its minimum over the triangle is the
-/// 2D point-triangle distance in the plane normal to the axis); sampled for a
-/// cone.
+/// Upper bound on the distance from any point of the triangle to the surface:
+/// the chord sagitta plus how far the corners are off it. Exact for a
+/// cylinder (the distance to the axis is convex, so its minimum over the
+/// triangle is the 2D point-triangle distance in the plane normal to the
+/// axis) and for a cone (see `cone_sagitta`).
 pub fn sagitta(surface: &Surface, t: [V3; 3]) -> f64 {
     match *surface {
         Surface::Cylinder {
@@ -589,21 +613,83 @@ pub fn sagitta(surface: &Surface, t: [V3; 3]) -> f64 {
                 .fold(0.0, f64::max);
             (radius - dmin).max(dmax - radius).max(0.0)
         }
-        Surface::Cone { .. } => {
-            let k = 8;
-            let mut worst: f64 = 0.0;
-            for i in 0..=k {
-                for j in 0..=k - i {
-                    let (a, b) = (i as f64 / k as f64, j as f64 / k as f64);
-                    let c = 1.0 - a - b;
-                    let p = add(add(scale(t[0], a), scale(t[1], b)), scale(t[2], c));
-                    worst = worst.max(surface.distance(p).abs());
-                }
-            }
-            worst
-        }
+        Surface::Cone {
+            apex,
+            axis,
+            half_angle,
+            ..
+        } => cone_sagitta(surface, apex, axis, half_angle, t),
         _ => 0.0,
     }
+}
+
+/// For points on the widening side of the apex (`h >= 0`), the signed
+/// distance to the cone is `f = rho cos(a) - h sin(a)`. It is convex (rho is
+/// a distance to a line, h is affine), so its maximum over the triangle is at
+/// a corner and its minimum is at a corner, at a stationary point of `f`
+/// along an edge (a quadratic in the edge parameter), or where the axis
+/// pierces the triangle (`f` is not differentiable there). No other interior
+/// point can be stationary: on a plane crossing the axis, `c|y| - s l(y)`
+/// with `l` affine has no stationary point off `y = 0`, and on a plane
+/// parallel to the axis `h` keeps a nonzero slope. A triangle reaching
+/// behind the apex falls back to the 1-Lipschitz bound of the distance.
+fn cone_sagitta(surface: &Surface, apex: V3, axis: V3, alpha: f64, t: [V3; 3]) -> f64 {
+    let (s, c) = alpha.sin_cos();
+    let f = |p: V3| {
+        let (h, rho, _) = radial(p, apex, axis);
+        rho * c - h * s
+    };
+    let corner = t
+        .iter()
+        .map(|p| surface.distance(*p).abs())
+        .fold(0.0, f64::max);
+    if t.iter().any(|p| dot(sub(*p, apex), axis) < 0.0) {
+        let edge = (0..3)
+            .map(|i| norm(sub(t[(i + 1) % 3], t[i])))
+            .fold(0.0, f64::max);
+        return corner + edge;
+    }
+    let mut fmin = t.iter().map(|p| f(*p)).fold(f64::INFINITY, f64::min);
+    for i in 0..3 {
+        let (p0, p1) = (t[i], t[(i + 1) % 3]);
+        let d = sub(p1, p0);
+        let dh = dot(d, axis);
+        let w = sub(d, scale(axis, dh));
+        let q0 = {
+            let q = sub(p0, apex);
+            sub(q, scale(axis, dot(q, axis)))
+        };
+        let (qa, qb, qc) = (dot(w, w), dot(q0, w), dot(q0, q0));
+        let k = c * c * qa - s * s * dh * dh;
+        let (a2, b2, c2) = (qa * k, 2.0 * qb * k, c * c * qb * qb - s * s * dh * dh * qc);
+        let mut roots = Vec::new();
+        if a2.abs() > 0.0 {
+            let disc = b2 * b2 - 4.0 * a2 * c2;
+            if disc >= 0.0 {
+                let sq = disc.sqrt();
+                roots.push((-b2 + sq) / (2.0 * a2));
+                roots.push((-b2 - sq) / (2.0 * a2));
+            }
+        }
+        if qa > 0.0 {
+            roots.push(-qb / qa);
+        }
+        for u in roots {
+            if (0.0..=1.0).contains(&u) {
+                fmin = fmin.min(f(add(p0, scale(d, u))));
+            }
+        }
+    }
+    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+    let denom = dot(n, axis);
+    if denom != 0.0 {
+        let x = add(apex, scale(axis, dot(n, sub(t[0], apex)) / denom));
+        let inside = (0..3).all(|i| dot(cross(sub(t[(i + 1) % 3], t[i]), sub(x, t[i])), n) >= 0.0);
+        if inside {
+            fmin = fmin.min(f(x));
+        }
+    }
+    corner.max(-fmin)
 }
 
 fn dist_to_triangle_2d(p: &[(f64, f64)]) -> f64 {
@@ -639,6 +725,7 @@ fn dist_to_triangle_2d(p: &[(f64, f64)]) -> f64 {
 
 struct Fitted {
     region: usize,
+    law: bool,
     kind: Kind,
     axis: Axis,
     shape: Vec<f64>,
@@ -665,32 +752,31 @@ fn region_tris(vc: &[V3], faces: &[[u32; 3]], info: &[TriInfo], r: &Region) -> V
         .collect()
 }
 
-fn fit_single(
-    pts: &[(V3, f64)],
-    tris: &[Tri],
-    tol: f64,
-) -> Option<(Kind, Axis, Vec<f64>, f64, f64)> {
+type Single = (Kind, Axis, Vec<f64>, f64, f64, bool);
+
+fn law_fits(law_rms: f64, lsq_rms: f64, n: usize, r: f64) -> bool {
+    let dof = (n as f64 - 5.0).max(1.0);
+    law_rms * law_rms <= lsq_rms * lsq_rms * (1.0 + 4.0 / dof) + (1e-12 * r).powi(2)
+}
+
+fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
     if let Some((axis, r)) = init_cylinder(pts, tris) {
         let m = [Member {
             pts: pts.to_vec(),
             kind: Kind::Cylinder,
             slot: 0,
         }];
-        let j = fit_joint(&m, axis, vec![r], false, tol);
-        let (mut rms, mut max) = j.fit[0];
-        let mut shape = j.shape;
-        if max <= tol && shape[0] > 0.0 {
-            if let Some(rl) = tessellation_radius(pts, &j.axis, shape[0], tol)
-                && (rl - shape[0]).abs() <= tol
-            {
-                let (r2, m2) = member_residual(&j.axis, &[rl], &m[0]);
-                if m2 <= tol {
-                    shape[0] = rl;
-                    rms = r2;
-                    max = m2;
+        let j = fit_joint(&m, axis, vec![r], &[false], false, tol);
+        let (rms, max) = j.fit[0];
+        if max <= tol && j.shape[0] > 0.0 {
+            if let Some(rl) = tessellation_radius(pts, &j.axis, j.shape[0], tol) {
+                let jl = fit_joint(&m, j.axis, vec![rl], &[true], false, tol);
+                let (lr, lm) = jl.fit[0];
+                if lm <= tol && law_fits(lr, rms, pts.len(), rl) {
+                    return Some((Kind::Cylinder, jl.axis, jl.shape, lr, lm, true));
                 }
             }
-            return Some((Kind::Cylinder, j.axis, shape, rms, max));
+            return Some((Kind::Cylinder, j.axis, j.shape, rms, max, false));
         }
     }
     let (axis, alpha) = init_cone(pts, tris)?;
@@ -699,16 +785,26 @@ fn fit_single(
         kind: Kind::Cone { sign: 1.0 },
         slot: 0,
     }];
-    let j = fit_joint(&m, axis, vec![0.0, alpha], false, tol);
+    let j = fit_joint(&m, axis, vec![0.0, alpha], &[false, false], false, tol);
     let (rms, max) = j.fit[0];
-    let a = j.shape[1];
-    (max <= tol && a > 0.0 && a < std::f64::consts::FRAC_PI_2).then_some((
+    (max <= tol && valid_shape(&j.shape, &m[0])).then_some((
         Kind::Cone { sign: 1.0 },
         j.axis,
         j.shape,
         rms,
         max,
+        false,
     ))
+}
+
+fn valid_shape(shape: &[f64], m: &Member) -> bool {
+    match m.kind {
+        Kind::Cylinder => shape[m.slot] > 0.0,
+        Kind::Cone { .. } => {
+            let a = shape[m.slot + 1];
+            shape[m.slot].is_finite() && a > 0.0 && a < std::f64::consts::FRAC_PI_2
+        }
+    }
 }
 
 fn line_distance(p: V3, axis: &Axis) -> f64 {
@@ -725,6 +821,7 @@ struct GroupFit {
     members: Vec<Member>,
     axis: Axis,
     shape: Vec<f64>,
+    fixed: Vec<bool>,
 }
 
 fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
@@ -734,6 +831,7 @@ fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
         .unwrap();
     let axis = lead.axis;
     let mut shape: Vec<f64> = Vec::new();
+    let mut fixed: Vec<bool> = Vec::new();
     let mut members = Vec::new();
     let mut radii: Vec<(f64, usize)> = Vec::new();
     for f in fits {
@@ -745,10 +843,15 @@ fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
                     Some(&(_, s)) => s,
                     None => {
                         shape.push(r);
+                        fixed.push(false);
                         radii.push((r, shape.len() - 1));
                         shape.len() - 1
                     }
                 };
+                if f.law && !fixed[slot] {
+                    shape[slot] = r;
+                    fixed[slot] = true;
+                }
                 members.push(Member {
                     pts: ps,
                     kind: Kind::Cylinder,
@@ -767,6 +870,7 @@ fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
                 );
                 shape.push(s);
                 shape.push(f.shape[1]);
+                fixed.extend([false, false]);
                 members.push(Member {
                     pts: ps,
                     kind: Kind::Cone { sign },
@@ -779,6 +883,7 @@ fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
         members,
         axis,
         shape,
+        fixed,
     }
 }
 
@@ -792,11 +897,11 @@ fn world_axis(a: V3, cos_lim: f64) -> Option<V3> {
     (e != a).then_some(e)
 }
 
-fn accept(fit: &Joint, tol: f64) -> bool {
+fn accept(fit: &Joint, members: &[Member], tol: f64) -> bool {
     fit.fit
         .iter()
         .all(|&(rms, max)| max <= tol && rms <= 0.5 * tol)
-        && fit.shape.iter().all(|s| s.is_finite())
+        && members.iter().all(|m| valid_shape(&fit.shape, m))
 }
 
 pub fn refine_regions(
@@ -816,9 +921,10 @@ pub fn refine_regions(
         }
         let p: Vec<(V3, f64)> = r.verts.iter().map(|&(v, w)| (vc[v as usize], w)).collect();
         let t = region_tris(vc, faces, info, r);
-        if let Some((kind, axis, shape, rms, max)) = fit_single(&p, &t, tol) {
+        if let Some((kind, axis, shape, rms, max, law)) = fit_single(&p, &t, tol) {
             fits.push(Fitted {
                 region: ri,
+                law,
                 kind,
                 axis,
                 shape,
@@ -855,8 +961,15 @@ pub fn refine_regions(
         let mut gf = build_group(&members, &pts, tol);
         let mut joint: Option<Joint> = None;
         if g.len() >= 2 && g.len() <= MAX_GROUP {
-            let j = fit_joint(&gf.members, gf.axis, gf.shape.clone(), false, tol);
-            if accept(&j, tol) {
+            let j = fit_joint(
+                &gf.members,
+                gf.axis,
+                gf.shape.clone(),
+                &gf.fixed,
+                false,
+                tol,
+            );
+            if accept(&j, &gf.members, tol) {
                 gf.axis = j.axis;
                 gf.shape = j.shape.clone();
                 joint = Some(j);
@@ -866,8 +979,8 @@ pub fn refine_regions(
             && let Some(e) = world_axis(gf.axis.a, cos_lim)
         {
             let axis = Axis { a: e, c: gf.axis.c };
-            let j = fit_joint(&gf.members, axis, gf.shape.clone(), true, tol);
-            if accept(&j, tol) {
+            let j = fit_joint(&gf.members, axis, gf.shape.clone(), &gf.fixed, true, tol);
+            if accept(&j, &gf.members, tol) {
                 gf.axis = j.axis;
                 gf.shape = j.shape.clone();
                 joint = Some(j);
@@ -977,6 +1090,20 @@ mod tests {
     }
 
     #[test]
+    fn tessellation_law_rounds_n_to_the_nearest_step_count() {
+        let frame = Frame::tilted();
+        let step = std::f64::consts::TAU / 36.0 * (1.0 - 1e-7);
+        let angles: Vec<f64> = (0..=8).map(|k| 0.2 + step * k as f64).collect();
+        let (pts, _) = strip(&frame, |_| 10.0, &angles, &[0.0, 1.0]);
+        let axis = Axis {
+            a: frame.dir([0.0, 0.0, 1.0]),
+            c: frame.off,
+        };
+        let law = tessellation_radius(&pts, &axis, 10.0, 1e-6).unwrap();
+        assert!((law - 10.0).abs() < 1e-5, "{law}");
+    }
+
+    #[test]
     fn tessellation_law_refuses_irregular_turning() {
         let frame = Frame::identity();
         let axis = Axis {
@@ -997,7 +1124,7 @@ mod tests {
         let frame = Frame::tilted();
         for (n, segments) in [(32, 8), (6, 2), (40, 3)] {
             let (pts, tris) = strip(&frame, |_| 1.25, &arc(n, segments, 1.0), &[0.0, 0.5, 4.0]);
-            let (kind, axis, shape, _, max) = fit_single(&pts, &tris, 1e-7).unwrap();
+            let (kind, axis, shape, _, max, _) = fit_single(&pts, &tris, 1e-7).unwrap();
             assert_eq!(kind, Kind::Cylinder);
             assert!((shape[0] - 1.25).abs() < 1e-10, "n={n}: {}", shape[0]);
             assert!(dot(axis.a, frame.dir([0.0, 0.0, 1.0])).abs() > 1.0 - 1e-13);
@@ -1015,7 +1142,7 @@ mod tests {
                 &arc(n, segments, -0.4),
                 &[0.0, 1.5, 3.0],
             );
-            let (kind, axis, shape, _, max) = fit_single(&pts, &tris, 1e-7).unwrap();
+            let (kind, axis, shape, _, max, _) = fit_single(&pts, &tris, 1e-7).unwrap();
             assert_eq!(kind, Kind::Cone { sign: 1.0 });
             assert!((shape[1] - 0.6f64.atan()).abs() < 1e-10, "n={n}");
             let apex = add(axis.c, scale(axis.a, shape[0]));
@@ -1034,7 +1161,7 @@ mod tests {
             p[0] += e;
             p[1] -= 0.5 * e;
         }
-        let (kind, axis, shape, _, _) = fit_single(&pts, &tris, 1e-4).unwrap();
+        let (kind, axis, shape, _, _, _) = fit_single(&pts, &tris, 1e-4).unwrap();
         assert_eq!(kind, Kind::Cylinder);
         assert_ne!(axis.a.map(f64::abs), [0.0, 0.0, 1.0]);
         let member = Member {
@@ -1042,18 +1169,103 @@ mod tests {
             kind,
             slot: 0,
         };
+        let members = [member];
         let snapped = fit_joint(
-            &[member],
+            &members,
             Axis {
                 a: [0.0, 0.0, 1.0],
                 c: axis.c,
             },
             shape,
+            &[false],
             true,
             1e-4,
         );
-        assert!(accept(&snapped, 1e-4));
+        assert!(accept(&snapped, &members, 1e-4));
         assert_eq!(snapped.axis.a, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn cone_sagitta_bounds_a_dense_max_over_random_triangles() {
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut rnd = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut lo, mut hi): (f64, f64) = (f64::INFINITY, 0.0);
+        for _ in 0..400 {
+            let alpha = (3.0 + 82.0 * rnd()).to_radians();
+            let axis = unit([rnd() - 0.5, rnd() - 0.5, rnd() - 0.5]);
+            let apex = [10.0 * rnd(), -5.0 * rnd(), 3.0 * rnd()];
+            let s = Surface::Cone {
+                apex,
+                axis,
+                half_angle: alpha,
+                reversed: rnd() < 0.5,
+            };
+            let (u, v) = basis(axis);
+            let spread = (5.0 + 175.0 * rnd()).to_radians();
+            let phi0 = std::f64::consts::TAU * rnd();
+            let t: [V3; 3] = std::array::from_fn(|_| {
+                let h = 0.2 + 10.0 * rnd();
+                let phi = phi0 + spread * rnd();
+                let r = h * alpha.tan();
+                add(
+                    apex,
+                    add(
+                        scale(axis, h),
+                        add(scale(u, r * phi.cos()), scale(v, r * phi.sin())),
+                    ),
+                )
+            });
+            let bound = sagitta(&s, t);
+            let k = 120;
+            let mut dense: f64 = 0.0;
+            for i in 0..=k {
+                for j in 0..=k - i {
+                    let (a, b) = (i as f64 / k as f64, j as f64 / k as f64);
+                    let p = add(
+                        add(scale(t[0], a), scale(t[1], b)),
+                        scale(t[2], 1.0 - a - b),
+                    );
+                    dense = dense.max(s.distance(p).abs());
+                }
+            }
+            if dense < 1e-9 {
+                continue;
+            }
+            assert!(
+                bound >= dense * (1.0 - 1e-9),
+                "bound {bound} < dense {dense}"
+            );
+            assert!(bound <= 2.0 * dense, "bound {bound} > 2x dense {dense}");
+            lo = lo.min(bound / dense);
+            hi = hi.max(bound / dense);
+        }
+        eprintln!("cone sagitta bound / dense max: min {lo:.6} max {hi:.6}");
+    }
+
+    #[test]
+    fn group_refit_refuses_an_out_of_range_cone() {
+        let members = [Member {
+            pts: Vec::new(),
+            kind: Kind::Cone { sign: 1.0 },
+            slot: 0,
+        }];
+        let axis = Axis {
+            a: [0.0, 0.0, 1.0],
+            c: [0.0; 3],
+        };
+        for (alpha, ok) in [(0.5, true), (-0.1, false), (1.6, false)] {
+            let joint = Joint {
+                axis,
+                shape: vec![0.0, alpha],
+                fit: vec![(0.0, 0.0)],
+            };
+            assert_eq!(accept(&joint, &members, 1e-3), ok, "{alpha}");
+        }
     }
 
     #[test]

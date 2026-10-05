@@ -791,12 +791,27 @@ mod tests {
         n: usize,
         frame: &Frame,
     ) -> (TriangleSoup, Vec<u32>) {
+        twisted_frustum(r0, r1, h, n, 0.0, frame)
+    }
+
+    pub(super) fn twisted_frustum(
+        r0: f64,
+        r1: f64,
+        h: f64,
+        n: usize,
+        twist: f64,
+        frame: &Frame,
+    ) -> (TriangleSoup, Vec<u32>) {
+        let top = |i: usize| {
+            let t = std::f64::consts::TAU * (i % n) as f64 / n as f64 + twist;
+            [r1 * t.cos(), r1 * t.sin(), h]
+        };
         let mut tris = Vec::new();
         let mut labels = Vec::new();
         let m = |p: V3| frame.map(p);
         for i in 0..n {
             let (b0, b1) = (ring(r0, 0.0, i, n), ring(r0, 0.0, i + 1, n));
-            let (t1, t0) = (ring(r1, h, i + 1, n), ring(r1, h, i, n));
+            let (t1, t0) = (top(i + 1), top(i));
             tris.push([m(b0), m(b1), m(t1)]);
             tris.push([m(b0), m(t1), m(t0)]);
             labels.extend([0, 0]);
@@ -901,6 +916,161 @@ mod tests {
             assert!(norm(sub(*apex, frame.map([0.0, 0.0, z_apex]))) < 1e-8);
             assert!(dot(*axis, frame.dir([0.0, 0.0, widen])) > 1.0 - 1e-12);
             assert_eq!(*orientation, Orientation::Same);
+        }
+    }
+
+    /// Prism over a circular sector: `segments` equal chords turning by
+    /// `step`, the arc wall labelled 0, the two radial walls 1 and 2, the
+    /// caps 3 and 4. Every distinct vertex is moved by up to `noise`.
+    pub(super) fn sector_prism(
+        r: f64,
+        segments: usize,
+        step: f64,
+        noise: f64,
+        frame: &Frame,
+    ) -> (TriangleSoup, Vec<u32>) {
+        let h = 5.0;
+        let start = -std::f64::consts::FRAC_PI_2;
+        let mut profile = vec![[0.0, 0.0]];
+        for k in 0..=segments {
+            let t = start + step * k as f64;
+            profile.push([r * t.cos(), r * t.sin()]);
+        }
+        let m = profile.len();
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut jitter = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        let pts: Vec<[V3; 2]> = profile
+            .iter()
+            .map(|q| {
+                let mut at = |z: f64| {
+                    let p = frame.map([q[0], q[1], z]);
+                    add(p, scale([jitter(), jitter(), jitter()], noise))
+                };
+                [at(0.0), at(h)]
+            })
+            .collect();
+        let mut tris = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..m {
+            let j = (i + 1) % m;
+            let label = if i == 0 {
+                1
+            } else if j == 0 {
+                2
+            } else {
+                0
+            };
+            tris.push([pts[i][0], pts[j][0], pts[j][1]]);
+            tris.push([pts[i][0], pts[j][1], pts[i][1]]);
+            labels.extend([label, label]);
+        }
+        for i in 1..m - 1 {
+            tris.push([pts[0][1], pts[i][1], pts[i + 1][1]]);
+            labels.push(4);
+            tris.push([pts[0][0], pts[i + 1][0], pts[i][0]]);
+            labels.push(3);
+        }
+        (TriangleSoup { triangles: tris }, labels)
+    }
+
+    fn sector_radius(seg: usize, step: f64, noise: f64, tol: f64) -> f64 {
+        let (soup, labels) = sector_prism(10.0, seg, step, noise, &Frame::tilted());
+        let out = convert_soup_from_labels(
+            &soup,
+            &labels,
+            &ConvertOptions {
+                linear_tolerance: Some(tol),
+                ..ConvertOptions::default()
+            },
+        )
+        .unwrap();
+        out.ir.validate().unwrap();
+        cylinder_of(&out.ir, 2).2
+    }
+
+    #[test]
+    fn tessellation_law_recovers_short_noisy_off_axis_arcs() {
+        let tau = std::f64::consts::TAU;
+        for (seg, n) in [(3, 36), (2, 24), (3, 12), (9, 36)] {
+            let r = sector_radius(seg, tau / n as f64, 1e-4, 1e-3);
+            assert!((r - 10.0).abs() < 1e-4, "{seg} of {n}: radius {r}");
+        }
+        for (seg, n) in [(2, 6), (3, 8), (5, 40)] {
+            let r = sector_radius(seg, tau / n as f64, 0.0, 1e-6);
+            assert!((r - 10.0).abs() < 1e-9, "clean {seg} of {n}: radius {r}");
+        }
+    }
+
+    #[test]
+    fn tessellation_law_never_replaces_an_exact_radius() {
+        let step = 90.05f64.to_radians() / 9.0;
+        for tol in [1e-2, 1e-3] {
+            let r = sector_radius(9, step, 0.0, tol);
+            assert!((r - 10.0).abs() < 1e-9, "tol {tol}: radius {r}");
+        }
+    }
+
+    fn dense_cone_deviation(soup: &TriangleSoup, labels: &[u32], ir: &crate::ir::Ir) -> f64 {
+        let r = ir
+            .regions
+            .iter()
+            .find(|r| r.triangles.contains(&0))
+            .unwrap();
+        let Surface::Cone {
+            apex,
+            axis,
+            half_angle,
+            ..
+        } = r.surface
+        else {
+            panic!("expected a cone");
+        };
+        let cone = surface::Surface::Cone {
+            apex,
+            axis,
+            half_angle,
+            reversed: false,
+        };
+        let k = 200;
+        let mut worst: f64 = 0.0;
+        for (t, &l) in soup.triangles.iter().zip(labels) {
+            if l != 0 {
+                continue;
+            }
+            for i in 0..=k {
+                for j in 0..=k - i {
+                    let (a, b) = (i as f64 / k as f64, j as f64 / k as f64);
+                    let p = add(
+                        add(scale(t[0], a), scale(t[1], b)),
+                        scale(t[2], 1.0 - a - b),
+                    );
+                    worst = worst.max(cone.distance(p).abs());
+                }
+            }
+        }
+        worst
+    }
+
+    #[test]
+    fn twisted_cone_never_under_reports() {
+        for frame in [Frame::identity(), Frame::tilted()] {
+            let (soup, labels) = twisted_frustum(10.0, 2.0, 4.0, 48, 60f64.to_radians(), &frame);
+            let out = labelled(&soup, &labels);
+            out.ir.validate().unwrap();
+            assert_eq!(out.report.region_counts.get("cone"), Some(&1));
+            let measured = dense_cone_deviation(&soup, &labels, &out.ir);
+            assert!(measured > 0.284, "{measured}");
+            assert!(
+                out.report.max_deviation >= measured,
+                "reported {} < measured {measured}",
+                out.report.max_deviation
+            );
+            assert!(out.report.max_deviation < measured * 1.001);
         }
     }
 
