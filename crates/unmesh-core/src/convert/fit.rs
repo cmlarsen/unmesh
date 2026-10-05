@@ -395,15 +395,19 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         scratch,
     } = args;
     let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, false);
+    super::timing::lap("segment");
     let (label2, regions) =
         merge_and_rebuild(vc, faces, info, nbr, &label, n_seg, tol, snap_deg, scratch);
+    super::timing::lap("merge");
     let (label3, regions) = match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol) {
         Some((combined, n_all)) => merge_and_rebuild(
             vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
         ),
         None => (label2, regions),
     };
+    super::timing::lap("resplit");
     let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol);
+    super::timing::lap("grow");
     let mut regions = grown.regions;
     super::curved::refine_regions_with(
         vc,
@@ -415,8 +419,10 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         grown.prefit,
         false,
     );
+    super::timing::lap("curved");
     let mut label = grown.label;
     absorb_remnants(vc, faces, nbr, info, &mut label, &mut regions, tol);
+    super::timing::lap("absorb");
     (label, regions)
 }
 

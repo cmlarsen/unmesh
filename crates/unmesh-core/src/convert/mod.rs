@@ -14,6 +14,7 @@ mod refine;
 mod segment;
 mod snap;
 mod surface;
+mod timing;
 mod topology;
 mod weld;
 
@@ -184,7 +185,9 @@ type Prepared = (
 );
 
 fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, ConvertError> {
+    timing::start();
     let (mut w, mut warnings) = weld::run(soup, options.vertex_merge)?;
+    timing::lap("weld");
 
     let auto_tol = options.linear_tolerance.is_none();
     let tol = match options.linear_tolerance {
@@ -199,8 +202,10 @@ fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, Co
 
     let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
     warnings.extend(shell_warnings);
+    timing::lap("topology");
 
     let info = segment::tri_info(&w.vc, &w.faces);
+    timing::lap("info");
     Ok((w, shells, info, tol, auto_tol, warnings))
 }
 
@@ -225,6 +230,7 @@ fn finish(
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
+        timing::lap("noise");
     }
     let (label2, mut regions) = fit_once(tol);
     snap::snap_normals(
@@ -236,9 +242,11 @@ fn finish(
         w.diag,
         w.max_abs,
     );
+    timing::lap("snap");
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
     let (finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
+    timing::lap("finalize");
 
     let Projected {
         positions: pv,
@@ -255,6 +263,7 @@ fn finish(
         diag: w.diag,
         center: w.center,
     });
+    timing::lap("project");
 
     let total_area: f64 = info.iter().map(|t| t.area).sum();
     let plane_area: f64 = finals
@@ -302,6 +311,7 @@ fn finish(
     };
     let out_pos = positions(&pv);
     let result = emit::assemble(&asm, &finals, &flabel, &out_pos);
+    timing::lap("emit");
     let merge = w.merge_dev;
     let (ir, report_dev, report_rms, region_counts, area_fraction) = match result {
         Ok((ir, moved)) => (
