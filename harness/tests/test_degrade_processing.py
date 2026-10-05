@@ -1,18 +1,32 @@
 import copy
+import dataclasses
+import hashlib
 import math
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 from build123d import Box, Cylinder, Sphere
+from scipy.spatial import cKDTree
 
+from unmesh.ir import Region
 from unmesh_harness import degrade
 from unmesh_harness.corpus import load_manifest, select
 from unmesh_harness.degrade import OPERATORS
-from unmesh_harness.degrade.processing import CONFIDENCE_KEY, MASK_THRESHOLD, transfer_labels
+from unmesh_harness.degrade.processing import (
+    CONFIDENCE_KEY,
+    MASK_THRESHOLD,
+    _exact_votes,
+    _weld,
+    sample_source,
+    transfer_labels,
+)
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, outward_normals, tessellate
+from unmesh_harness.metrics.recovery import score_recovery
+from unmesh_harness.oracle import build_oracle_ir
 
 from .test_labels import closed_manifold_problems
 
@@ -27,7 +41,7 @@ PROC_OPS = (
     "vertex_clustering",
 )
 WATERTIGHT = {
-    "quadric_decimation": False,
+    "quadric_decimation": True,
     "isotropic_remesh": True,
     "laplacian_smoothing": True,
     "taubin_smoothing": True,
@@ -70,6 +84,14 @@ def smoke_pair():
     for e in (entries[0], entries[3]):
         out.append((e["id"], tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG)))
     return out
+
+
+@pytest.fixture(scope="module")
+def smoke_parts():
+    return [
+        (e["id"], tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG))
+        for e in select(load_manifest(), "smoke")
+    ]
 
 
 def assert_processing_labels_aligned(before: LabeledMesh, after: LabeledMesh, name: str) -> None:
@@ -196,15 +218,14 @@ def test_history_params_survive_save_load(box, tmp_path):
     assert np.array_equal(back.face_id, out.face_id)
 
 
-def test_identity_relabel_through_path_a():
+def test_identity_relabel_through_path_a(smoke_parts):
     total = correct = confident = 0
-    for e in select(load_manifest(), "smoke"):
-        mesh = tessellate(generate(e["family"], e["seed"]).solid, LIN, ANG)
+    for pid, mesh in smoke_parts:
         out = copy.deepcopy(mesh)
         transfer_labels(out, mesh.tris, mesh.face_id)
-        assert np.array_equal(out.face_id, mesh.face_id), e["id"]
+        assert np.array_equal(out.face_id, mesh.face_id), pid
         conf = np.array(out.metadata[CONFIDENCE_KEY])
-        assert (conf >= MASK_THRESHOLD).mean() >= 0.99, e["id"]
+        assert (conf >= MASK_THRESHOLD).mean() >= 0.99, pid
         total += len(mesh.tris)
         correct += int((out.face_id == mesh.face_id).sum())
         confident += int((conf >= MASK_THRESHOLD).sum())
@@ -233,16 +254,39 @@ def test_decimate_reduces_triangles_with_severity(cyl, smoke_pair):
         assert counts[2] <= len(mesh.tris)
 
 
-def test_decimate_quadric_planar_first(cyl):
-    before = {f: int((cyl.face_id == f).sum()) for f in sorted(set(cyl.face_id.tolist()))}
-    assert before[0] == 84
-    out = degrade.apply("quadric_decimation", cyl, 0.6, SEED)
-    after = {f: int((out.face_id == f).sum()) for f in sorted(set(out.face_id.tolist()))}
-    assert min(after.get(1, 0), after.get(2, 0)) <= 4
-    assert after.get(0, 0) > min(after.get(1, 0), after.get(2, 0))
-    assert after.get(0, 0) >= 16
-    params = out.metadata["history"][-1]["params"]
-    assert params["keep_ratio_achieved"] <= params["keep_ratio_target"] + 0.15
+def test_decimate_planar_regions_collapse_to_minimal_first(cyl):
+    fine = degrade.apply("refine", cyl, 0.5, 0)
+    rim = int((cyl.face_id == 1).sum())
+    before = np.bincount(fine.face_id, minlength=3)
+    assert before[1] > 10 * rim and before[2] > 10 * rim
+    for severity in (0.3, 0.6, 1.0):
+        out = degrade.apply("quadric_decimation", fine, severity, SEED)
+        after = np.bincount(out.face_id, minlength=3)
+        assert after[1] <= rim + 2 and after[2] <= rim + 2, (severity, after)
+        assert after[0] / before[0] > 3 * after[1] / before[1], (severity, after)
+        params = out.metadata["history"][-1]["params"]
+        assert params["keep_ratio_achieved"] <= params["keep_ratio_target"] + 0.01
+
+
+def test_decimate_moves_vertices_and_stays_closed(cyl, smoke_pair):
+    for mesh in [cyl] + [m for _, m in smoke_pair]:
+        assert closed_manifold_problems(mesh.tris)[0] == []
+        source = {tuple(p) for p in mesh.tris.reshape(-1, 3).tolist()}
+        for severity in (0.3, 0.6, 1.0):
+            out = degrade.apply("quadric_decimation", mesh, severity, SEED)
+            assert closed_manifold_problems(out.tris)[0] == [], severity
+            corners = {tuple(p) for p in out.tris.reshape(-1, 3).tolist()}
+            assert corners - source, severity
+            assert len(out.tris) < len(mesh.tris)
+
+
+def test_decimate_open_input_keeps_its_boundary(box):
+    opened = copy.deepcopy(box)
+    opened.tris = opened.tris[1:]
+    opened.face_id = opened.face_id[1:]
+    boundary = {tuple(p) for p in box.tris[0].tolist()}
+    out = degrade.apply("quadric_decimation", opened, 1.0, SEED)
+    assert boundary <= {tuple(p) for p in out.tris.reshape(-1, 3).tolist()}
 
 
 def test_decimate_extreme_has_floor(box):
@@ -441,6 +485,7 @@ def test_smoothing_polylines_move_with_mesh(cyl):
         assert all(tuple(v) in known for v in out.vertices)
 
 
+@pytest.mark.benchmark
 def test_largest_smoke_part_under_two_seconds():
     entries = select(load_manifest(), "smoke")
     meshes = [
@@ -482,3 +527,189 @@ def test_processing_sweep_full_smoke():
                 assert_processing_labels_aligned(mesh, out, name)
                 if OPERATORS[name].preserves_watertight:
                     assert closed_manifold_problems(out.tris)[0] == [], (e["id"], name, severity)
+
+
+ORACLE_SEVERITIES = (0.1, 0.5, 1.0)
+
+
+def oracle_on_degraded(clean: LabeledMesh, degraded: LabeledMesh):
+    base = build_oracle_ir(clean)
+    surface = {r.id: r.surface for r in base.regions}
+    regions = []
+    for face in clean.faces:
+        ids = np.nonzero(degraded.face_id == face.id)[0]
+        if len(ids):
+            regions.append(Region(len(regions), surface[face.id], ids.tolist(), None))
+    return dataclasses.replace(base, regions=regions, adjacencies=[])
+
+
+def oracle_score(clean: LabeledMesh, degraded: LabeledMesh) -> dict:
+    return score_recovery(
+        clean,
+        degraded.face_id,
+        oracle_on_degraded(clean, degraded),
+        np.eye(4),
+        degraded.metadata.get(CONFIDENCE_KEY),
+    )
+
+
+@pytest.mark.parametrize("name", PROC_OPS)
+def test_oracle_on_degraded_labels_scores_one(name, smoke_parts):
+    lost = 0
+    for pid, mesh in smoke_parts:
+        for severity in ORACLE_SEVERITIES:
+            out = degrade.apply(name, mesh, severity, SEED)
+            result = oracle_score(mesh, out)
+            key = (pid, severity)
+            assert result["recall"] == 1.0, key
+            assert result["precision"] == 1.0, key
+            assert result["f1"] == 1.0, key
+            scored = [d for d in result["faces_detail"] if d["region"] is not None]
+            assert all(d["iou"] == 1.0 for d in scored), key
+            assert result["faces"] + result["faces_unrecoverable"] == len(mesh.faces), key
+            lost += result["faces_unrecoverable"]
+    if name in SMOOTHING:
+        assert lost == 0
+    else:
+        assert lost > 0
+
+
+def _normals(tris: np.ndarray) -> np.ndarray:
+    n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    return n / np.linalg.norm(n, axis=1, keepdims=True)
+
+
+def _nearest_source(mesh: LabeledMesh, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    pts, owner = sample_source(mesh.tris)
+    return _exact_votes(points, mesh.tris, owner, cKDTree(pts), 0.0)
+
+
+@pytest.mark.parametrize("pid", ["thin_walls-0000", "thin_walls-0001"])
+def test_remesh_thin_walls_have_no_back_facing_triangles(pid, smoke_parts):
+    mesh = dict(smoke_parts)[pid]
+    diagonal = float(np.linalg.norm(np.ptp(mesh.tris.reshape(-1, 3), axis=0)))
+    for severity in (0.5, 1.0):
+        out = degrade.apply("isotropic_remesh", mesh, severity, SEED)
+        tri, _ = _nearest_source(mesh, out.tris.mean(axis=1))
+        dots = (_normals(out.tris) * _normals(mesh.tris)[tri]).sum(axis=1)
+        assert (dots > 0).all(), (severity, int((dots <= 0).sum()))
+        _, d2 = _nearest_source(mesh, out.tris.reshape(-1, 3))
+        assert float(np.sqrt(d2.max())) <= 1e-9 * diagonal
+
+
+def test_remesh_keeps_sharp_edges(box):
+    out = degrade.apply("isotropic_remesh", box, 1.0, SEED)
+    corners = {tuple(p) for p in box.tris.reshape(-1, 3).tolist()}
+    assert corners <= {tuple(p) for p in out.tris.reshape(-1, 3).tolist()}
+    tri, _ = _nearest_source(box, out.tris.mean(axis=1))
+    dots = (_normals(out.tris) * _normals(box.tris)[tri]).sum(axis=1)
+    assert dots.min() > 1 - 1e-9
+
+
+@pytest.mark.parametrize("name", ["isotropic_remesh", "quadric_decimation", "vertex_clustering"])
+def test_low_confidence_sits_on_face_boundaries(name, cyl, smoke_pair):
+    low_total = 0
+    for mesh in [cyl] + [m for _, m in smoke_pair]:
+        out = degrade.apply(name, mesh, 0.5, SEED)
+        conf = np.asarray(out.metadata[CONFIDENCE_KEY])
+        low = np.nonzero(conf < MASK_THRESHOLD)[0]
+        low_total += len(low)
+        if len(low) == 0:
+            continue
+        _, F = _weld(out.tris)
+        labels: dict[int, set[int]] = {}
+        for row, fid in zip(F.tolist(), out.face_id.tolist(), strict=True):
+            for v in row:
+                labels.setdefault(v, set()).add(fid)
+        mixed = np.array([any(len(labels[v]) > 1 for v in F[t]) for t in low])
+        assert mixed.all(), (name, int((~mixed).sum()))
+    assert low_total > 0
+
+
+CHAIN_TAILS = (("refine", 0.3), ("hole_patch", 0.5), ("duplicate_facets", 0.5))
+
+
+@pytest.mark.parametrize("name", PROC_OPS)
+@pytest.mark.parametrize("tail", CHAIN_TAILS, ids=lambda t: t[0])
+def test_processing_chains_keep_confidence_aligned(name, tail, smoke_pair):
+    for _, mesh in smoke_pair:
+        out = degrade.chain(mesh, [(name, 0.5), tail], SEED)
+        conf = out.metadata[CONFIDENCE_KEY]
+        assert len(conf) == len(out.tris) == len(out.face_id)
+        assert all(0.0 <= c <= 1.0 for c in conf)
+        result = oracle_score(mesh, out)
+        assert result["f1"] == 1.0, (name, tail)
+        first = degrade.apply(name, mesh, 0.5, SEED)
+        if tail[0] == "duplicate_facets":
+            kept = np.asarray(conf[: len(first.tris)])
+            assert np.array_equal(kept, np.asarray(first.metadata[CONFIDENCE_KEY]))
+
+
+@pytest.mark.parametrize("name", PROC_OPS)
+def test_processing_after_processing_caps_confidence(name, cyl):
+    first = degrade.apply("isotropic_remesh", cyl, 1.0, SEED)
+    assert min(first.metadata[CONFIDENCE_KEY]) < MASK_THRESHOLD
+    fresh_input = copy.deepcopy(first)
+    del fresh_input.metadata[CONFIDENCE_KEY]
+    chained = degrade.apply(name, first, 0.5, SEED)
+    fresh = degrade.apply(name, fresh_input, 0.5, SEED)
+    assert np.array_equal(chained.tris, fresh.tris)
+    a = np.asarray(chained.metadata[CONFIDENCE_KEY])
+    b = np.asarray(fresh.metadata[CONFIDENCE_KEY])
+    assert len(a) == len(chained.tris)
+    assert (a <= b).all()
+    assert (a < b).any()
+
+
+def test_label_votes_prefer_source_facing_the_same_way():
+    plate = tessellate(Box(20, 20, 0.2), LIN, ANG)
+    top = next(f.id for f in plate.faces if f.params.get("normal", [0, 0, 0])[2] > 0.5)
+    bottom = next(f.id for f in plate.faces if f.params.get("normal", [0, 0, 0])[2] < -0.5)
+    probe = copy.deepcopy(plate)
+    down = np.array([[[0.0, 0.0, -0.09], [1.0, -1.0, -0.09], [1.0, 1.0, -0.09]]])
+    probe.tris = np.concatenate([down, down[:, ::-1]])
+    probe.face_id = np.zeros(2, dtype=plate.face_id.dtype)
+    transfer_labels(probe, plate.tris, plate.face_id)
+    assert probe.face_id.tolist() == [top, bottom]
+
+
+def test_projection_stays_on_the_vertex_faces():
+    from unmesh_harness.degrade.processing import _Projector
+
+    plate = tessellate(Box(20, 20, 0.2), LIN, ANG)
+    names, labels = np.unique(plate.face_id, return_inverse=True)
+    top = next(f.id for f in plate.faces if f.params.get("normal", [0, 0, 0])[2] > 0.5)
+    lab = int(np.searchsorted(names, top))
+    proj = _Projector(plate.tris, labels)
+    point = np.array([[1.0, 2.0, -0.09]])
+    keys = np.array([0 * proj.n_labels + lab])
+    got = proj(point, np.array([[0]]), keys, require_all=True)
+    assert got[0] == pytest.approx([1.0, 2.0, 0.1])
+
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "processing"
+PINNED = {
+    ("round_boss-0000", "quadric_decimation"): "b2903b0f0ba77528",
+    ("round_boss-0000", "isotropic_remesh"): "2b73dc3ce9b67db8",
+    ("round_boss-0000", "laplacian_smoothing"): "10b50fff713551a9",
+    ("round_boss-0000", "taubin_smoothing"): "7319d108dddc5ec3",
+    ("round_boss-0000", "vertex_clustering"): "293f63b680729c73",
+    ("thin_walls-0001", "quadric_decimation"): "589af057120c6e30",
+    ("thin_walls-0001", "isotropic_remesh"): "121eab548dd9b365",
+    ("thin_walls-0001", "laplacian_smoothing"): "91248b810140338c",
+    ("thin_walls-0001", "taubin_smoothing"): "19f01541fcf984ae",
+    ("thin_walls-0001", "vertex_clustering"): "90171284528ebb7a",
+}
+
+
+@pytest.mark.parametrize(("part", "name"), sorted(PINNED))
+def test_output_is_pinned_across_platforms(part, name):
+    with np.load(FIXTURES / f"{part}.npz") as z:
+        mesh = LabeledMesh(z["tris"], z["face_id"], [], [], 0.0, 0.0)
+    out = degrade.apply(name, mesh, 0.5, SEED)
+    blob = (
+        out.tris.tobytes()
+        + out.face_id.astype(np.int64).tobytes()
+        + np.asarray(out.metadata[CONFIDENCE_KEY]).tobytes()
+    )
+    assert hashlib.sha256(blob).hexdigest()[:16] == PINNED[(part, name)]
