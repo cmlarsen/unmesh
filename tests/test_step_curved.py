@@ -7,7 +7,18 @@ import pytest
 
 pytest.importorskip("OCP")
 
-from build123d import Align, Box, Cone, Cylinder, Pos, Rot, Sphere, Torus  # noqa: E402
+from build123d import (  # noqa: E402
+    Align,
+    Axis,
+    Box,
+    Cone,
+    Cylinder,
+    Pos,
+    Rot,
+    Sphere,
+    Torus,
+    fillet,
+)
 from OCP.BRep import BRep_Tool  # noqa: E402
 from OCP.Geom import Geom_Circle, Geom_Ellipse  # noqa: E402
 from OCP.TopAbs import TopAbs_EDGE  # noqa: E402
@@ -206,7 +217,9 @@ def test_seams_poles_and_bands_write_exactly(name, tmp_path):
     path = tmp_path / f"{name}.step"
     report = step.write(oracle(shape), path)
     assert report.valid and report.verified, report.issues
-    assert not report.edge_fallbacks
+    assert all(e.kind == "interpolated" for e in report.edge_fallbacks)
+    assert all(e.intersection_distance < 1e-5 for e in report.edge_fallbacks)
+    assert bool(report.edge_fallbacks) == (name == "cross_bores")
     assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-6)
     written = occ.read_step(path)
     assert brep_counts(written) == brep_counts(shape)
@@ -271,3 +284,262 @@ def test_an_ir_orientation_the_geometry_contradicts_is_not_written(tmp_path):
     report = step.write(bad, tmp_path / "bad.step")
     assert not report.valid
     assert not (tmp_path / "bad.step").exists()
+
+
+def write_oracle(shape, tmp_path, deflection=(0.01, 0.2), name="t"):
+    ir = build_oracle_ir(tessellate(shape, *deflection))
+    path = tmp_path / f"{name}.step"
+    return ir, step.write(ir, path), path
+
+
+def assert_exact(shape, report, path, hausdorff=1e-6):
+    assert report.valid and report.verified, report.issues
+    assert report.fallback is None
+    written = occ.read_step(path)
+    assert brep_counts(written) == brep_counts(shape)
+    h = edge_hausdorff(written, shape)
+    assert h["edges"] == h["truth_edges"] == h["matched"]
+    assert h["max"] < hausdorff
+
+
+def tangent_pairs(ir, report):
+    kinds = {}
+    for t in report.tangent_edges:
+        a, b = t.regions
+        pair = tuple(sorted((ir.regions[a].surface.type, ir.regions[b].surface.type)))
+        kinds.setdefault(pair, set()).add(t.curve)
+    return kinds
+
+
+def test_plane_cylinder_fillet_is_a_line(tmp_path):
+    shape = fillet(Box(20, 16, 8).edges().filter_by(Axis.Z)[0], 3)
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert_exact(shape, report, path)
+    assert tangent_pairs(ir, report) == {("cylinder", "plane"): {"line"}}
+    assert all(t.max_deviation < 1e-9 for t in report.tangent_edges)
+
+
+def test_disc_fillet_circles_on_plane_torus_and_cylinder_torus(tmp_path):
+    disc = Cylinder(12, 8)
+    shape = fillet(disc.edges().group_by(Axis.Z)[-1], 2.5)
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert_exact(shape, report, path)
+    assert tangent_pairs(ir, report) == {
+        ("plane", "torus"): {"circle"},
+        ("cylinder", "torus"): {"circle"},
+    }
+    assert curve_types(path) == {"Geom_Circle", "Geom_Line"}
+
+
+def test_tangent_edge_without_an_analytic_fit_is_a_bspline(tmp_path, monkeypatch):
+    monkeypatch.setattr(curved, "fit_line", lambda points: None)
+    monkeypatch.setattr(curved, "fit_circle", lambda points, closed: None)
+    shape = fillet(Cylinder(12, 8).edges().group_by(Axis.Z)[-1], 2.5)
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert_exact(shape, report, path, hausdorff=1e-4)
+    assert {t.curve for t in report.tangent_edges} == {"bspline"}
+    assert all(t.max_deviation < 1e-4 for t in report.tangent_edges)
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-6)
+
+
+def test_corner_blend_sphere_closes_at_a_pole_on_its_vertex(tmp_path):
+    shape = fillet(Box(20, 16, 12).edges(), 2)
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert_exact(shape, report, path)
+    assert tangent_pairs(ir, report) == {
+        ("cylinder", "plane"): {"line"},
+        ("cylinder", "sphere"): {"circle"},
+    }
+
+
+def tee():
+    return Cylinder(5, 20) + Rot(0, 90, 0) * Cylinder(5, 20)
+
+
+def boss_on_pipe():
+    return Rot(0, 90, 0) * Cylinder(5, 20) + Pos(0, 0, 7.5) * Cylinder(5, 15)
+
+
+def union_distance(written, truth) -> float:
+    from unmesh_harness.metrics.edges import _distances, _sample, boundary_edges
+
+    theirs = boundary_edges(truth.wrapped)
+    return max(
+        float(min(_distances(_sample(e, 200)[k : k + 1], t)[0] for t in theirs))
+        for e in boundary_edges(written)
+        for k in range(200)
+    )
+
+
+@pytest.mark.parametrize("make", [tee, boss_on_pipe], ids=["equal_tee", "boss_on_pipe"])
+def test_kind_change_edges_follow_the_intersection(make, tmp_path):
+    shape = make()
+    ir, report, path = write_oracle(shape, tmp_path, (0.001, 0.1))
+    assert any(v.role == "kind_change" for v in ir.vertices)
+    assert report.valid and report.verified and report.fallback is None, report.issues
+    assert {t.curve for t in report.tangent_edges} == {"bspline"}
+    assert all(e.intersection_distance < 1e-6 for e in report.edge_fallbacks)
+    assert report.max_shape_tolerance <= 1e-6
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-9)
+    assert union_distance(occ.read_step(path), shape) < 1e-6
+
+
+def test_interpolated_edges_are_recorded_with_their_distance_to_the_intersection(tmp_path):
+    shape = boss_on_pipe()
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert report.valid and report.verified, report.issues
+    (edge,) = report.edge_fallbacks
+    assert edge.kind == "interpolated"
+    assert 0 < edge.intersection_distance < 1e-5
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-8)
+
+
+def test_branch_distance_sees_a_bump_between_samples():
+    sa, sb, points, _ = PAIRS["plane-cylinder"]
+    circle, _ = curved.select_branch(intersect(sa, sb), points)
+    pts = [np.asarray(circle.Value(t).Coord()) for t in np.linspace(0, 1, 9)]
+    pts[4] = pts[4] + 0.01 * geo.unit(pts[4] - np.asarray(circle.Location().Coord()))
+    bumped = curved._interpolate(pts, False)
+    assert curved.branch_distance(bumped, [circle], 400) == pytest.approx(0.01, rel=0.05)
+
+
+def test_an_inconsistent_orientation_on_a_tangent_boundary_is_not_written(tmp_path):
+    shape = Cylinder(5, 10) + Pos(0, 0, 5) * Sphere(5)
+    ir = oracle(shape)
+    sphere = next(r for r in ir.regions if r.surface.type == "sphere")
+    sphere.surface.orientation = "reversed"
+    report = step.write(ir, tmp_path / "bad.step")
+    assert not report.valid
+    assert any("orientations meet at 180 degrees" in i for i in report.issues)
+
+
+def notch():
+    return Box(30, 30, 10) - Pos(15, 0, 0) * Cylinder(5, 20)
+
+
+def test_a_wrong_trim_of_the_intersection_is_projected_and_recorded(tmp_path, monkeypatch):
+    real = curved.trim_open
+
+    def complement(curve, p0, p1, points, same_vertex):
+        t0, t1, d = real(curve, p0, p1, points, same_vertex)
+        if curve.IsPeriodic():
+            t1 = t1 - curve.Period() if t1 > t0 else t1 + curve.Period()
+        return t0, t1, d
+
+    monkeypatch.setattr(curved, "trim_open", complement)
+    shape = notch()
+    ir, report, path = write_oracle(shape, tmp_path)
+    assert report.valid and report.verified, report.issues
+    assert report.edge_fallbacks
+    assert all("trimmed intersection is" in e.reason for e in report.edge_fallbacks)
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-6)
+
+
+def test_a_face_built_on_the_wrong_side_of_its_boundary_is_not_written(tmp_path, monkeypatch):
+    real = curved._Builder.curved_face
+
+    def flipped(self, r, s, loops):
+        if s.type == "sphere":
+            loops = [[curved._reverse_segment(seg) for seg in reversed(lp)] for lp in loops]
+        return real(self, r, s, loops)
+
+    monkeypatch.setattr(curved._Builder, "curved_face", flipped)
+    report = step.write(oracle(Cylinder(5, 10) + Pos(0, 0, 5) * Sphere(5)), tmp_path / "w.step")
+    assert not report.valid
+    assert any("is not on the IR's side of its boundary" in i for i in report.issues)
+
+
+def test_seam_vertex_is_snapped_onto_the_seam_when_refine_leaves_it_off(monkeypatch):
+    shape = Cylinder(5, 30) - Pos(0, 0, 8) * Rot(25, 0, 0) * Box(30, 30, 20)
+    ir = oracle(shape)
+    limit = 5e-3
+    from unmesh._writer import topology
+
+    vpos, vmoved, bad = topology.vertex_positions(ir, limit)
+    b = curved._Builder(ir, 0, *curved.refine_vertices(ir, vpos, vmoved, bad, limit), limit, None)
+    b.collect()
+    b.intersect()
+    e = next(
+        e
+        for e in b.edges
+        if e.closed and e.curve is not None and "Ellipse" in type(e.curve).__name__
+    )
+    r = next(r for r in (e.a, e.b) if ir.regions[r].surface.type == "cylinder")
+    b.frames[r] = curved._Frame(geo.unit(ir.regions[r].surface.axis), geo.unit((0.6, 0.8, 0.0)))
+    monkeypatch.setattr(curved.geo, "refine", lambda surfaces, p0: np.asarray(p0, dtype=float))
+    p = b.seam_point(e, r)
+    origin = geo.origin_of(ir.regions[r].surface)
+    assert abs(geo.angle_about(p, origin, b.frames[r].axis, b.frames[r].xdir)) < 1e-12
+    assert curved.nearest(e.curve, p)[1] < 1e-12
+
+
+def flipped_pocket(size=20.0, radius=4.0):
+    shape = Box(size, size, 10) - Pos(0, 0, 5) * Sphere(radius)
+    mesh = tessellate(shape, 0.01, 0.2)
+    ir = build_oracle_ir(mesh)
+    next(r for r in ir.regions if r.surface.type == "sphere").surface.orientation = "same"
+    return shape, ir, np.asarray(mesh.tris).reshape(-1, 3, 3)
+
+
+def test_a_volume_the_mesh_contradicts_falls_back(tmp_path):
+    shape, ir, tris = flipped_pocket()
+    report = step.write(ir, tmp_path / "p.step", mesh=tris)
+    assert report.valid and report.fallback == "faceted"
+    assert report.volume_checked_against_input
+    assert "differs from mesh volume" in report.fallback_reason
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-3)
+
+
+def test_without_a_mesh_the_volume_is_reported_unchecked(tmp_path):
+    _, ir, _ = flipped_pocket()
+    report = step.write(ir, tmp_path / "p.step")
+    assert report.valid and report.fallback is None
+    assert not report.volume_checked_against_input
+
+
+def test_tangent_fit_prefers_a_line_on_a_straight_tangency():
+    wall = plane((5.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    fillet_ = cylinder((0.0, 0.0, 0.0), Z, 5.0)
+    wobble = 1e-6 * (np.sin(np.arange(11)) + 0.3 * np.linspace(-1.0, 1.0, 11) ** 2)
+    pts = [np.array([5.0, w, z]) for w, z in zip(wobble, np.linspace(0.0, 10.0, 11), strict=True)]
+    circle = curved.fit_circle(pts, False)
+    line_error = curved.curve_error(curved.fit_line(pts), [wall, fillet_], pts, False)[0]
+    assert curved.curve_error(circle, [wall, fillet_], pts, False)[0] < line_error
+    kind, curve, err, _ = curved.tangent_curve([wall, fillet_], pts, False, 5e-3)
+    assert kind == "line" and err == pytest.approx(line_error)
+
+
+def test_tangent_fit_prefers_a_circle_over_a_line_within_the_limit():
+    top = plane((0.0, 0.0, 4.0), Z)
+    tube = uir.Torus((0.0, 0.0, 2.0), Z, 20.0, 2.0, "same")
+    pts = [np.array([20.0 * math.cos(a), 20.0 * math.sin(a), 4.0]) for a in np.linspace(0, 0.03, 7)]
+    line = curved.fit_line(pts)
+    assert curved.curve_error(line, [top, tube], pts, False)[0] < 5e-3
+    kind, curve, err, _ = curved.tangent_curve([top, tube], pts, False, 5e-3)
+    assert kind == "circle" and err < 1e-9
+    assert curve.Radius() == pytest.approx(20.0, abs=1e-9)
+
+
+def test_tangent_fit_gives_up_when_neither_fits():
+    sa = cylinder((0.0, 0.0, 0.0), Z, 5.0)
+    sb = cylinder((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 5.0)
+    pts = [
+        np.array([5 * math.cos(a), 5 * math.sin(a), abs(5 * math.cos(a))])
+        for a in np.linspace(1.2, 1.9, 9)
+    ]
+    assert curved.tangent_curve([sa, sb], pts, False, 1e-4) is None
+
+
+@pytest.mark.parametrize(
+    ("size", "radius"),
+    [(100.0, 3.5), (20.0, 1.0), (40.0, 0.2), (40.0, 0.5), (40.0, 2.0)],
+)
+def test_a_small_flipped_pocket_is_caught_face_by_face(size, radius, tmp_path):
+    shape, ir, tris = flipped_pocket(size, radius)
+    report = step.write(ir, tmp_path / "p.step", mesh=tris)
+    assert report.valid and report.fallback == "faceted"
+    assert "the written face's flux about its centre" in report.fallback_reason
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-3)
+    unflipped = build_oracle_ir(tessellate(shape, 0.01, 0.2))
+    good = step.write(unflipped, tmp_path / "g.step", mesh=tris)
+    assert good.valid and good.fallback is None and good.volume_checked_against_input

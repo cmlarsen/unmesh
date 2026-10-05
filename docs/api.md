@@ -100,32 +100,81 @@ Building, curved shells (any cylinder, cone, sphere or torus region in the outer
 the shell is assembled from shared edges, without sewing or ShapeFix.
 
 - **Vertices** touching a curved region are moved onto every analytic surface that meets there
-  (iterated least squares on the tangent planes, pulled toward the IR position).
+  (iterated least squares on the tangent planes, pulled toward the IR position). A direction in
+  which the surfaces' normals do not constrain the point (they are within about 1.6 degrees of
+  each other, as at a tangent junction) keeps the IR position instead of drifting along it. A
+  junction on a `tangent` boundary is then solved for the point on every surface where each tangent
+  pair's outward normals agree, and a vertex on planes is put back on them exactly. Once the edge
+  curves are built, a vertex where two or more of them meet settles on their common point (when
+  that is closer to all of them and within the deviation limit).
 - **Transversal edges** are the OCCT intersection of the two surfaces (`GeomAPI_IntSS`). The branch
   nearest the boundary polyline is kept and trimmed at the IR vertices in the polyline's direction;
   every boundary point must lie within the deviation limit of the trimmed edge. When OCCT returns
   the curve as several branches (cylinder-cylinder, for example) whose union covers the polyline,
   or as a closed curve that is not periodic, the edge is the interpolation of the polyline points
-  (and their midpoints) moved onto both surfaces. When the intersection fails, strays further than
+  (and their midpoints) moved onto both surfaces, recorded in `edge_fallbacks` with kind
+  `interpolated` and its largest distance to OCCT's branches, sampled at no fewer than 400 points
+  along the built curve. When the intersection fails, strays further than
   the limit from the polyline, or cannot be trimmed along it, the same projected polyline is used
-  and recorded in `edge_fallbacks`.
-- **Tangent boundaries** next to a curved region, and `facets` regions next to a curved region, are
-  not supported yet: the shell fails with the reason `tangent edges not supported yet (#33)` or
-  `facets regions next to curved surfaces are not supported yet (#34)`.
+  and recorded in `edge_fallbacks` with kind `projected`. An interpolated curve is split at polyline
+  corners (a turn over 30 degrees and over three times either neighbour's), where intersection
+  branches meet at a kink, and the pieces are joined with C0 continuity.
+- **Tangent edges** (`tangent` boundaries next to a curved region) are not intersected: the two
+  surfaces touch, so their intersection is ill-conditioned. Each polyline point is moved onto both
+  surfaces and slid across the boundary to where their outward normals agree, which fixes the
+  tangency's position to the accuracy of the surfaces rather than of the mesh boundary (a boundary
+  within `tolerances.linear` of both surfaces can sit `sqrt(2 R linear)` to one side). A line (open
+  boundaries only) or circle is fitted to those points, and kept when it lies within the deviation
+  limit of both surfaces and of the moved points (a line wins a near-tie). Otherwise the moved points
+  and their midpoints are interpolated as a B-spline. A tangent run that ends at a `kind_change`
+  vertex is the grazing part of a transversal intersection (an equal-radius tee), so its points are
+  moved onto the intersection instead and interpolated. Both faces share the one edge; its
+  tolerance covers the largest distance of the curve from either surface, and a vertex's tolerance
+  twice its distance from each curve end that meets it. Each is reported in
+  `tangent_edges`.
+- **A sphere region with no closed boundary** (a corner blend) takes its axis through a vertex
+  where two great-circle edges meet, so that vertex is the pole, those edges are meridians, and the
+  face closes there with a degenerate edge, as OCCT's own fillets do. Tangent circles on a sphere
+  are moved onto it (onto a great circle when within the deviation limit of one), the pole is the
+  exact intersection of the two meridians, and tangent edges ending there are refitted to it.
+- **`facets` regions next to a curved region** are not supported yet: the shell fails with the
+  reason `facets regions next to curved surfaces are not supported yet (#34)`.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
-  surface and reversed), with explicit pcurves. On a periodic surface the seam is an isoparametric
+  surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
+  on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
+  surface parameters of the curve sampled twice per knot span at its own parameters, whichever is
+  closer to the edge. (Denser sampling gave pcurves of ~4000 intervals, on which OCCT's area and
+  volume integration silently lost accuracy: 1.3e-5 relative on a boss meeting a pipe.)
+  On a periodic surface the seam is an isoparametric
   line: through the vertex of a wrapping loop made of open edges when there is one, otherwise placed
   away from the face's other boundaries; closed loops get their vertex where the seam crosses them,
   and coaxial neighbours share the seam's half-plane. A face with one wrapping loop closes at a
   sphere pole or cone apex with a degenerate edge; a sphere or torus region with no boundary is the
   whole surface.
 - **Orientation check:** each face is probed just inside every boundary, on the side the IR's loop
-  direction puts it, and must classify that point as inside; the outer shell must enclose positive
+  direction puts it, by classifying the point's exact surface parameters against the face: at least
+  one probe must be inside and none decisively outside. A boundary whose two IR orientations meet at
+  an angle more than 10 degrees from its recorded `dihedral_deg` and nearer its supplement (one
+  orientation flipped) fails the shell. The outer shell must enclose positive
   volume and each cavity negative. Nothing flips a face to fix it: a mismatch fails the shell. ShapeFix
   runs only on a solid that `BRepCheck_Analyzer` rejects, and the orientation is checked again after it.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
-`max_shape_tolerance`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
+`max_shape_tolerance`. When `mesh` is given, each analytic solid's volume is also compared with the
+mesh's: the outer shell's triangles (IR shell grouping) enclose `|V|`, each cavity's subtract theirs, and
+the two must agree within `1e-6 * |V| + area * d`, where `d` is the largest of the regions' residual
+max, the boundary deviation, the vertex displacement and the shape tolerance. A mismatch (an IR
+orientation that turns a pocket into a boss, say) fails the shell, named as `analytic volume X differs
+from mesh volume Y`, and the part falls back to faceted. Then each written face is checked on its
+own, so a small flipped feature cannot hide in a large part's volume budget: its divergence-theorem
+flux `∫ (x - o)·n dA / 3` about the centre `o` of its region's mesh triangles (the written face
+triangulated at the smallest region deviation, floored at 1e-4 of the part's extent) must match the
+same sum over the region's mesh triangles (wound outward) within `(A + P L) d + 1e-9 A L`, where `A`
+is the face's area, `P` its perimeter, `L` its farthest point from `o`, and `d` the region's residual
+max, boundary deviation, vertex displacement and shape tolerance plus the triangulation deflection. A
+face built on the wrong side changes the flux's sign; the region is named in the reason. Without `mesh` nothing ties the written volume
+to the input: the IR alone cannot tell a flipped pocket from a boss, and `volume_checked_against_input`
+is `False`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
 solid. The mesh is welded at `ir.tolerances.vertex_merge`. The IR's shell roles decide orientation: each
 `outer` shell's winding is flipped to positive signed volume and each `cavity` shell's to negative. No
 OCCT healing or classification touches it. The fallback STEP is
@@ -141,7 +190,9 @@ mesh a probe from an arbitrary face can land on a fold and invert the solid; a h
 
 After writing, `write` re-imports the file with OCCT's default STEP reader (healing on, as a consumer
 would read it) and compares the solid count, the shell count, and each solid's volume and validity with
-what it wrote. The volume tolerance is `1e-9 * |V| + area * shape tolerance`.
+what it wrote. The volume tolerance is `1e-9 * |V| + area * shape tolerance`. Curved solids are
+measured with OCCT's adaptive volume integration at precision 1e-9 (the default fixed-order rule was
+off by 0.6% on faces bounded by kinked B-spline edges); planar and faceted solids use the default.
 Any mismatch makes the report invalid and is named in `readback.issues`, `issues` and the shell's
 `issues`; the file is left on disk. For the faceted fallback, `shells[*].volume` and
 `max_shape_tolerance` are the re-imported values. The read-back is on by default because OCCT-based
@@ -161,8 +212,9 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `max_shape_tolerance` | Largest shape tolerance in the written shape. |
 | `faces` | `FaceReport(region, surface_type, max_shape_tolerance, max_vertex_displacement, max_boundary_deviation)` for each written region (empty after a fallback). Tolerances are measured on the final healed shape. |
 | `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. For the faceted fallback, the largest distance the weld moved a source vertex. |
-| `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built. |
-| `edge_fallbacks` | `EdgeFallback(regions, reason, max_deviation)` for each edge built from the projected boundary polyline instead of the surface intersection (empty after a faceted fallback). `max_deviation` is the larger of the curve's distance to both surfaces and the boundary points' distance to it. |
+| `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built; for a tangent edge, from the point moved onto the tangency (the IR point's own distance is the edge's `boundary_distance`). |
+| `edge_fallbacks` | `EdgeFallback(regions, reason, max_deviation, kind, intersection_distance)` for each transversal edge built from the projected boundary polyline instead of a trimmed surface intersection (empty after a faceted fallback). `max_deviation` is the larger of the curve's distance to both surfaces and the boundary points' distance to it. `kind` is `projected` (the intersection failed, strayed or could not be trimmed) or `interpolated` (the intersection came in several branches); for `interpolated`, `intersection_distance` is the largest distance from the built curve to the nearest branch, otherwise `None`. |
+| `tangent_edges` | `TangentEdge(regions, curve, max_deviation, boundary_distance)` for each tangent edge (empty after a faceted fallback). `curve` is `line`, `circle` or `bspline`; `max_deviation` is the larger of the curve's distance to both surfaces and the moved boundary points' distance to it; `boundary_distance` is the IR boundary points' distance to it, which across a tangency measures the mesh boundary's sideways uncertainty, not an error of the edge. |
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
@@ -170,6 +222,7 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
 | `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
 | `verified` | Whether the written file was re-imported and checked. |
+| `volume_checked_against_input` | Whether `mesh` was given, so each written solid's volume was compared with the input mesh's (or is the mesh, after a faceted fallback). |
 | `timings` | Seconds: `write_s` (everything up to the written file) and `readback_s` (the verification), when they ran. |
 
 ### `unmesh.ir`

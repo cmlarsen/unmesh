@@ -9,19 +9,27 @@ from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepClass import BRepClass_FaceClassifier
 from OCP.BRepLib import BRepLib
+from OCP.BRepTools import BRepTools
+from OCP.ElSLib import ElSLib
 from OCP.Geom import (
+    Geom_BSplineCurve,
+    Geom_Circle,
     Geom_ConicalSurface,
     Geom_CylindricalSurface,
+    Geom_Line,
     Geom_Plane,
     Geom_SphericalSurface,
     Geom_ToroidalSurface,
     Geom_TrimmedCurve,
 )
-from OCP.Geom2d import Geom2d_Line
+from OCP.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
+from OCP.Geom2dAPI import Geom2dAPI_Interpolate
 from OCP.GeomAPI import GeomAPI_Interpolate, GeomAPI_IntSS, GeomAPI_ProjectPointOnCurve
+from OCP.GeomConvert import GeomConvert_CompCurveToBSplineCurve
 from OCP.GeomProjLib import GeomProjLib
-from OCP.gp import gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Vec2d
-from OCP.TColgp import TColgp_HArray1OfPnt
+from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Vec2d
+from OCP.TColgp import TColgp_Array1OfPnt2d, TColgp_HArray1OfPnt, TColgp_HArray1OfPnt2d
+from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal, TColStd_HArray1OfReal
 from OCP.TopAbs import TopAbs_FORWARD, TopAbs_IN, TopAbs_OUT, TopAbs_REVERSED
 from OCP.TopExp import TopExp
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shell, TopoDS_Wire
@@ -34,10 +42,26 @@ from .topology import BuildError, SeamGap, _boundary_nodes, _signed_area
 INTERSECTION_TOLERANCE = 1e-7
 EDGE_TOLERANCE = 1e-7
 SEAM_TOLERANCE = 1e-6
+PLANE_PULL = 1e-8
+JUNCTION_ITERATIONS = 30
+SETTLE_ITERATIONS = 50
+VERTEX_SLACK = 2.0
+JUNCTION_PULL = 1e-12
 BRANCH_SAMPLES = 24
 SEAM_ITERATIONS = 60
 TWO_PI = 2.0 * math.pi
-TANGENT_REASON = "tangent edges not supported yet (#33)"
+TANGENT_PROJECTIONS = 8
+SNAP_ITERATIONS = 40
+INTERSECTION_SAMPLES = 400
+KINK_DEG = 30.0
+DIHEDRAL_TOLERANCE_DEG = 10.0
+KINK_RATIO = 3.0
+KINK_JOIN = 1e-9
+PCURVE_SAMPLES = 2
+PCURVE_CHECKS = 512
+PCURVE_SPANS = 64
+PCURVE_EXACT = 1e-9
+LINE_PREFERENCE = 2.0
 FACETS_REASON = "facets regions next to curved surfaces are not supported yet (#34)"
 
 
@@ -46,6 +70,16 @@ class ProjectedEdge:
     regions: tuple[int, int]
     reason: str
     max_deviation: float
+    kind: str = "projected"
+    intersection_distance: float | None = None
+
+
+@dataclass
+class TangentEdge:
+    regions: tuple[int, int]
+    curve: str
+    max_deviation: float
+    boundary_distance: float
 
 
 @dataclass
@@ -56,6 +90,7 @@ class CurvedShell:
     vertex_displacement: dict[int, float] = field(default_factory=dict)
     boundary_deviation: dict[int, float] = field(default_factory=dict)
     projected: list[ProjectedEdge] = field(default_factory=list)
+    tangent: list[TangentEdge] = field(default_factory=list)
 
 
 def _pnt(p) -> gp_Pnt:
@@ -70,10 +105,67 @@ def _xyz(p) -> np.ndarray:
     return np.array([p.X(), p.Y(), p.Z()])
 
 
+def _tangent_pairs(ir: Ir) -> dict[int, list[tuple[int, int]]]:
+    out: dict[int, list[tuple[int, int]]] = {}
+    for adj in ir.adjacencies:
+        a, b = adj.regions
+        sa, sb = ir.regions[a].surface, ir.regions[b].surface
+        if not (geo.is_analytic(sa) and geo.is_analytic(sb)):
+            continue
+        if not (geo.is_curved(sa) or geo.is_curved(sb)):
+            continue
+        for bd in adj.boundaries:
+            if bd.kind != "tangent" or bd.closed:
+                continue
+            for v in (bd.start_vertex, bd.end_vertex):
+                if ir.vertices[v].role == "junction" and (a, b) not in out.get(v, []):
+                    out.setdefault(v, []).append((a, b))
+    return out
+
+
+def _vertex_residuals(x, surfaces, pairs, frame, scale):
+    rows = []
+    for s in surfaces:
+        q, n = geo.closest(s, x)
+        rows.append(float((x - q) @ n))
+    for sa, sb in pairs:
+        d = geo.outward(sa, x) - geo.outward(sb, x)
+        rows.extend(scale * float(d @ w) for w in frame)
+    return np.array(rows)
+
+
+def onto_tangent_junction(surfaces, pairs, x0, limit: float) -> np.ndarray:
+    scale = max(_lateral_scale(pair, x0) for pair in pairs)
+    n = geo.outward(pairs[0][0], x0)
+    w1 = geo.perpendicular(n)
+    frame = (w1, np.cross(n, w1))
+    reach = 4.0 * math.sqrt(2.0 * limit * scale) + limit
+    x = np.asarray(x0, dtype=float)
+    h = 1e-7 * max(1.0, scale)
+    for _ in range(JUNCTION_ITERATIONS):
+        r = _vertex_residuals(x, surfaces, pairs, frame, scale)
+        jac = np.column_stack(
+            [
+                (_vertex_residuals(x + h * e, surfaces, pairs, frame, scale) - r) / h
+                for e in np.eye(3)
+            ]
+        )
+        step = np.linalg.solve(jac.T @ jac + JUNCTION_PULL * np.eye(3), -jac.T @ r)
+        x = x + step
+        if float(np.linalg.norm(step)) <= 1e-13 * max(1.0, float(np.linalg.norm(x))):
+            break
+    if float(np.linalg.norm(x - x0)) > reach:
+        return np.asarray(x0, dtype=float)
+    if max(geo.distance(s, x) for s in surfaces) > limit:
+        return np.asarray(x0, dtype=float)
+    return x
+
+
 def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
     vpos = list(vpos)
     vmoved = list(vmoved)
     bad = dict(bad)
+    tangent = _tangent_pairs(ir)
     for v in ir.vertices:
         surfaces = [ir.regions[r].surface for r in v.regions]
         if not any(geo.is_curved(s) for s in surfaces):
@@ -81,9 +173,16 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
         analytic = [s for s in surfaces if geo.is_analytic(s)]
         p0 = np.asarray(v.position, dtype=float)
         x = geo.refine(analytic, p0) if len(analytic) >= 2 else p0
+        snapped = x
+        if v.id in tangent:
+            pairs = [(ir.regions[a].surface, ir.regions[b].surface) for a, b in tangent[v.id]]
+            x = onto_tangent_junction(analytic, pairs, x, limit)
+        planes = [s for s in analytic if isinstance(s, Plane)]
+        if planes and len(analytic) >= 2:
+            x = onto_planes(planes, x)
         gap = float(np.linalg.norm(x - p0))
         bad.pop(v.id, None)
-        if gap > limit:
+        if float(np.linalg.norm(snapped - p0)) > limit:
             bad[v.id] = (
                 f"vertex {v.id}: surface intersection is {gap:.6g} from its IR position,"
                 f" over the {limit:.6g} limit"
@@ -91,6 +190,13 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
         vpos[v.id] = x
         vmoved[v.id] = gap
     return vpos, vmoved, bad
+
+
+def onto_planes(planes, x) -> np.ndarray:
+    n = np.array([geo.unit(p.normal) for p in planes])
+    d = np.array([n[i] @ np.asarray(p.origin, dtype=float) for i, p in enumerate(planes)])
+    pull = PLANE_PULL * np.eye(3)
+    return np.linalg.solve(n.T @ n + pull, n.T @ d + pull @ x)
 
 
 def geom_surface(surface, axis=None, xdir=None):
@@ -249,31 +355,253 @@ def polyline_seam_point(points, origin, axis, xdir) -> np.ndarray:
     raise BuildError("closed boundary does not cross the seam")
 
 
-def projected_curve(surfaces, nodes, closed: bool):
-    inner = nodes[1:] if closed else nodes[1:-1]
-    fixed = [nodes[0], *(geo.refine(surfaces, p) for p in inner)]
+def onto_both(surfaces, p) -> np.ndarray:
+    q = np.asarray(p, dtype=float)
+    for _ in range(TANGENT_PROJECTIONS):
+        nxt = sum(geo.closest(s, q)[0] for s in surfaces) / len(surfaces)
+        done = float(np.linalg.norm(nxt - q)) <= 1e-15 * max(1.0, float(np.linalg.norm(q)))
+        q = nxt
+        if done:
+            break
+    return q
+
+
+def _lateral_scale(surfaces, p) -> float:
+    sizes = []
+    for s in surfaces:
+        if isinstance(s, (Cylinder, Sphere)):
+            sizes.append(s.radius)
+        elif isinstance(s, Torus):
+            sizes.append(s.major_radius + s.minor_radius)
+        elif isinstance(s, Cone):
+            sizes.append(float(np.linalg.norm(np.asarray(p) - np.asarray(s.apex))))
+    return max(sizes, default=1.0)
+
+
+def onto_tangency(surfaces, p, along, limit: float) -> np.ndarray:
+    a, b = surfaces
+    q = onto_both(surfaces, p)
+    w = geo.unit(np.cross(geo.outward(a, q), along))
+    if not np.linalg.norm(w) > 0:
+        return q
+    reach = 4.0 * math.sqrt(2.0 * limit * _lateral_scale(surfaces, q)) + limit
+
+    def f(s):
+        x, _ = geo.closest(a, q + s * w)
+        return float((geo.outward(a, x) - geo.outward(b, x)) @ w), x
+
+    s0, s1 = 0.0, 1e-3 * reach
+    f0, x = f(s0)
+    if f0 == 0.0:
+        return q
+    f1, x = f(s1)
+    for _ in range(SNAP_ITERATIONS):
+        if f1 == f0:
+            return q
+        s2 = s1 - f1 * (s1 - s0) / (f1 - f0)
+        if abs(s2) > reach:
+            return q
+        s0, f0 = s1, f1
+        s1 = s2
+        f1, x = f(s1)
+        if abs(s1 - s0) <= 1e-13 * reach:
+            return onto_both(surfaces, x)
+    return q
+
+
+def snap_tangency(surfaces, points, closed: bool, limit: float) -> list[np.ndarray]:
+    n = len(points)
+    out = []
+    for i, p in enumerate(points):
+        if not closed and i in (0, n - 1):
+            out.append(np.asarray(p, dtype=float))
+            continue
+        along = points[(i + 1) % n] - points[(i - 1) % n]
+        out.append(onto_tangency(surfaces, p, along, limit))
+    return out
+
+
+def fit_line(points):
+    pts = np.asarray(points, dtype=float)
+    c = pts.mean(axis=0)
+    d = pts[-1] - pts[0]
+    if len(pts) > 2:
+        _, _, vt = np.linalg.svd(pts - c)
+        d = vt[0] if vt[0] @ d >= 0 else -vt[0]
+    if np.linalg.norm(d) == 0:
+        return None
+    return Geom_Line(gp_Ax1(_pnt(c), _dir(geo.unit(d))))
+
+
+def fit_circle(points, closed: bool):
+    pts = np.asarray(points, dtype=float)
+    if len(pts) < 3:
+        return None
+    c = pts.mean(axis=0)
+    _, sv, vt = np.linalg.svd(pts - c)
+    if sv[1] <= 1e-9 * max(sv[0], 1e-300):
+        return None
+    x, y, normal = vt[0], vt[1], vt[2]
+    u, v = (pts - c) @ x, (pts - c) @ y
+    a = np.column_stack([2 * u, 2 * v, np.ones_like(u)])
+    sol, *_ = np.linalg.lstsq(a, u * u + v * v, rcond=None)
+    cu, cv = float(sol[0]), float(sol[1])
+    r = math.sqrt(max(float(sol[2]) + cu * cu + cv * cv, 0.0))
+    for _ in range(20):
+        du, dv = u - cu, v - cv
+        rho = np.hypot(du, dv)
+        if np.any(rho == 0):
+            return None
+        jac = np.column_stack([-du / rho, -dv / rho, -np.ones_like(rho)])
+        step, *_ = np.linalg.lstsq(jac, -(rho - r), rcond=None)
+        cu, cv, r = cu + float(step[0]), cv + float(step[1]), r + float(step[2])
+        if float(np.linalg.norm(step)) <= 1e-14 * max(1.0, r):
+            break
+    if not r > 0 or not math.isfinite(r):
+        return None
+    center = c + cu * x + cv * y
+    xdir = geo.unit(pts[0] - center)
+    xdir = geo.unit(xdir - (xdir @ normal) * normal)
+    if np.linalg.norm(xdir) == 0:
+        return None
+    return Geom_Circle(gp_Ax2(_pnt(center), _dir(normal), _dir(xdir)), r)
+
+
+def _unwrap(ts: list[float], period: float | None) -> list[float]:
+    if period is None:
+        return ts
+    out = [ts[0]]
+    for t in ts[1:]:
+        d = (t - out[-1] + period / 2) % period - period / 2
+        out.append(out[-1] + d)
+    return out
+
+
+def curve_error(curve, surfaces, points, closed: bool) -> tuple[float, float]:
+    period = curve.Period() if curve.IsPeriodic() else None
+    params, worst = [], 0.0
+    for p in points:
+        t, d = nearest(curve, p)
+        if t is None:
+            return math.inf, math.inf
+        params.append(t)
+        worst = max(worst, d)
+    if closed and period is not None:
+        ts = np.linspace(0.0, period, 8 * len(points) + 1)
+    else:
+        params = _unwrap(params, period)
+        ts = np.concatenate(
+            [np.linspace(a, b, 8, endpoint=False) for a, b in zip(params, params[1:], strict=False)]
+            + [np.array([params[-1]])]
+        )
+    off = 0.0
+    for t in ts:
+        q = _xyz(curve.Value(float(t)))
+        off = max(off, *(geo.distance(s, q) for s in surfaces))
+    return max(worst, off), off
+
+
+def tangent_curve(surfaces, points, closed: bool, limit: float):
+    fitted = points
+    candidates = []
     if not closed:
-        fixed.append(nodes[-1])
-    ring = [*fixed, fixed[0]] if closed else fixed
-    pts = []
-    for p, q in zip(ring, ring[1:], strict=False):
-        pts.extend([p, geo.refine(surfaces, 0.5 * (p + q))])
-    if not closed:
-        pts.append(fixed[-1])
+        line = fit_line(fitted)
+        if line is not None:
+            candidates.append(("line", line, *curve_error(line, surfaces, points, closed)))
+    circle = fit_circle(fitted, closed)
+    if circle is not None:
+        candidates.append(("circle", circle, *curve_error(circle, surfaces, points, closed)))
+    candidates = [c for c in candidates if c[2] <= limit]
+    if not candidates:
+        return None
+    best = min(c[2] for c in candidates)
+    for c in candidates:
+        if c[0] == "line" and c[2] <= LINE_PREFERENCE * best + 1e-12:
+            return c
+    return min(candidates, key=lambda c: c[2])
+
+
+def kinks(nodes, closed: bool) -> list[int]:
+    pts = np.asarray(nodes, dtype=float)
+    n = len(pts)
+    turn = np.zeros(n)
+    for i in range(n) if closed else range(1, n - 1):
+        a = geo.unit(pts[i] - pts[i - 1])
+        b = geo.unit(pts[(i + 1) % n] - pts[i])
+        turn[i] = math.degrees(math.acos(max(-1.0, min(1.0, float(a @ b)))))
+    out = []
+    for i in range(n) if closed else range(1, n - 1):
+        near = max(turn[(i - 1) % n], turn[(i + 1) % n])
+        if turn[i] > KINK_DEG and turn[i] > KINK_RATIO * near:
+            out.append(i)
+    return out
+
+
+def _interpolate(pts, periodic: bool):
     arr = TColgp_HArray1OfPnt(1, len(pts))
     for i, p in enumerate(pts, start=1):
         arr.SetValue(i, _pnt(p))
-    interp = GeomAPI_Interpolate(arr, closed, 1e-9)
+    interp = GeomAPI_Interpolate(arr, periodic, 1e-9)
     interp.Perform()
     if not interp.IsDone():
         raise BuildError("could not fit a curve through the boundary polyline")
-    curve = interp.Curve()
+    return interp.Curve()
+
+
+def _with_midpoints(surfaces, chain, project):
+    pts = []
+    for p, q in zip(chain, chain[1:], strict=False):
+        pts.extend([p, project(surfaces, 0.5 * (p + q), q - p)])
+    pts.append(chain[-1])
+    return pts
+
+
+def _refine(surfaces, p, along):
+    return geo.refine(surfaces, p)
+
+
+def projected_curve(surfaces, nodes, closed: bool, project=None):
+    project = project or _refine
+    n = len(nodes)
+    inner = range(1, n) if closed else range(1, n - 1)
+    fixed = [
+        nodes[0],
+        *(project(surfaces, nodes[i], nodes[(i + 1) % n] - nodes[i - 1]) for i in inner),
+    ]
+    if not closed:
+        fixed.append(nodes[-1])
+    corners = [k for k in kinks(fixed, closed) if k != 0]
+    if closed and not corners:
+        pts = _with_midpoints(surfaces, [*fixed, fixed[0]], project)[:-1]
+        curve = _interpolate(pts, True)
+    else:
+        ring = [*fixed, fixed[0]] if closed else fixed
+        cuts = [0, *corners, len(ring) - 1]
+        joined = None
+        pts = []
+        for a, b in zip(cuts, cuts[1:], strict=False):
+            piece = _with_midpoints(surfaces, ring[a : b + 1], project)
+            pts.extend(piece)
+            part = _interpolate(piece, False)
+            if joined is None:
+                joined = GeomConvert_CompCurveToBSplineCurve(part)
+            elif not joined.Add(part, KINK_JOIN, True, False, 0):
+                raise BuildError("could not join the boundary curve at a corner")
+        curve = joined.BSplineCurve()
     first, last = curve.FirstParameter(), curve.LastParameter()
     dev = 0.0
     for s in np.linspace(first, last, 8 * len(pts) + 1):
         q = _xyz(curve.Value(float(s)))
         dev = max(dev, *(geo.distance(srf, q) for srf in surfaces))
     return curve, dev
+
+
+def branch_distance(curve, branches, samples: int) -> float:
+    worst = 0.0
+    for t in np.linspace(curve.FirstParameter(), curve.LastParameter(), samples):
+        q = _xyz(curve.Value(float(t)))
+        worst = max(worst, min(nearest(c, q)[1] for c in branches))
+    return worst
 
 
 @dataclass
@@ -292,6 +620,10 @@ class _Edge:
     edges: list = field(default_factory=list)
     nodes: list = field(default_factory=list)
     deviation: float = 0.0
+    tangent: bool = False
+    fit: str | None = None
+    snapped: list = field(default_factory=list)
+    branches: list = field(default_factory=list)
 
 
 @dataclass
@@ -371,6 +703,8 @@ class _Builder:
         self.pool = pool
         self.builder = BRep_Builder()
         self.frames: dict[int, _Frame] = {}
+        self.poles: dict[int, np.ndarray] = {}
+        self.moved: set[int] = set()
         self.surfaces: dict[int, object] = {}
         self.edges: list[_Edge] = []
         self.loose: list = []
@@ -391,6 +725,8 @@ class _Builder:
                     self.out.vertex_displacement[r] = max(self.out.vertex_displacement[r], m)
         self.collect()
         self.intersect()
+        self.place_poles()
+        self.settle_vertices()
         self.choose_frames()
         self.make_edges()
         faces = [(r, f) for r in self.shell.regions for f in self.face(r)]
@@ -398,8 +734,9 @@ class _Builder:
         for _, f in faces:
             self.builder.Add(self.out.shell, f)
         self.out.shell.Closed(self.shell.closed)
-        for edge in self.loose:
+        for edge, tol in self.loose:
             BRepLib.SameParameter_s(edge, EDGE_TOLERANCE)
+            self.builder.UpdateEdge(edge, tol)
         self.out.mapping = faces
         for r, f in faces:
             self.check_side(r, f)
@@ -416,10 +753,11 @@ class _Builder:
             if curved and facets:
                 raise BuildError(f"regions {a}/{b}: {FACETS_REASON}")
             for bd in adj.boundaries:
-                if curved and bd.kind == "tangent":
-                    raise BuildError(f"regions {a}/{b}: {TANGENT_REASON}")
                 pts = [np.asarray(p, dtype=float) for p in bd.points]
                 e = _Edge(a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved)
+                e.tangent = curved and bd.kind == "tangent"
+                if curved:
+                    self.check_dihedral(sa, sb, a, b, pts, bd.dihedral_deg)
                 if facets:
                     analytic = sb if isinstance(sa, Facets) else sa
                     n = geo.unit(analytic.normal)
@@ -431,6 +769,20 @@ class _Builder:
                     e.nodes, e.deviation = _boundary_nodes(self.ir, bd, a, b, self.vpos, self.limit)
                     if bd.closed:
                         e.nodes = [*e.nodes, e.nodes[0]]
+
+    def check_dihedral(self, sa, sb, a, b, pts, stored: float):
+        samples = [0.5 * (pts[0] + pts[1])] if len(pts) == 2 else pts
+        angles = []
+        for p in samples:
+            c = float(geo.outward(sa, p) @ geo.outward(sb, p))
+            angles.append(math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+        measured = float(np.median(angles))
+        off = abs(measured - stored)
+        if off > DIHEDRAL_TOLERANCE_DEG and abs(measured - (180.0 - stored)) < off:
+            raise BuildError(
+                f"regions {a}/{b}: the IR orientations meet at {measured:.3g} degrees,"
+                f" but the boundary records {stored:.3g}"
+            )
 
     def occ_surface(self, r):
         s = self.surfaces.get(r)
@@ -448,6 +800,9 @@ class _Builder:
         for e in self.edges:
             if not e.curved:
                 continue
+            if e.tangent:
+                self.fit_tangent(e)
+                continue
             sa = geom_surface(self.surface(e.a))
             sb = geom_surface(self.surface(e.b))
             curves = intersection_curves(sa, sb)
@@ -461,11 +816,66 @@ class _Builder:
             cover = max(min(nearest(c, p)[1] for c in curves) for p in _samples(e.points))
             if cover <= self.limit:
                 e.approximate = True
+                e.branches = curves
                 continue
             e.fallback = (
                 f"nearest intersection branch is {cover:.3g} from the boundary,"
                 f" over the {self.limit:.3g} limit"
             )
+
+    def fit_tangent(self, e: _Edge):
+        surfaces = [self.surface(e.a), self.surface(e.b)]
+        pts = list(e.points)
+        if not e.closed:
+            pts = [self.vpos[e.start], *pts[1:-1], self.vpos[e.end]]
+        if self.crossing(e):
+            e.snapped = [pts[0], *(geo.refine(surfaces, p) for p in pts[1:-1]), pts[-1]]
+            e.fit = "bspline"
+            return
+        e.snapped = snap_tangency(surfaces, pts, e.closed, self.limit)
+        found = tangent_curve(surfaces, e.snapped, e.closed, self.limit)
+        if found is None:
+            e.fit = "bspline"
+            return
+        e.fit, e.curve = found[0], found[1]
+        if e.fit == "circle":
+            e.curve = self.onto_sphere(e.curve, surfaces)
+
+    def projector(self, e: _Edge):
+        if not e.tangent or self.crossing(e):
+            return _refine
+        limit = self.limit
+
+        def project(surfaces, p, along):
+            return onto_tangency(surfaces, p, along, limit)
+
+        return project
+
+    def onto_sphere(self, circle, surfaces):
+        for s in surfaces:
+            if not isinstance(s, Sphere):
+                continue
+            c = np.asarray(s.center, dtype=float)
+            n = _xyz(circle.Axis().Direction())
+            d = float((_xyz(circle.Location()) - c) @ n)
+            if abs(d) <= self.limit:
+                d = 0.0
+            r = math.sqrt(max(s.radius**2 - d * d, 0.0))
+            if abs(r - circle.Radius()) > self.limit:
+                return circle
+            ax = gp_Ax2(_pnt(c + d * n), _dir(n), circle.XAxis().Direction())
+            return Geom_Circle(ax, r)
+        return circle
+
+    def chain_points(self, e: _Edge) -> list[np.ndarray]:
+        if e.closed:
+            return list(e.points)
+        return [self.vpos[e.start], *e.points[1:-1], self.vpos[e.end]]
+
+    def crossing(self, e: _Edge) -> bool:
+        if e.closed:
+            return False
+        return any(self.ir.vertices[v].role == "kind_change" for v in (e.start, e.end))
 
     def axis_of(self, r) -> np.ndarray:
         frame = self.frames.get(r)
@@ -478,7 +888,95 @@ class _Builder:
         for e in self.edges:
             if e.closed and r in (e.a, e.b):
                 return geo.plane_normal(e.points)
+        if isinstance(s, Sphere):
+            c = np.asarray(s.center, dtype=float)
+            pole = self.poles.get(r)
+            if pole is not None:
+                return pole
+            d = sum(
+                (geo.unit(p - c) for e in self.edges if r in (e.a, e.b) for p in e.points),
+                np.zeros(3),
+            )
+            if np.linalg.norm(d) > 0:
+                return geo.perpendicular(d)
         return np.array([0.0, 0.0, 1.0])
+
+    def settle_vertices(self):
+        curves: dict[int, list] = {}
+        for e in self.edges:
+            if e.curved and not e.closed and e.curve is not None:
+                for v in {e.start, e.end}:
+                    curves.setdefault(v, []).append(e.curve)
+        for v, cs in curves.items():
+            if len(cs) < 2:
+                continue
+            x0 = np.asarray(self.vpos[v], dtype=float)
+            x = x0
+            for _ in range(SETTLE_ITERATIONS):
+                nxt = sum(_xyz(c.Value(nearest(c, x)[0])) for c in cs) / len(cs)
+                done = float(np.linalg.norm(nxt - x)) <= 1e-15 * max(1.0, float(np.linalg.norm(x)))
+                x = nxt
+                if done:
+                    break
+            planes = [
+                self.surface(r)
+                for r in self.ir.vertices[v].regions
+                if isinstance(self.surface(r), Plane)
+            ]
+            if planes:
+                x = onto_planes(planes, x)
+            spread = max(nearest(c, x)[1] for c in cs)
+            if (
+                spread < max(nearest(c, x0)[1] for c in cs)
+                and float(np.linalg.norm(x - x0)) <= self.limit
+            ):
+                self.vpos[v] = x
+
+    def place_poles(self):
+        for r in self.shell.regions:
+            s = self.surface(r)
+            if isinstance(s, Sphere) and not any(e.closed and r in (e.a, e.b) for e in self.edges):
+                axis = self.pole_axis(r)
+                if axis is not None:
+                    self.poles[r] = axis
+        for e in self.edges:
+            if e.tangent and not e.closed and {e.start, e.end} & self.moved:
+                if e.fit == "circle" and any(r in self.poles for r in (e.a, e.b)):
+                    continue
+                e.curve = None
+                self.fit_tangent(e)
+
+    def pole_axis(self, r) -> np.ndarray | None:
+        s = self.surface(r)
+        c = np.asarray(s.center, dtype=float)
+        ends: dict[int, list[_Edge]] = {}
+        for e in self.edges:
+            if r in (e.a, e.b) and not e.closed:
+                for v in {e.start, e.end}:
+                    ends.setdefault(v, []).append(e)
+        for v in sorted(ends):
+            meridians = [
+                e
+                for e in ends[v]
+                if isinstance(e.curve, Geom_Circle)
+                and float(np.linalg.norm(_xyz(e.curve.Location()) - c)) <= 1e-6 * s.radius
+                and abs(e.curve.Radius() - s.radius) <= 1e-6 * s.radius
+            ]
+            if len(ends[v]) == 2 and len(meridians) == 2:
+                n1, n2 = (_xyz(e.curve.Axis().Direction()) for e in meridians)
+                axis = geo.unit(np.cross(n1, n2))
+                if not np.linalg.norm(axis) > 0:
+                    continue
+                if axis @ (np.asarray(self.vpos[v]) - c) < 0:
+                    axis = -axis
+                pole = c + s.radius * axis
+                if float(np.linalg.norm(pole - self.vpos[v])) > self.limit:
+                    continue
+                if np.any(pole != self.vpos[v]):
+                    self.vpos[v] = pole
+                    self.moved.add(v)
+                return axis
+        return None
 
     def winds(self, e: _Edge, r: int) -> bool:
         s = self.surface(r)
@@ -498,7 +996,10 @@ class _Builder:
         angles = []
         for e in self.edges:
             if r in (e.a, e.b) and not (e.closed and self.winds(e, r)):
-                angles.extend(geo.angle_about(p, origin, axis, xdir) for p in e.points)
+                for p in self.chain_points(e):
+                    q = p - origin
+                    if np.linalg.norm(q - (q @ axis) * axis) > 1e-9 * max(1.0, np.linalg.norm(q)):
+                        angles.append(geo.angle_about(p, origin, axis, xdir))
         if angles:
             ang = np.sort(np.mod(np.asarray(angles), TWO_PI))
             gaps = np.diff(np.append(ang, ang[0] + TWO_PI))
@@ -541,7 +1042,7 @@ class _Builder:
         for e in self.edges:
             if r not in (e.a, e.b):
                 continue
-            seg = _Segment([], e.start, e.end, list(e.points))
+            seg = _Segment([], e.start, e.end, self.chain_points(e))
             segs.append(seg if r == e.a else _reverse_segment(seg))
         s = self.surface(r)
         try:
@@ -616,10 +1117,11 @@ class _Builder:
 
     def curved_edge(self, e: _Edge):
         surfaces = [self.surface(e.a), self.surface(e.b)]
+        ref = e.snapped if e.tangent else e.points
         if e.closed:
             start = e.seam_point
             if start is None:
-                start = geo.refine(surfaces, e.points[0])
+                start = e.snapped[0] if e.tangent else geo.refine(surfaces, e.points[0])
                 if e.curve is not None:
                     t, _ = nearest(e.curve, start)
                     start = _xyz(e.curve.Value(t))
@@ -629,16 +1131,16 @@ class _Builder:
             try:
                 if e.closed:
                     t0, _ = nearest(e.curve, start)
-                    k = int(np.argmin([np.linalg.norm(p - start) for p in e.points]))
-                    n = len(e.points)
-                    travel = e.points[(k + 1) % n] - e.points[(k - 1) % n]
+                    k = int(np.argmin([np.linalg.norm(p - start) for p in ref]))
+                    n = len(ref)
+                    travel = ref[(k + 1) % n] - ref[(k - 1) % n]
                     forward = float(_tangent(e.curve, t0) @ travel) > 0
                     t1 = t0 + e.curve.Period() if forward else t0 - e.curve.Period()
                     end = start
                 else:
-                    t0, t1, _ = trim_open(e.curve, start, end, e.points, e.start == e.end)
+                    t0, t1, _ = trim_open(e.curve, start, end, ref, e.start == e.end)
                 lo, hi = min(t0, t1), max(t0, t1)
-                dev = _range_deviation(e.curve, lo, hi, e.points)
+                dev = _range_deviation(e.curve, lo, hi, ref)
                 if dev > self.limit:
                     raise ValueError(
                         f"trimmed intersection is {dev:.3g} from the boundary,"
@@ -647,6 +1149,7 @@ class _Builder:
                 e.deviation = dev
                 v0 = self.pool.vertex(start)
                 v1 = self.pool.vertex(end)
+                self.loosen_vertices(e.curve, ((v0, start, t0), (v1, end, t1)))
                 if t0 <= t1:
                     mk = BRepBuilderAPI_MakeEdge(e.curve, v0, v1, t0, t1)
                     reverse = False
@@ -656,21 +1159,54 @@ class _Builder:
                 if not mk.IsDone():
                     raise ValueError(f"edge construction failed ({mk.Error()})")
                 edge = mk.Edge()
+                if e.tangent:
+                    self.tangent_tolerance(e, edge, surfaces, lo, hi)
                 e.edges = [TopoDS.Edge_s(edge.Reversed()) if reverse else edge]
-                e.nodes = [start, *e.points[1:-1], end] if not e.closed else [*e.points]
+                e.nodes = [start, *ref[1:-1], end] if not e.closed else [*ref]
                 return
             except ValueError as err:
                 e.fallback = str(err)
         self.projected_edge(e, start, None if e.closed else end, surfaces)
 
+    def loosen_vertices(self, curve, ends):
+        for v, p, t in ends:
+            gap = float(np.linalg.norm(_xyz(curve.Value(t)) - p))
+            if VERTEX_SLACK * gap > BRep_Tool.Tolerance_s(v):
+                self.builder.UpdateVertex(v, max(EDGE_TOLERANCE, VERTEX_SLACK * gap))
+
+    def tangent_tolerance(self, e: _Edge, edge, surfaces, lo: float, hi: float):
+        n = max(8 * len(e.points), 64)
+        off = 0.0
+        for t in np.linspace(lo, hi, n + 1):
+            q = _xyz(e.curve.Value(float(t)))
+            off = max(off, *(geo.distance(s, q) for s in surfaces))
+        if off > self.limit:
+            raise ValueError(
+                f"fitted tangent {e.fit} is {off:.3g} off the surfaces,"
+                f" over the {self.limit:.3g} limit"
+            )
+        tol = max(EDGE_TOLERANCE, 1.01 * off)
+        self.builder.UpdateEdge(edge, tol)
+        self.builder.SameParameter(edge, False)
+        self.loose.append((edge, tol))
+        e.deviation = max(e.deviation, off)
+        self.record_tangent(e, lo, hi)
+
+    def record_tangent(self, e: _Edge, lo: float, hi: float):
+        curve = e.curve if e.curve is not None else BRep_Tool.Curve_s(e.edges[0], 0.0, 0.0)
+        lateral = _range_deviation(curve, lo, hi, e.points)
+        self.out.tangent.append(TangentEdge((e.a, e.b), e.fit, float(e.deviation), float(lateral)))
+
     def projected_edge(self, e: _Edge, start, end, surfaces):
+        ref = e.snapped if e.tangent else e.points
         if e.closed:
-            k = int(np.argmin([np.linalg.norm(p - start) for p in e.points]))
-            pts = e.points[k:] + e.points[:k]
+            k = int(np.argmin([np.linalg.norm(p - start) for p in ref]))
+            pts = ref[k:] + ref[:k]
             nodes = [start, *pts[1:]]
         else:
-            nodes = [start, *e.points[1:-1], end]
-        curve, dev = projected_curve(surfaces, nodes, e.closed)
+            nodes = [start, *ref[1:-1], end]
+        curve, dev = projected_curve(surfaces, nodes, e.closed, self.projector(e))
+
         if dev > self.limit:
             raise BuildError(
                 f"regions {e.a}/{e.b}: projected boundary curve is {dev:.3g} off the surfaces,"
@@ -685,19 +1221,33 @@ class _Builder:
         tol = max(EDGE_TOLERANCE, 1.01 * dev)
         self.builder.UpdateEdge(edge, tol)
         self.builder.SameParameter(edge, False)
-        self.loose.append(edge)
+        self.loose.append((edge, tol))
         for v in (v0, v1):
             self.builder.UpdateVertex(v, tol)
         e.edges = [edge]
         e.nodes = nodes + ([start] if e.closed else [])
         lo, hi = curve.FirstParameter(), curve.LastParameter()
-        e.deviation = max(dev, _range_deviation(curve, lo, hi, e.points))
+        e.deviation = max(dev, _range_deviation(curve, lo, hi, ref))
         if e.deviation > self.limit:
             raise BuildError(
                 f"regions {e.a}/{e.b}: boundary points are {e.deviation:.3g} from the built"
                 f" edge, over the {self.limit:.3g} limit"
             )
-        if not e.approximate:
+        if e.tangent:
+            e.fit = "bspline"
+            e.curve = None
+            self.record_tangent(e, lo, hi)
+        elif e.approximate:
+            self.out.projected.append(
+                ProjectedEdge(
+                    (e.a, e.b),
+                    "the surface intersection is split into several branches",
+                    float(e.deviation),
+                    "interpolated",
+                    branch_distance(curve, e.branches, max(INTERSECTION_SAMPLES, 8 * len(nodes))),
+                )
+            )
+        else:
             self.out.projected.append(
                 ProjectedEdge((e.a, e.b), e.fallback or "no intersection", float(e.deviation))
             )
@@ -829,7 +1379,7 @@ class _Builder:
             raise BuildError(f"region {r}: {len(wraps)} boundary loops wind around the axis")
         for lp in holes:
             lp.center_u()
-            wires.append(lp.edges)
+            wires.append(self.close_poles(face, lp))
         for edges in wires:
             self.builder.Add(face, self.wire(edges))
         for lp in uv_loops:
@@ -852,6 +1402,9 @@ class _Builder:
             v_lo = self.pool.vertex(pole_point)
         if v_hi is None:
             v_hi = self.pool.vertex(pole_point)
+        self.loosen_vertices(
+            iso, ((v_lo, _xyz(BRep_Tool.Pnt_s(v_lo)), lo), (v_hi, _xyz(BRep_Tool.Pnt_s(v_hi)), hi))
+        )
         mk = BRepBuilderAPI_MakeEdge(iso, v_lo, v_hi, lo, hi)
         if not mk.IsDone():
             raise BuildError(f"seam edge construction failed ({mk.Error()})")
@@ -861,6 +1414,34 @@ class _Builder:
         left = Geom2d_Line(gp_Pnt2d(0.0, -shift), gp_Dir2d(0.0, 1.0))
         self.builder.UpdateEdge(seam, right, left, face, EDGE_TOLERANCE)
         return seam
+
+    def close_poles(self, face, lp) -> list:
+        out = []
+        n = len(lp.edges)
+        for i in range(n):
+            out.append(lp.edges[i])
+            j = (i + 1) % n
+            u0 = lp.uv[i][1][0] + lp.shifts[i][0]
+            u1 = lp.uv[j][0][0] + lp.shifts[j][0]
+            v = lp.uv[i][1][1] + lp.shifts[i][1]
+            pole = isinstance(lp.ir_surface, Sphere) and abs(abs(v) - math.pi / 2) <= 1e-6
+            if not pole or abs(u1 - u0) <= 1e-9:
+                continue
+            vertex = TopExp.LastVertex_s(lp.edges[i], True)
+            out.append(self.pole_edge(face, vertex, v, u0, u1))
+        return out
+
+    def pole_edge(self, face, vertex, v, u0, u1):
+        edge = TopoDS_Edge()
+        self.builder.MakeEdge(edge)
+        self.builder.Add(edge, vertex.Oriented(TopAbs_FORWARD))
+        self.builder.Add(edge, vertex.Oriented(TopAbs_REVERSED))
+        self.builder.Degenerated(edge, True)
+        sign = 1.0 if u1 > u0 else -1.0
+        line = Geom2d_Line(gp_Pnt2d(0.0, v), gp_Dir2d(sign, 0.0))
+        self.builder.UpdateEdge(edge, line, face, EDGE_TOLERANCE)
+        self.builder.Range(edge, sign * u0, sign * u1)
+        return edge
 
     def degenerate_edge(self, face, vertex, v):
         edge = TopoDS_Edge()
@@ -882,7 +1463,7 @@ class _Builder:
                 self.probe(r, s, face, e)
 
     def probe(self, r, s, face, e: _Edge):
-        pts = e.points
+        pts = e.snapped if e.tangent else e.points
         n = len(pts)
         segments = n if e.closed else n - 1
         scale = max(float(np.linalg.norm(np.ptp(np.asarray(pts), axis=0))), 1e-3)
@@ -891,29 +1472,178 @@ class _Builder:
         pair = [self.surface(e.a), self.surface(e.b)]
         if not all(geo.is_analytic(x) for x in pair):
             pair = None
+        confirmed = False
         for i in sorted({segments // 2, segments // 3, (2 * segments) // 3, 0}):
             a, b = pts[i], pts[(i + 1) % n]
             t = geo.unit(b - a) if r == e.a else geo.unit(a - b)
             p = 0.5 * (a + b)
             if pair:
-                p = geo.refine(pair, p)
+                p = self.projector(e)(pair, p, b - a)
             p, _ = geo.closest(s, p)
             side = geo.unit(np.cross(geo.outward(s, p), t))
             for k, step in enumerate(steps):
                 q, _ = geo.closest(s, p + step * side)
-                state = BRepClass_FaceClassifier(face, _pnt(q), 1e-7).State()
+                state = classify(face, q)
                 if state == TopAbs_IN:
-                    return
+                    confirmed = True
+                    break
                 if state != TopAbs_OUT or k + 1 < len(steps):
                     continue
                 raise BuildError(
                     f"region {r}: the built face is not on the IR's side of its boundary with"
                     f" region {e.b if r == e.a else e.a}"
                 )
-        raise BuildError(
-            f"region {r}: could not confirm the built face's side of its boundary with"
-            f" region {e.b if r == e.a else e.a}"
-        )
+        if not confirmed:
+            raise BuildError(
+                f"region {r}: could not confirm the built face's side of its boundary with"
+                f" region {e.b if r == e.a else e.a}"
+            )
+
+
+def classify(face, q):
+    surf = BRep_Tool.Surface_s(face)
+    uv = surface_uv(surf, _pnt(q))
+    if uv is None:
+        return BRepClass_FaceClassifier(face, _pnt(q), 1e-7).State()
+    lo_u, hi_u, lo_v, hi_v = BRepTools.UVBounds_s(face)
+    uv[0] += TWO_PI * round((0.5 * (lo_u + hi_u) - uv[0]) / TWO_PI)
+    if surf.IsVPeriodic():
+        uv[1] += TWO_PI * round((0.5 * (lo_v + hi_v) - uv[1]) / TWO_PI)
+    return BRepClass_FaceClassifier(face, gp_Pnt2d(float(uv[0]), float(uv[1])), 1e-9).State()
+
+
+def surface_uv(surf, p) -> np.ndarray:
+    if isinstance(surf, Geom_ToroidalSurface):
+        uv = ElSLib.Parameters_s(surf.Torus(), p)
+    elif isinstance(surf, Geom_SphericalSurface):
+        uv = ElSLib.Parameters_s(surf.Sphere(), p)
+    elif isinstance(surf, Geom_CylindricalSurface):
+        uv = ElSLib.Parameters_s(surf.Cylinder(), p)
+    elif isinstance(surf, Geom_ConicalSurface):
+        uv = ElSLib.Parameters_s(surf.Cone(), p)
+    else:
+        return None
+    return np.array(uv)
+
+
+def corrected_pcurve(surf, curve, first: float, last: float, pc):
+    deltas = []
+    for t in (first, 0.5 * (first + last), last):
+        uv = surface_uv(surf, curve.Value(t))
+        if uv is None:
+            return pc
+        d = uv - np.array(pc.Value(t).Coord())
+        d[0] = (d[0] + math.pi) % TWO_PI - math.pi
+        if surf.IsVPeriodic():
+            d[1] = (d[1] + math.pi) % TWO_PI - math.pi
+        deltas.append(d)
+    deltas = np.array(deltas)
+    shift = deltas.mean(axis=0)
+    if not np.any(shift != 0) or float(np.ptp(deltas, axis=0).max()) > 1e-12:
+        return pc
+    out = pc.Copy()
+    out.Translate(gp_Vec2d(float(shift[0]), float(shift[1])))
+    return out
+
+
+def _pieces(curve, first: float, last: float) -> list[tuple[float, float]]:
+    if not isinstance(curve, Geom_BSplineCurve):
+        return [(first, last)]
+    cuts = [first]
+    for i in range(1, curve.NbKnots() + 1):
+        k = curve.Knot(i)
+        if first < k < last and curve.Multiplicity(i) >= curve.Degree():
+            cuts.append(k)
+    cuts.append(last)
+    return list(zip(cuts, cuts[1:], strict=False))
+
+
+def _spans(curve, lo: float, hi: float) -> np.ndarray:
+    if not isinstance(curve, Geom_BSplineCurve):
+        return np.linspace(lo, hi, PCURVE_SAMPLES * PCURVE_SPANS + 1)
+    knots = [curve.Knot(i) for i in range(1, curve.NbKnots() + 1)]
+    marks = sorted({lo, hi, *(k for k in knots if lo < k < hi)})
+    ts = [
+        np.linspace(a, b, PCURVE_SAMPLES, endpoint=False)
+        for a, b in zip(marks, marks[1:], strict=False)
+    ]
+    return np.append(np.concatenate(ts), hi)
+
+
+def _concat2d(parts):
+    degree = parts[0].Degree()
+    poles, knots, mults = [], [], []
+    for k, c in enumerate(parts):
+        if c.Degree() != degree:
+            return None
+        cp = [c.Pole(i) for i in range(1, c.NbPoles() + 1)]
+        ck = [c.Knot(i) for i in range(1, c.NbKnots() + 1)]
+        cm = [c.Multiplicity(i) for i in range(1, c.NbKnots() + 1)]
+        if k == 0:
+            poles, knots, mults = cp, ck, cm
+            continue
+        mults[-1] = degree
+        poles.extend(cp[1:])
+        knots.extend(ck[1:])
+        mults.extend(cm[1:])
+    ap = TColgp_Array1OfPnt2d(1, len(poles))
+    for i, q in enumerate(poles, start=1):
+        ap.SetValue(i, q)
+    ak = TColStd_Array1OfReal(1, len(knots))
+    am = TColStd_Array1OfInteger(1, len(mults))
+    for i, (kv, m) in enumerate(zip(knots, mults, strict=True), start=1):
+        ak.SetValue(i, kv)
+        am.SetValue(i, m)
+    return Geom2d_BSplineCurve(ap, ak, am, degree)
+
+
+def sampled_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
+    parts = []
+    prev = None
+    for lo, hi in _pieces(curve, first, last):
+        ts = _spans(curve, lo, hi)
+        uvs = []
+        for t in ts:
+            uv = surface_uv(surf, curve.Value(float(t)))
+            if uv is None:
+                return None
+            if prev is not None:
+                uv[0] += TWO_PI * round((prev[0] - uv[0]) / TWO_PI)
+                if v_periodic:
+                    uv[1] += TWO_PI * round((prev[1] - uv[1]) / TWO_PI)
+            uvs.append(uv)
+            prev = uv
+        pts = TColgp_HArray1OfPnt2d(1, len(uvs))
+        params = TColStd_HArray1OfReal(1, len(uvs))
+        for i, (uv, t) in enumerate(zip(uvs, ts, strict=True), start=1):
+            pts.SetValue(i, gp_Pnt2d(float(uv[0]), float(uv[1])))
+            params.SetValue(i, float(t))
+        interp = Geom2dAPI_Interpolate(pts, params, False, 1e-12)
+        interp.Perform()
+        if not interp.IsDone():
+            return None
+        parts.append(interp.Curve())
+    return parts[0] if len(parts) == 1 else _concat2d(parts)
+
+
+def meridian_pcurve(surf, curve, first: float, last: float, v_periodic: bool):
+    if not isinstance(surf, Geom_SphericalSurface) or not isinstance(curve, Geom_Circle):
+        return None
+    mid = 0.5 * (first + last)
+    a = surface_uv(surf, curve.Value(mid))
+    b = surface_uv(surf, curve.Value(mid + 1e-3 * (last - first)))
+    if abs(b[0] - a[0]) > 1e-9:
+        return None
+    sign = 1.0 if b[1] > a[1] else -1.0
+    return Geom2d_Line(gp_Pnt2d(float(a[0]), float(a[1] - sign * mid)), gp_Dir2d(0.0, sign))
+
+
+def pcurve_error(surf, curve, first: float, last: float, pc) -> float:
+    worst = 0.0
+    for t in np.linspace(first, last, PCURVE_CHECKS):
+        uv = pc.Value(float(t))
+        worst = max(worst, curve.Value(float(t)).Distance(surf.Value(uv.X(), uv.Y())))
+    return worst
 
 
 def seam_vertex(seam, last: bool):
@@ -926,6 +1656,7 @@ class _UVLoop:
         self.surf = surf
         self.edges = list(edges)
         self.v_periodic = isinstance(ir_surface, Torus)
+        self.ir_surface = ir_surface
         self.pcurves = []
         uv = []
         for e in self.edges:
@@ -934,6 +1665,16 @@ class _UVLoop:
             pc = GeomProjLib.Curve2d_s(curve, first, last, surf)
             if pc is None:
                 raise BuildError(f"region {region}: could not project an edge onto the surface")
+            pc = corrected_pcurve(surf, curve, first, last, pc)
+            error = pcurve_error(surf, curve, first, last, pc)
+            if error > PCURVE_EXACT:
+                for build in (meridian_pcurve, sampled_pcurve):
+                    other = build(surf, curve, first, last, self.v_periodic)
+                    if other is None:
+                        continue
+                    other_error = pcurve_error(surf, curve, first, last, other)
+                    if other_error < error:
+                        pc, error = other, other_error
             a, b = (first, last) if e.Orientation() == TopAbs_FORWARD else (last, first)
             uv.append([np.array(pc.Value(a).Coord()), np.array(pc.Value(b).Coord())])
             self.pcurves.append(pc)

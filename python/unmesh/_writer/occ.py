@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
-from OCP.BRep import BRep_Builder
+import numpy as np
+from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepBuilderAPI import (
+    BRepBuilderAPI_Copy,
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakeSolid,
@@ -13,6 +16,7 @@ from OCP.BRepBuilderAPI import (
 )
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
@@ -21,13 +25,15 @@ from OCP.Message import Message
 from OCP.ShapeAnalysis import ShapeAnalysis_ShapeTolerance
 from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Shell, ShapeFix_Solid
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
-from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
+from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
+from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell, TopoDS_Solid
 
 from .topology import BuildError, FacePlan, ShellPlan
 
 SEW_TOLERANCE = 1e-6
+PRECISE_VOLUME = 1e-9
 KEY_SCALE = 1e7
 
 
@@ -115,9 +121,12 @@ def tolerance_of(shape) -> float:
     return float(ShapeAnalysis_ShapeTolerance().Tolerance(shape, 1))
 
 
-def volume_of(shape) -> float:
+def volume_of(shape, precise: bool = False) -> float:
     props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, props)
+    if precise:
+        BRepGProp.VolumeProperties_s(shape, props, PRECISE_VOLUME, True)
+    else:
+        BRepGProp.VolumeProperties_s(shape, props)
     return float(props.Mass())
 
 
@@ -210,6 +219,50 @@ def face_tolerances(shape, mapping, context=None) -> dict[int, float]:
     return out
 
 
+@dataclass
+class FaceFlux:
+    flux: float = 0.0
+    area: float = 0.0
+    perimeter: float = 0.0
+    reach: float = 0.0
+
+
+def face_fluxes(shape, mapping, context, origins, deflection: float) -> dict[int, FaceFlux]:
+    final = _faces_of(shape)
+    out: dict[int, FaceFlux] = {}
+    for region, g in mapping:
+        if context is not None:
+            g = context.Apply(g)
+        if region not in origins:
+            continue
+        o = np.asarray(origins[region], dtype=float)
+        face = next((h for h in final if h.IsSame(g)), g)
+        copy = TopoDS.Face_s(BRepBuilderAPI_Copy(face, True, False).Shape())
+        BRepMesh_IncrementalMesh(copy, deflection, False, 0.1, True)
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(copy, loc)
+        f = out.setdefault(region, FaceFlux())
+        if tri is None:
+            f.flux = math.nan
+            continue
+        trsf = loc.Transformation()
+        pts = (
+            np.array([tri.Node(i).Transformed(trsf).Coord() for i in range(1, tri.NbNodes() + 1)])
+            - o
+        )
+        idx = np.array([tri.Triangle(i).Get() for i in range(1, tri.NbTriangles() + 1)]) - 1
+        if face.Orientation() == TopAbs_REVERSED:
+            idx = idx[:, ::-1]
+        a, b, c = pts[idx[:, 0]], pts[idx[:, 1]], pts[idx[:, 2]]
+        f.flux += float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
+        f.area += float(np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / 2.0)
+        f.reach = max(f.reach, float(np.linalg.norm(pts, axis=1).max()))
+        props = GProp_GProps()
+        BRepGProp.LinearProperties_s(face, props)
+        f.perimeter += float(props.Mass())
+    return out
+
+
 def build_plan_shell(plan: ShellPlan):
     pool = _Pool()
     faces = [(f.region, _face(pool, f)) for f in plan.faces]
@@ -284,12 +337,12 @@ class ReadSolid:
     shells: int
 
 
-def read_back(path) -> tuple[list[ReadSolid], int]:
+def read_back(path, precise: bool = False) -> tuple[list[ReadSolid], int]:
     shape = read_step(path)
     if shape.IsNull():
         return [], 0
     solids = [
-        ReadSolid(volume_of(s), is_valid(s), tolerance_of(s), len(_shells_of(s)))
+        ReadSolid(volume_of(s, precise), is_valid(s), tolerance_of(s), len(_shells_of(s)))
         for s in _solids_of(shape)
     ]
     return solids, len(_shells_of(shape))
