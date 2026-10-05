@@ -167,7 +167,7 @@ def test_main_entrypoint_fails_when_download_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
     monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
 
-    def boom(repo, run_id, artifact, dest):
+    def boom(repo, run_id, artifact, dest, *args, **kwargs):
         raise ValueError("no such artifact")
 
     monkeypatch.setattr(module, "download_artifact", boom)
@@ -188,6 +188,79 @@ def test_main_entrypoint_fails_when_download_fails(tmp_path, monkeypatch):
             str(main_tree),
         ],
     )
+    assert module.main() == 1
+
+
+def test_pick_artifact_file_selects_grid(module):
+    names = ["smoke.jsonl", "smoke_curved.jsonl"]
+    assert module.pick_artifact_file(names, "smoke") == "smoke.jsonl"
+    assert module.pick_artifact_file(names, "smoke_curved") == "smoke_curved.jsonl"
+    assert module.pick_artifact_file(["smoke.jsonl"], "smoke_curved") is None
+    assert module.pick_artifact_file([], "smoke") is None
+
+
+def test_pick_artifact_file_without_select_keeps_first_jsonl(module):
+    assert module.pick_artifact_file(["smoke.jsonl", "smoke_curved.jsonl"], None) == "smoke.jsonl"
+    assert module.pick_artifact_file([], None) is None
+    assert module.pick_artifact_file(["notes.txt"], None) is None
+
+
+def _argv(tmp_path, **kw):
+    argv = [
+        "ci-baseline-plan",
+        "--repo",
+        REPO,
+        "--base-sha",
+        BASE_SHA,
+        "--artifact",
+        "smoke-results-x",
+        "--out",
+        str(tmp_path / "baseline.jsonl"),
+        "--main-tree",
+        str(tmp_path / "main"),
+    ]
+    for flag, value in kw.items():
+        argv.append(f"--{flag.replace('_', '-')}")
+        if value is not True:
+            argv.append(str(value))
+    return argv
+
+
+def _main_tree_with_compare(tmp_path):
+    main_tree = tmp_path / "main"
+    (main_tree / "harness/src/unmesh_harness/runner").mkdir(parents=True)
+    (main_tree / "harness/src/unmesh_harness/runner/compare.py").write_text("x = 1\n")
+    return main_tree
+
+
+def test_allow_missing_skips_new_grid_only(tmp_path, monkeypatch, capsys):
+    module = load_module("ci_baseline_allow_missing")
+    _main_tree_with_compare(tmp_path)
+    monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
+    monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
+
+    def missing(repo, run_id, artifact, dest, select=None):
+        raise module.MissingGridFile(f"artifact holds no {select}.jsonl")
+
+    monkeypatch.setattr(module, "download_artifact", missing)
+    out = tmp_path / "baseline.jsonl"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved", allow_missing=True))
+    assert module.main() == 0
+    assert "new cells only" in capsys.readouterr().out
+    assert not out.exists()
+
+
+def test_missing_grid_file_fails_without_allow_missing(tmp_path, monkeypatch):
+    module = load_module("ci_baseline_no_allow_missing")
+    _main_tree_with_compare(tmp_path)
+    monkeypatch.setattr(module, "list_run_id", lambda repo, workflow, commit: 11)
+    monkeypatch.setattr(module, "run_metadata", lambda repo, run_id: run(11, module=module))
+
+    def missing(repo, run_id, artifact, dest, select=None):
+        raise module.MissingGridFile(f"artifact holds no {select}.jsonl")
+
+    monkeypatch.setattr(module, "download_artifact", missing)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, select="smoke_curved"))
     assert module.main() == 1
 
 

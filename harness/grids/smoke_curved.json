@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "name": "smoke_curved",
+  "corpus_grid": "smoke",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "timeout_s": 60,
+  "input_deflection": [
+    0.01,
+    0.2
+  ],
+  "truth_deflection": [
+    0.001,
+    0.1
+  ],
+  "cells": [
+    {
+      "operator": "identity",
+      "severity": 0.0,
+      "steps": [],
+      "seeds": [
+        0
+      ],
+      "floors": {
+        "f1_cell": 1.0,
+        "regions_equal_faces": true,
+        "dev_input_max": 0.015,
+        "fallback_max": 0
+      }
+    },
+    {
+      "operator": "float32",
+      "severity": 1.0,
+      "steps": [
+        [
+          "float32",
+          1.0
+        ]
+      ],
+      "seeds": [
+        0
+      ],
+      "floors": {
+        "f1_cell": 1.0,
+        "regions_equal_faces": true,
+        "dev_input_max": 0.015,
+        "fallback_max": 0
+      }
+    }
+  ],
+  "judge_samples_per_mm2": 1.0,
+  "step_deviation_sample": [
+    2,
+    5
+  ],
+  "categories": [
+    "curved",
+    "ambiguity"
+  ],
+  "parts": [
+    "round_boss-0000",
+    "counterbore-0000",
+    "countersink-0000",
+    "revolved_cone-0000",
+    "revolved_torus-0000",
+    "chamfer_same_chord-0000"
+  ]
+}

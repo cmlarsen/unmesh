@@ -126,7 +126,21 @@ def run_metadata(repo: str, run_id: int) -> BaselineRun:
     )
 
 
-def download_artifact(repo: str, run_id: int, artifact: str, dest: Path) -> None:
+class MissingGridFile(ValueError):
+    pass
+
+
+def pick_artifact_file(names: list[str], grid: str | None) -> str | None:
+    jsonl = sorted(n for n in names if n.endswith(".jsonl"))
+    if grid is not None:
+        want = f"{grid}.jsonl"
+        return want if want in jsonl else None
+    return jsonl[0] if jsonl else None
+
+
+def download_artifact(
+    repo: str, run_id: int, artifact: str, dest: Path, select: str | None = None
+) -> bool:
     with tempfile.TemporaryDirectory(prefix="baseline-") as tmp:
         subprocess.run(
             [
@@ -145,12 +159,19 @@ def download_artifact(repo: str, run_id: int, artifact: str, dest: Path) -> None
             text=True,
             check=True,
         )
-        hits = sorted(Path(tmp).glob("*.jsonl"))
-        if not hits:
-            raise ValueError(f"artifact {artifact!r} of run {run_id} holds no jsonl")
+        names = sorted(p.name for p in Path(tmp).glob("*.jsonl"))
+        picked = pick_artifact_file(names, select)
+        if picked is None:
+            if select is None:
+                raise ValueError(f"artifact {artifact!r} of run {run_id} holds no jsonl")
+            raise MissingGridFile(
+                f"artifact {artifact!r} of run {run_id} holds no {select}.jsonl "
+                f"(has: {', '.join(names) or 'nothing'})"
+            )
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(hits[0].read_bytes())
+        dest.write_bytes((Path(tmp) / picked).read_bytes())
     validate_baseline(dest)
+    return True
 
 
 def validate_baseline(dest: Path) -> None:
@@ -176,6 +197,19 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--main-tree", type=Path, required=True)
     parser.add_argument("--workflow", default="ci.yml")
+    parser.add_argument(
+        "--select",
+        default=None,
+        help="only accept <SELECT>.jsonl from the downloaded artifact "
+        "(default: the first jsonl)",
+    )
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="warn and exit 0 (writing nothing) when the artifact holds no "
+        "<SELECT>.jsonl, e.g. a baseline from before that grid existed; "
+        "without it the missing file is an error",
+    )
     args = parser.parse_args()
     try:
         compare_on_main = (args.main_tree / COMPARE_MODULE).is_file()
@@ -214,7 +248,13 @@ def main() -> int:
             print(f"::warning::{decision.message}")
         else:
             print(decision.message)
-        download_artifact(args.repo, decision.run_id, args.artifact, args.out)
+        try:
+            download_artifact(args.repo, decision.run_id, args.artifact, args.out, args.select)
+        except MissingGridFile as e:
+            if not args.allow_missing:
+                raise
+            print(f"::warning::{e}; skipping compare for the new cells only")
+            return 0
     except (subprocess.CalledProcessError, ValueError, KeyError) as e:
         print(f"::error::baseline artifact missing or unreadable: {e}")
         return 1
