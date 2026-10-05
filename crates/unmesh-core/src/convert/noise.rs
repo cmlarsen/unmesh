@@ -18,6 +18,8 @@ const CHI2_HIGH_Z: f64 = 4.26;
 const PLANE_F_CRIT: f64 = 3.0;
 const REWEIGHT_STEPS: usize = 10;
 const CHOLESKY_FLOOR: f64 = 1e-6;
+const NEAR_RANK: usize = 6;
+const NEAR_FACTOR: f64 = 3.0;
 
 struct Sample {
     var: f64,
@@ -112,6 +114,7 @@ pub fn estimate_sigma(
     let mut seen_vert = Marks::new(v.len());
     let mut samples: Vec<(f64, f64, Sample)> = Vec::new();
     let mut pts: Vec<V3> = Vec::new();
+    let mut dist: Vec<f64> = Vec::new();
     let mut queue: Vec<u32> = Vec::new();
     let mut parent: Vec<usize> = Vec::new();
 
@@ -204,6 +207,9 @@ pub fn estimate_sigma(
                     }
                 }
             }
+            if !near_points(v[vi], &mut pts, &mut dist) {
+                continue;
+            }
             if let Some(fit) = quadric_fit(v[vi], n, &pts) {
                 samples.push((fit.median_unbiased(), area / 3.0, fit));
             }
@@ -217,6 +223,24 @@ pub fn estimate_sigma(
     let pooled = pooled_sigma(&samples, median);
     let shrink = POOL_INFO * POOL_INFO / (POOL_INFO * POOL_INFO + info * info);
     Some((shrink * pooled * pooled + (1.0 - shrink) * median * median).sqrt())
+}
+
+fn near_points(center: V3, pts: &mut Vec<V3>, dist: &mut Vec<f64>) -> bool {
+    dist.clear();
+    dist.extend(pts.iter().map(|&p| norm(sub(p, center))));
+    let mut sorted = dist.clone();
+    sorted.sort_by(f64::total_cmp);
+    let Some(&dk) = sorted.iter().filter(|&&d| d > 0.0).nth(NEAR_RANK - 1) else {
+        return true;
+    };
+    let cut = NEAR_FACTOR * dk;
+    let before = pts.len();
+    let mut i = 0;
+    pts.retain(|_| {
+        i += 1;
+        dist[i - 1] <= cut
+    });
+    pts.len() == before || pts.len() >= NP + MIN_DOF
 }
 
 fn pooled_sigma(samples: &[(f64, f64, Sample)], median: f64) -> f64 {
@@ -439,9 +463,9 @@ fn cholesky(a: &M6, rhs: &[f64; NP], np: usize) -> Option<[f64; NP]> {
     Some(x)
 }
 
-type M6 = [[f64; NP]; NP];
+pub type M6 = [[f64; NP]; NP];
 
-fn jacobi(mut a: M6) -> ([f64; NP], M6) {
+pub fn jacobi(mut a: M6) -> ([f64; NP], M6) {
     let mut v = [[0.0; NP]; NP];
     for (i, row) in v.iter_mut().enumerate() {
         row[i] = 1.0;

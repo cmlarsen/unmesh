@@ -4,10 +4,10 @@ use super::segment::TriInfo;
 use super::surface::{Surface, radial};
 
 const AXIS_STEP: f64 = 1e-7;
-const LM_ITERS: usize = 40;
-const QUICK_ITERS: usize = 10;
+pub const LM_ITERS: usize = 40;
+pub const QUICK_ITERS: usize = 10;
 const ROW_GAP: f64 = 0.05;
-const IRLS_ROUNDS: usize = 3;
+pub const IRLS_ROUNDS: usize = 3;
 pub const MAX_GROUP: usize = 16;
 const LAW_GAP_SPREAD: f64 = 0.02;
 const LAW_N_REL: f64 = 1e-3;
@@ -16,6 +16,8 @@ const LAW_N_REL: f64 = 1e-3;
 pub enum Kind {
     Cylinder,
     Cone { sign: f64 },
+    Sphere,
+    Torus,
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +40,7 @@ pub struct Joint {
     pub fit: Vec<(f64, f64)>,
 }
 
-fn basis(a: V3) -> (V3, V3) {
+pub fn basis(a: V3) -> (V3, V3) {
     let e = if a[0].abs() < 0.6 {
         [1.0, 0.0, 0.0]
     } else if a[1].abs() < 0.6 {
@@ -63,6 +65,14 @@ fn point_residual(axis: &Axis, shape: &[f64], m: &Member, p: V3) -> f64 {
             let (s, c) = shape[m.slot + 1].sin_cos();
             rho * c - sign * (h - shape[m.slot]) * s
         }
+        Kind::Sphere => {
+            let dh = h - shape[m.slot];
+            (rho * rho + dh * dh).sqrt() - shape[m.slot + 1]
+        }
+        Kind::Torus => {
+            let (dr, dh) = (rho - shape[m.slot + 1], h - shape[m.slot]);
+            (dr * dr + dh * dh).sqrt() - shape[m.slot + 2]
+        }
     }
 }
 
@@ -79,7 +89,7 @@ pub fn member_residual(axis: &Axis, shape: &[f64], m: &Member) -> (f64, f64) {
     ((s2 / sw.max(f64::MIN_POSITIVE)).sqrt(), mx)
 }
 
-fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+pub fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();
     for col in 0..n {
         let piv = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
@@ -260,7 +270,7 @@ pub fn fit_joint(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fit_joint_with(
+pub fn fit_joint_with(
     members: &[Member],
     mut axis: Axis,
     mut shape: Vec<f64>,
@@ -270,6 +280,7 @@ fn fit_joint_with(
     rounds: usize,
     iters: usize,
 ) -> Joint {
+    let fix_dir = fix_dir || members.iter().all(|m| m.kind == Kind::Sphere);
     let extent = members
         .iter()
         .flat_map(|m| m.pts.iter())
@@ -309,6 +320,7 @@ fn fit_joint_with(
     Joint { axis, shape, fit }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Tri {
     pub normal: V3,
     pub area: f64,
@@ -339,7 +351,7 @@ fn normal_scatter(tris: &[Tri], centred: bool) -> Option<([f64; 3], [V3; 3], V3)
     Some((vals, vecs, mean))
 }
 
-fn kasa(pts: &[(V3, f64)], a: V3) -> Option<(V3, f64)> {
+pub fn kasa(pts: &[(V3, f64)], a: V3) -> Option<(V3, f64)> {
     let (u, v) = basis(a);
     let mut sw = 0.0;
     let mut cx = 0.0;
@@ -707,74 +719,33 @@ pub fn tessellation_radius(pts: &[(V3, f64)], axis: &Axis, radius: f64, tol: f64
 }
 
 pub fn orientation(surface: &Surface, tris: &[Tri]) -> Surface {
-    let natural = match *surface {
-        Surface::Cylinder {
-            origin,
-            axis,
-            radius,
-            ..
-        } => Surface::Cylinder {
-            origin,
-            axis,
-            radius,
-            reversed: false,
-        },
-        Surface::Cone {
-            apex,
-            axis,
-            half_angle,
-            ..
-        } => Surface::Cone {
-            apex,
-            axis,
-            half_angle,
-            reversed: false,
-        },
-        s => return s,
-    };
+    if matches!(surface, Surface::Plane { .. } | Surface::Facets) {
+        return *surface;
+    }
+    let natural = surface.with_reversed(false);
     let mut s = 0.0;
     for t in tris {
         if let Some(n) = natural.normal_at(t.centroid) {
             s += t.area * dot(n, t.normal);
         }
     }
-    match natural {
-        Surface::Cylinder {
-            origin,
-            axis,
-            radius,
-            ..
-        } => Surface::Cylinder {
-            origin,
-            axis,
-            radius,
-            reversed: s < 0.0,
-        },
-        Surface::Cone {
-            apex,
-            axis,
-            half_angle,
-            ..
-        } => Surface::Cone {
-            apex,
-            axis,
-            half_angle,
-            reversed: s < 0.0,
-        },
-        other => other,
+    natural.with_reversed(s < 0.0)
+}
+
+fn canonical(mut a: V3) -> V3 {
+    let big = (0..3)
+        .max_by(|&i, &j| a[i].abs().total_cmp(&a[j].abs()))
+        .unwrap();
+    if a[big] < 0.0 {
+        a = scale(a, -1.0);
     }
+    a
 }
 
 pub fn surface_of(axis: &Axis, shape: &[f64], m: &Member) -> Surface {
     match m.kind {
         Kind::Cylinder => {
-            let mut a = axis.a;
-            let big = (0..3)
-                .max_by(|&i, &j| a[i].abs().total_cmp(&a[j].abs()))
-                .unwrap();
-            if a[big] < 0.0 {
-                a = scale(a, -1.0);
-            }
+            let a = canonical(axis.a);
             Surface::Cylinder {
                 origin: sub(axis.c, scale(a, dot(axis.c, a))),
                 axis: a,
@@ -786,6 +757,18 @@ pub fn surface_of(axis: &Axis, shape: &[f64], m: &Member) -> Surface {
             apex: add(axis.c, scale(axis.a, shape[m.slot])),
             axis: scale(axis.a, sign),
             half_angle: shape[m.slot + 1],
+            reversed: false,
+        },
+        Kind::Sphere => Surface::Sphere {
+            center: add(axis.c, scale(axis.a, shape[m.slot])),
+            radius: shape[m.slot + 1],
+            reversed: false,
+        },
+        Kind::Torus => Surface::Torus {
+            center: add(axis.c, scale(axis.a, shape[m.slot])),
+            axis: canonical(axis.a),
+            major: shape[m.slot + 1],
+            minor: shape[m.slot + 2],
             reversed: false,
         },
     }
@@ -825,6 +808,14 @@ pub fn sagitta(surface: &Surface, t: [V3; 3]) -> f64 {
             half_angle,
             ..
         } => cone_sagitta(surface, apex, axis, half_angle, t),
+        Surface::Sphere { center, radius, .. } => super::doubly::sphere_sagitta(center, radius, t),
+        Surface::Torus {
+            center,
+            axis,
+            major,
+            minor,
+            ..
+        } => super::doubly::torus_sagitta(center, axis, major, minor, t),
         _ => 0.0,
     }
 }
@@ -970,6 +961,7 @@ fn law_fits(law_rms: f64, lsq_rms: f64, n: usize, r: f64) -> bool {
 
 pub fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
     fit_single_gated(pts, tris, tol, f64::INFINITY)
+        .or_else(|| super::doubly::fit_doubly(pts, tris, tol, f64::INFINITY))
 }
 
 /// A cheap screen for seeds: the gated initial estimates refined by one
@@ -1123,12 +1115,17 @@ fn refit_with(
     (max <= tol && valid_shape(&j.shape, &m[0])).then_some((kind, j.axis, j.shape, rms, max, false))
 }
 
-fn valid_shape(shape: &[f64], m: &Member) -> bool {
+pub fn valid_shape(shape: &[f64], m: &Member) -> bool {
     match m.kind {
         Kind::Cylinder => shape[m.slot] > 0.0,
         Kind::Cone { .. } => {
             let a = shape[m.slot + 1];
             shape[m.slot].is_finite() && a > 0.0 && a < std::f64::consts::FRAC_PI_2
+        }
+        Kind::Sphere => shape[m.slot].is_finite() && shape[m.slot + 1] > 0.0,
+        Kind::Torus => {
+            let (major, minor) = (shape[m.slot + 1], shape[m.slot + 2]);
+            shape[m.slot].is_finite() && minor > 0.0 && major > minor && major.is_finite()
         }
     }
 }
@@ -1138,7 +1135,9 @@ fn line_distance(p: V3, axis: &Axis) -> f64 {
 }
 
 fn coaxial(a: &Fitted, b: &Fitted, cos_lim: f64, dist: f64) -> bool {
-    dot(a.axis.a, b.axis.a).abs() >= cos_lim
+    a.kind != Kind::Sphere
+        && b.kind != Kind::Sphere
+        && dot(a.axis.a, b.axis.a).abs() >= cos_lim
         && line_distance(b.axis.c, &a.axis) <= dist
         && line_distance(a.axis.c, &b.axis) <= dist
 }
@@ -1201,6 +1200,17 @@ fn build_group(fits: &[&Fitted], pts: &[Vec<(V3, f64)>], tol: f64) -> GroupFit {
                     pts: ps,
                     kind: Kind::Cone { sign },
                     slot: shape.len() - 2,
+                });
+            }
+            Kind::Sphere | Kind::Torus => {
+                let center = add(f.axis.c, scale(f.axis.a, f.shape[0]));
+                shape.push(dot(sub(center, axis.c), axis.a));
+                shape.extend_from_slice(&f.shape[1..]);
+                fixed.extend(std::iter::repeat_n(false, f.shape.len()));
+                members.push(Member {
+                    pts: ps,
+                    kind: f.kind,
+                    slot: shape.len() - f.shape.len(),
                 });
             }
         }
@@ -1330,6 +1340,7 @@ pub fn refine_regions_with(
             }
         }
         if (g.len() == 1 || joint.is_some())
+            && fits[g[0]].kind != Kind::Sphere
             && let Some(e) = world_axis(gf.axis.a, cos_lim)
         {
             let axis = Axis { a: e, c: gf.axis.c };

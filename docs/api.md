@@ -4,7 +4,7 @@ Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` w
 crate `unmesh-core`. They share one contract, the [IR](ir.md).
 
 Everything here is v0 and may change freely before the first release. `convert` fits planes,
-cylinders and cones (what it cannot fit stays `facets`; spheres and tori are not fitted yet, #19);
+cylinders, cones, spheres and tori (what it cannot fit stays `facets`);
 `convert_from_labels` fits the same surfaces on a given segmentation. `step.write` is implemented for planes and `facets`
 (#5).
 
@@ -34,7 +34,7 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh before segmenting: five times the estimated vertex noise σ, floored at the larger of 1e-6 of the bounding-box diagonal and 5e-7 of the largest absolute coordinate, and capped at 5e-4 of the diagonal. σ is curvature-independent: around every welded vertex the converter takes each smooth sector of its fan (triangles joined across edges under 15°), gathers the sector's 2-ring without crossing an edge of 15° or more or tilting past 60° from the sector normal, and fits a height-field quadric in the frame of the sector normal. On a neighbourhood of fewer than 12 points it keeps a plane instead when the quadric does not reduce the residual significantly (F < 3) or when there are too few points for three degrees of freedom; on 12 or more points it trims the worst quarter twice (least trimmed squares) and rescales by the Gaussian truncated variance and a measured selection factor, so σ matches the standard deviation of Gaussian noise (uniform noise reads about 5% high). Each sector contributes its residual variance and degrees of freedom; for the pooled aggregate below it contributes the plane fit's instead whenever the plane is adequate by the same F-test, since a flat patch then keeps three more degrees of freedom. σ combines two aggregates of those samples: the area-weighted median of the per-sample RMS (each median-unbiased for its degrees of freedom by Wilson-Hilferty), which is robust, and a pooled variance over the samples whose variance is plausible for that σ (inside the 1% and 99.999% chi-square quantiles, iterated from the median and capped at four times it), weighted by degrees of freedom per point, which is efficient. The pooled estimate dominates when the mesh carries little evidence (total degrees of freedom D well under 200) and the median when it carries much: σ² = λ·pooled² + (1 − λ)·median² with λ = 200² / (200² + D²). A quadric absorbs plane, cylinder, cone and sphere curvature, so a clean tessellation gives σ near zero and a noisy mesh gives σ near the noise's standard deviation along the normal. Becomes `ir.tolerances.linear`. |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh before segmenting: five times the estimated vertex noise σ, floored at the larger of 1e-6 of the bounding-box diagonal and 5e-7 of the largest absolute coordinate, and capped at 5e-4 of the diagonal. σ is curvature-independent: around every welded vertex the converter takes each smooth sector of its fan (triangles joined across edges under 15°), gathers the sector's 2-ring without crossing an edge of 15° or more or tilting past 60° from the sector normal, keeps only the points within three times the distance to the sixth-nearest of them (a long facet of a neighbouring surface reaches far past the region a quadric can model; when that leaves too few points for a quadric with three degrees of freedom the sector gives no sample), and fits a height-field quadric in the frame of the sector normal. On a neighbourhood of fewer than 12 points it keeps a plane instead when the quadric does not reduce the residual significantly (F < 3) or when there are too few points for three degrees of freedom; on 12 or more points it trims the worst quarter twice (least trimmed squares) and rescales by the Gaussian truncated variance and a measured selection factor, so σ matches the standard deviation of Gaussian noise (uniform noise reads about 5% high). Each sector contributes its residual variance and degrees of freedom; for the pooled aggregate below it contributes the plane fit's instead whenever the plane is adequate by the same F-test, since a flat patch then keeps three more degrees of freedom. σ combines two aggregates of those samples: the area-weighted median of the per-sample RMS (each median-unbiased for its degrees of freedom by Wilson-Hilferty), which is robust, and a pooled variance over the samples whose variance is plausible for that σ (inside the 1% and 99.999% chi-square quantiles, iterated from the median and capped at four times it), weighted by degrees of freedom per point, which is efficient. The pooled estimate dominates when the mesh carries little evidence (total degrees of freedom D well under 200) and the median when it carries much: σ² = λ·pooled² + (1 − λ)·median² with λ = 200² / (200² + D²). A quadric absorbs plane, cylinder, cone and sphere curvature, so a clean tessellation gives σ near zero and a noisy mesh gives σ near the noise's standard deviation along the normal. Becomes `ir.tolerances.linear`. |
 | `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region, with σ the quadric noise estimate above, clamped to a fifth of the final tolerance (with an explicit `linear_tolerance`, σ is a fifth of it). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
@@ -55,10 +55,12 @@ A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the
 with the part's units), curved or not, and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
 Two limits follow from the median on well-sampled meshes. Noise confined to less than half of the area (for example, only on
-the planar faces) is not seen, and the tolerance stays near the floor. And where most vertices sit on
-tangent seams between different surfaces (a box with every edge and corner filleted, tessellated
-coarsely), no neighbourhood is one quadric, so curvature reads as noise and the tolerance rises
-toward the 5e-4 cap.
+the planar faces) is not seen, and the tolerance stays near the floor. And where a surface's facets
+are long and thin around the normal (the coarse ring direction of a torus), a quadric cannot follow
+even the near points, so curvature reads as noise and the tolerance rises toward the 5e-4 cap. Tangent
+seams between different surfaces no longer do: on a box with every edge and corner filleted,
+tessellated coarsely, nearly every vertex sits on such a seam, and only the near-point limit keeps
+the neighbouring surface's far facet ends out of the fit.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
@@ -157,7 +159,9 @@ id in `0..max` used, and below `2**32 - 1`; anything else raises `ValueError`, a
 that is not one-dimensional, not integer, or not one per triangle. Labelled regions are never merged
 with each other, and a label whose triangles fall apart into several edge-connected pieces becomes one
 region per piece. Each region gets the most parsimonious surface that fits its vertices within
-`tolerances.linear`: a plane, else a cylinder, else a cone, else it is kept as `facets`. The automatic
+`tolerances.linear`: a plane, else a cylinder, else a cone, else a sphere, else a torus, else it is kept
+as `facets`. A torus patch that a cylinder, cone or sphere also fits within the tolerance is therefore
+the simpler surface, and so is a band of two vertex rings, which every one of them fits. The automatic
 `convert` finds its own curved regions (see [internals](#unmeshconvert-internals)) and fits them the
 same way.
 
@@ -168,6 +172,23 @@ same way.
   scatter; the apex is the least-squares intersection of the triangle planes (every chord facet of a
   cone passes through its apex), the half-angle the mean angle of the vertices about the axis; then the
   same refinement.
+- **Sphere**: `|p|² + D·p + E = 0` is linear in `D` and `E`, so a least-squares solve over the
+  vertices gives the centre and radius exactly on exact vertices; then the same refinement (the axis
+  direction plays no part, so only the centre and radius move).
+- **Torus**: the refinement fits the centre, axis, major and minor radius together, from the best of
+  three starts by largest vertex residual. (1) The spine circle traced through the centres of
+  curvature: for a trial tube radius `s` (either sign, for either orientation), each triangle's
+  centroid moved by `s` against its normal lies on the spine when `s` is the minor radius; a log grid
+  then golden-section search on `s` minimises the misfit of a 3D circle (plane, then circle in it)
+  through those points, which gives the centre, axis and major radius, and the mean vertex distance to
+  that circle gives the minor radius. (2) The axis of revolution: every normal line of a surface of
+  revolution meets its axis, a condition linear in the axis' Plücker coordinates, after which the
+  vertices' (distance, height) about the axis lie on the tube's circle. (3) For a patch too small to
+  fix either circle, the local shape: a quadric through the vertices gives the point, normal and
+  principal curvatures at the patch's middle; the larger is the tube's, and the tube angle (hence the
+  axis and the major radius) is the grid value with the smallest largest vertex residual. A torus
+  needs `major_radius > minor_radius`, and its vertices must need at least four rings (bands of the
+  tube angle `2 tolerances.linear` wide) to hold them all: any three coaxial circles lie on some torus.
 - **Tessellation law**: when the rulings of a cylinder are cut into equal chords `c` with equal
   turning angles, including a partial arc, the turning angle gives `N` and the radius is
   `c / (2 sin(π/N))`. Chords and turning angles are measured between rulings, so the estimate does not
@@ -180,7 +201,7 @@ same way.
   keep their exact least-squares radius (an arc of 90.05° in 9 chords is refused), and the law matters
   on short noisy arcs, where the least-squares radius is poorly conditioned. A law radius stays fixed
   through the coaxial and world-axis refits below.
-- **Coaxial snapping**: cylinders and cones whose axes are parallel within `angular_snap_deg` and
+- **Coaxial snapping**: cylinders, cones and tori whose axes are parallel within `angular_snap_deg` and
   collinear within three times `tolerances.linear` are refitted with one shared axis, and cylinders among
   them with radii within the tolerance share one radius, so a bore split across several regions is one
   cylinder. A group's axis within `angular_snap_deg` of a world axis is snapped to it. Either is kept
@@ -192,7 +213,20 @@ Vertices of a tessellated curved face lie on the surface, but the triangles betw
 reports a deviation near `r (1 - cos(π/N))` while its fitted radius is exact. The sagitta is computed
 exactly, never sampled: for a cylinder as the 2D distance from the axis to the projected triangle, for
 a cone as the minimum of the convex signed distance `ρ cos α - h sin α` over the triangle (corners,
-the stationary points along each edge, and the point where the axis pierces the triangle). `residual.rms`
+the stationary points along each edge, and the point where the axis pierces the triangle), for a
+sphere from the point-triangle distance to the centre and the farthest corner. For a torus it is a
+provable upper bound, not the exact value: with `g` the distance to the spine circle, the distance to
+the torus is `|g - minor|`. The largest `g` is bounded by a convex function of the point (the tube
+radius `(ρ - R)` split into its outward and inward parts, the inward one with `ρ` replaced by its
+support `d·q` along a direction `d` across the axis) whose maximum is at a corner; its slack grows with
+the square of the triangle's span about the axis, so the triangle is split exactly at its edge midpoints
+until the bound is within 2% of a value the true maximum reaches. The smallest `g` is the distance from
+the triangle to the arc of the spine over the triangle's azimuths, bounded below by covering the arc
+with pieces, each inside the triangle of its chord and end tangents, and taking the exact
+triangle-triangle distance. On random tori and triangles the bound is never below a dense numeric
+maximum; it is within 4% of it for minor/major radius ratios of 0.02 to 0.92, and up to about 1.5×
+on thin tori (smaller ratios); a triangle spanning more than 90° about the axis falls back to its corners
+plus its longest edge. `residual.rms`
 is the RMS over the region's vertices only, without the sagitta.
 
 **Ambiguity sets (n-gon prism versus coarse cylinder, chamfer versus one-segment fillet):** on this
@@ -209,7 +243,14 @@ three facets.
 ### `unmesh.convert` internals
 
 **Curved regions.** After the planar stages below, plane regions that meet across smooth creases (under
-15°, and more than the angle their own noise allows) are grown into cylinders and cones. A seed is a
+15°, and more than the angle their own noise allows) are grown into spheres, tori, cylinders and cones.
+Regions on a surface curved in two directions (a sphere or a torus: normals of the smooth neighbours,
+weighted by shared boundary length and centred, differ along two directions and bend both ways along
+the second, and the region is not much larger than those neighbours) seed first: the flagged regions
+nearest the seed, breadth first, up to 16, 32 or 64 vertices, unless a cylinder or cone already fits
+them, fitted as a sphere else a torus (above). The group grows as below; when it stalls it is refined on
+its members, else fitted afresh on their union (a small seed's torus is right only locally), and
+retries what it rejected. Then cylinders and cones grow from the remaining regions. A seed is a
 region and its two most opposed smooth neighbours, extended along the same turning direction to 12,
 24 or 48 vertices (a short arc of a staggered cone band does not determine its axis); it is fitted from
 the normal-scatter and circle estimates, plus, for cones, an apex and half-angle solved linearly from the
@@ -220,12 +261,18 @@ chord sagitta is at most 16 times the group's median: tessellated curves cut eve
 deflection, while a flat face is never absorbed into a large cylinder through its four edges (the side
 of a rounded rectangle and the strips beside it always lie on one). A stalled group is refitted and
 retries what it rejected; adjacent groups that fit one surface are joined; the result is refitted
-(tessellation law included) and joins the coaxial snapping above. Regions on a surface curved in two
-directions (a sphere or a torus: normals of the smooth neighbours, weighted by shared boundary length
-and centred, differ along two directions and bend both ways along the second, and the region is not
-much larger than those neighbours) do not seed groups and become `facets`, as does a lone triangle
-whose three neighbours all meet it at smooth creases; a group with two curved neighbours each sharing
-15% of its boundary is a slice of such a surface (rings of a torus are cones) and becomes `facets` too.
+(tessellation law included) and joins the coaxial snapping above. On a sphere or a torus the normal
+test allows twice the spread plus the chord sagitta across the facet's width (a facet whose corners sit
+on different rings tilts beyond the normals at its corners, and a sliver's normal is set by how far its
+middle bows), and the sagitta compared is the distance at the corners, edge midpoints and centroid.
+Where two surfaces meet tangentially the planar stage can join a strip of one with a sliver of the next,
+or keep a few nearly coplanar triangles of a sphere or torus together, so that region fits neither:
+afterwards each triangle of an ungrouped region of at most 64 triangles moves into an adjacent curved
+group it fits as members do, and groups that then touch are joined when one refitted surface holds
+both. A flagged region left ungrouped becomes `facets`, as does a lone triangle whose three neighbours
+all meet it at smooth creases; a cylinder or cone group with two other cylinder or cone groups each
+sharing 15% of its boundary is a slice of a sphere or torus that was not recovered (rings of a torus
+are cones) and becomes `facets` too.
 
 The planar converter welds the input, groups triangles into regions by growing them while every
 vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each

@@ -135,3 +135,93 @@ def test_writer_falls_back_on_curved_regions(tmp_path):
     bare = step.write(ir, tmp_path / "bare.step")
     assert not bare.valid
     assert not (tmp_path / "bare.step").exists()
+
+
+def torus(big=20.0, small=4.0, nu=48, nv=24):
+    def at(i, j):
+        u, v = 2 * math.pi * (i % nu) / nu, 2 * math.pi * (j % nv) / nv
+        rho = big + small * math.cos(v)
+        return [rho * math.cos(u), rho * math.sin(u), small * math.sin(v)]
+
+    tris = []
+    for i in range(nu):
+        for j in range(nv):
+            tris += [[at(i, j), at(i + 1, j), at(i + 1, j + 1)]]
+            tris += [[at(i, j), at(i + 1, j + 1), at(i, j + 1)]]
+    return np.array(tris), np.zeros(len(tris), dtype=np.int64)
+
+
+def capsule_dome(r=6.0, h=8.0, n=32, rows=8):
+    def ring(rad, z):
+        t = np.linspace(0.0, 2 * math.pi, n, endpoint=False)
+        return np.stack([rad * np.cos(t), rad * np.sin(t), np.full(n, z)], axis=1)
+
+    phis = [math.pi / 2 * k / rows for k in range(rows)]
+    dome = [ring(r * math.cos(p), h + r * math.sin(p)) for p in phis]
+    bottom = ring(r, 0.0)
+    top, base = np.array([0.0, 0.0, h + r]), np.array([0.0, 0.0, 0.0])
+    tris, labels = [], []
+    for k in range(n):
+        j = (k + 1) % n
+        tris += [[bottom[k], bottom[j], dome[0][j]], [bottom[k], dome[0][j], dome[0][k]]]
+        labels += [0, 0]
+        tris += [[base, bottom[j], bottom[k]]]
+        labels += [1]
+        for a, b in zip(dome, dome[1:], strict=False):
+            tris += [[a[k], a[j], b[j]], [a[k], b[j], b[k]]]
+            labels += [2, 2]
+        tris += [[dome[-1][k], dome[-1][j], top]]
+        labels += [2]
+    return np.array(tris), np.array(labels)
+
+
+def test_labels_give_a_torus():
+    tris, labels = torus()
+    ir, report = unmesh.convert_from_labels(tris, labels)
+    assert report.region_counts == {"torus": 1}
+    s = ir.regions[0].surface
+    assert s.major_radius == pytest.approx(20.0, abs=1e-9)
+    assert s.minor_radius == pytest.approx(4.0, abs=1e-9)
+    assert s.orientation == "same"
+    assert report.max_deviation >= 4.0 * (1 - math.cos(math.pi / 24))
+
+
+def test_labels_give_a_sphere():
+    tris, labels = capsule_dome()
+    ir, report = unmesh.convert_from_labels(tris, labels)
+    assert report.region_counts == {"cylinder": 1, "plane": 1, "sphere": 1}
+    s = next(r.surface for r in ir.regions if r.surface.type == "sphere")
+    assert s.radius == pytest.approx(6.0, abs=1e-9)
+    assert s.center == pytest.approx((0.0, 0.0, 8.0), abs=1e-9)
+
+
+def ball(r=5.0, n=24, rows=12):
+    def at(i, k):
+        phi = -math.pi / 2 + math.pi * k / rows
+        t = 2 * math.pi * (i % n) / n
+        return [r * math.cos(phi) * math.cos(t), r * math.cos(phi) * math.sin(t), r * math.sin(phi)]
+
+    tris = []
+    for i in range(n):
+        tris += [[at(0, 0), at(i + 1, 1), at(i, 1)]]
+        tris += [[at(0, rows), at(i, rows - 1), at(i + 1, rows - 1)]]
+        for k in range(1, rows - 1):
+            tris += [
+                [at(i, k), at(i + 1, k), at(i + 1, k + 1)],
+                [at(i, k), at(i + 1, k + 1), at(i, k + 1)],
+            ]
+    return np.array(tris), np.zeros(len(tris), dtype=np.int64)
+
+
+@pytest.mark.parametrize("shape", ["torus", "sphere"])
+def test_writer_falls_back_on_doubly_curved_regions(tmp_path, shape):
+    pytest.importorskip("OCP")
+    from unmesh import step
+
+    tris, labels = torus() if shape == "torus" else ball()
+    ir, rep = unmesh.convert_from_labels(tris, labels)
+    assert rep.region_counts == {shape: 1}
+    report = step.write(ir, tmp_path / "w.step", mesh=tris)
+    assert report.valid
+    assert report.fallback == "faceted"
+    assert f"{shape} surfaces are not supported" in report.fallback_reason
