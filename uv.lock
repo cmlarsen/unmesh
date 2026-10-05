@@ -1629,6 +1629,8 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "ocp-gordon" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "unmesh" },
 ]
 
@@ -1644,6 +1646,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "ocp-gordon", specifier = ">=0.1.17,<0.2" },
     { name = "pymeshlab", marker = "extra == 'gpl'" },
+    { name = "scipy", specifier = ">=1.16" },
     { name = "unmesh", editable = "." },
 ]
 provides-extras = ["gpl"]

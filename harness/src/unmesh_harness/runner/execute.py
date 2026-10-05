@@ -199,7 +199,8 @@ def _score(
         record["step_problems"] = problems
     phases["validity"] = time.perf_counter() - mark
     mark = time.perf_counter()
-    record.update(face_recovery(clean, degraded.face_id, ir, frame))
+    confidence = degraded.metadata.get("label_confidence")
+    record.update(face_recovery(clean, degraded.face_id, ir, frame, confidence))
     phases["f1"] = time.perf_counter() - mark
     mark = time.perf_counter()
     record["topology"] = score_topology(clean, degraded.face_id, tris, ir)

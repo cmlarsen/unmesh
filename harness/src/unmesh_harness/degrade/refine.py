@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from ..labels import FaceInfo
-from .core import register
+from .core import register, set_source_index
 
 DIAGONAL_FRACTION_AT_ZERO = 0.1
 MAX_PASSES = 40
@@ -102,6 +102,7 @@ def refine(mesh, severity, rng):
     target = target_edge_mm(severity, diagonal)
     tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
     fids = mesh.face_id.tolist()
+    origin = list(range(len(tris)))
     all_mids: dict = {}
     before = len(tris)
     for _ in range(MAX_PASSES):
@@ -123,17 +124,19 @@ def refine(mesh, severity, rng):
             if any(f.surface != "plane" for f in faces):
                 x = project_onto(faces, x)
             mids[k] = tuple(x.tolist())
-        new_tris, new_ids = [], []
-        for t, f in zip(tris, fids, strict=True):
+        new_tris, new_ids, new_origin = [], [], []
+        for t, f, o in zip(tris, fids, origin, strict=True):
             pieces = _split_triangle(t, mids, f)
             new_tris += pieces
             new_ids += [f] * len(pieces)
-        tris, fids = new_tris, new_ids
+            new_origin += [o] * len(pieces)
+        tris, fids, origin = new_tris, new_ids, new_origin
         all_mids.update(mids)
     else:
         raise RuntimeError("refine did not converge")
     mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
     mesh.face_id = np.array(fids, dtype=mesh.face_id.dtype)
+    set_source_index(mesh, origin)
     for adj in mesh.adjacency:
         pts = [tuple(p) for p in adj.points]
         out = [pts[0]]

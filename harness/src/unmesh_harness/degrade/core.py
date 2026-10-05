@@ -10,6 +10,8 @@ import numpy as np
 from ..labels import LabeledMesh
 
 Params = dict[str, Any]
+CONFIDENCE_KEY = "label_confidence"
+SOURCE_INDEX_KEY = "_source_index"
 OperatorFn = Callable[[LabeledMesh, float, np.random.Generator], Params]
 
 
@@ -72,11 +74,26 @@ def apply(name: str, mesh: LabeledMesh, severity: float, seed: int) -> LabeledMe
     )
     params: Params = {}
     if severity > 0.0:
+        conf = out.metadata.get(CONFIDENCE_KEY)
+        src_tris, src_ids = out.tris.copy(), out.face_id.copy()
         params = op.fn(out, float(severity), np.random.default_rng(seed)) or {}
+        source = out.metadata.pop(SOURCE_INDEX_KEY, None)
+        if conf is not None and out.metadata.get(CONFIDENCE_KEY) is conf:
+            from .processing import carry_confidence
+
+            carry_confidence(out, src_tris, src_ids, conf, source)
     out.metadata.setdefault("history", []).append(
         {"op": name, "severity": float(severity), "seed": int(seed), "params": params}
     )
     return out
+
+
+def set_source_index(mesh: LabeledMesh, source) -> None:
+    """Record, per output triangle, the input triangle it was copied or split from (-1: new).
+
+    core.apply consumes it to carry label_confidence by index instead of by geometry.
+    """
+    mesh.metadata[SOURCE_INDEX_KEY] = np.asarray(source, dtype=np.int64)
 
 
 def chain(mesh: LabeledMesh, steps: list[tuple[str, float]], seed: int) -> LabeledMesh:
@@ -154,7 +171,7 @@ def displace_vertices(
     lookup = {tuple(p): i for i, p in enumerate(uniq.tolist())}
 
     def remap(pts) -> list[list[float]]:
-        return [moved[lookup[tuple(p)]].tolist() for p in pts]
+        return [moved[lookup[tuple(p)]].tolist() if tuple(p) in lookup else list(p) for p in pts]
 
     if mesh.vertices:
         mesh.vertices = remap(mesh.vertices)

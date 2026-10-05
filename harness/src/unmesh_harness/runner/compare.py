@@ -45,6 +45,8 @@ def metric_samples(records: list[dict[str, Any]], name: str) -> list[float]:
     for r in records:
         ok = r.get("status") == "ok"
         if name == "f1":
+            if ok and r.get("f1") is None and r.get("faces") == 0:
+                continue
             out.append(float(r["f1"]) if ok and _finite(r.get("f1")) is not None else 0.0)
         elif name == "dev_input_max":
             v = _finite(r.get("dev_input_max")) if ok else None

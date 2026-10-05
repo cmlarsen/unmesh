@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .core import register, vertex_table
+from .core import register, set_source_index, vertex_table
 
 CRACK_WIDTH_AT_ONE_MM = 0.2
 CRACK_MAX_EDGES = 8
@@ -393,6 +393,7 @@ def duplicate_facets(mesh, severity, rng):
         same += int(coin < 0.5)
     mesh.tris = np.concatenate([mesh.tris, np.array(rows)])
     mesh.face_id = np.concatenate([mesh.face_id, mesh.face_id[idx]])
+    set_source_index(mesh, np.concatenate([np.arange(n), idx]))
     return {"duplicated": k, "same_winding": same, "opposite_winding": k - same}
 
 
@@ -440,6 +441,7 @@ def hole_patch(mesh, severity, rng):
     keep[drop] = False
     mesh.tris = mesh.tris[keep]
     mesh.face_id = mesh.face_id[keep]
+    set_source_index(mesh, np.nonzero(keep)[0])
     return {"removed": len(drop), "requested": want, "face": seed_face}
 
 
@@ -492,8 +494,10 @@ def stray_shells(mesh, severity, rng):
                     tri = tri[::-1]
                 rows.append(tri)
             kinds.append("tetrahedron")
+    n = len(mesh.tris)
     mesh.tris = np.concatenate([mesh.tris, np.array(rows)])
     mesh.face_id = np.concatenate([mesh.face_id, np.full(len(rows), -1, dtype=mesh.face_id.dtype)])
+    set_source_index(mesh, np.concatenate([np.arange(n), np.full(len(rows), -1)]))
     return {
         "shells_added": m,
         "triangles_added": len(rows),
@@ -531,6 +535,8 @@ def nonmanifold_fin(mesh, severity, rng):
         rows.append(np.array([a, b, apex]))
         fids.append(-1)
     if rows:
+        n = len(mesh.tris)
         mesh.tris = np.concatenate([mesh.tris, np.array(rows)])
         mesh.face_id = np.concatenate([mesh.face_id, np.array(fids, dtype=mesh.face_id.dtype)])
+        set_source_index(mesh, np.concatenate([np.arange(n), np.full(len(rows), -1)]))
     return {"fins": len(rows), "height_mm": FIN_HEIGHT_MM}

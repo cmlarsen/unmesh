@@ -8,6 +8,7 @@ from . import (
     pose,
     precision,
     presets,
+    processing,
     refine,
     retriangulate,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "pose",
     "precision",
     "presets",
+    "processing",
     "refine",
     "register",
     "retriangulate",
