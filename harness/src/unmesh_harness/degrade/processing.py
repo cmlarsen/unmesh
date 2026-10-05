@@ -3,9 +3,11 @@
 Each operator is a pure function ``(LabeledMesh, severity, rng) -> params``
 registered under the ``processing`` family in ``unmesh_harness.degrade.OPERATORS``.
 They model what mesh-processing pipelines do to CAD tessellations: quadric
-decimation (via fast-simplification, MIT), isotropic remeshing (an in-house
-Botsch-Kobbelt loop: split, collapse, flip, tangential relax, reproject),
-Laplacian / Taubin smoothing, and vertex clustering.
+decimation (in-house Garland-Heckbert with link-condition and fold guards),
+isotropic remeshing (an in-house Botsch-Kobbelt loop: split, collapse, flip,
+tangential relax, reproject), Laplacian / Taubin smoothing, and vertex
+clustering. All are numpy/scipy only and deterministic across platforms up to
+float rounding: work is ordered by quantized costs and lexicographic vertex keys.
 
 Label policy: topology-changing operators relabel every output triangle from
 the clean labeled source mesh. Source triangles are densely sampled
@@ -270,45 +272,195 @@ def _drop_degenerate(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarr
 
 DECIMATE_KEEP_AT_ONE = 0.1
 DECIMATE_MIN_TRIANGLES = 4
+_QEM_COST_QUANTUM = 1e-15
+_QEM_SNAP_BITS = 36
+
+
+def _plane_quadrics(V: np.ndarray, F: np.ndarray) -> np.ndarray:
+    normal = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    double_area = np.linalg.norm(normal, axis=1)
+    unit = normal / np.maximum(double_area, 1e-300)[:, None]
+    plane = np.concatenate([unit, -(unit * V[F[:, 0]]).sum(axis=1, keepdims=True)], axis=1)
+    K = plane[:, :, None] * plane[:, None, :] * (0.5 * double_area)[:, None, None]
+    Q = np.zeros((len(V), 4, 4))
+    for j in range(3):
+        np.add.at(Q, F[:, j], K)
+    return Q
+
+
+def _quadric_cost(Q: np.ndarray, P: np.ndarray) -> np.ndarray:
+    h = np.concatenate([P, np.ones((len(P), 1))], axis=1)
+    return np.einsum("ni,nij,nj->n", h, Q, h)
+
+
+class _Qem:
+    def __init__(self, V: np.ndarray, F: np.ndarray):
+        self.V = V.copy()
+        self.F = F.tolist()
+        self.Q = _plane_quadrics(V, F)
+        self.alive = [True] * len(F)
+        self.faces_of: list[set[int]] = [set() for _ in range(len(V))]
+        for t, row in enumerate(self.F):
+            for v in row:
+                self.faces_of[v].add(t)
+        self.version = [0] * len(V)
+        self.dead = [False] * len(V)
+        lo = V.min(axis=0)
+        hi = V.max(axis=0)
+        diagonal = float(np.linalg.norm(hi - lo)) or 1.0
+        self.quantum = _QEM_COST_QUANTUM * diagonal**4
+        self.grid = diagonal * 2.0**-_QEM_SNAP_BITS
+        self.boundary = self._boundary_vertices()
+        self.heap: list[tuple[int, int, int, int, int]] = []
+
+    def _boundary_vertices(self) -> set[int]:
+        count: dict[tuple[int, int], int] = {}
+        for a, b, c in self.F:
+            for p, q in ((a, b), (b, c), (c, a)):
+                key = (p, q) if p < q else (q, p)
+                count[key] = count.get(key, 0) + 1
+        return {v for key, n in count.items() if n != 2 for v in key}
+
+    def ring(self, v: int) -> set[int]:
+        return {x for t in self.faces_of[v] for x in self.F[t]} - {v}
+
+    def push(self, pairs: list[tuple[int, int]]) -> None:
+        if not pairs:
+            return
+        a = np.array([p[0] for p in pairs], dtype=np.int64)
+        b = np.array([p[1] for p in pairs], dtype=np.int64)
+        Qs = self.Q[a] + self.Q[b]
+        pa, pb = self.V[a], self.V[b]
+        mid = (pa + pb) / 2.0
+        A = Qs[:, :3, :3]
+        rhs = -Qs[:, :3, 3]
+        det = np.linalg.det(A)
+        scale = np.abs(A).max(axis=(1, 2)) ** 3
+        ok = np.abs(det) > 1e-10 * np.maximum(scale, 1e-300)
+        opt = mid.copy()
+        if ok.any():
+            opt[ok] = np.linalg.solve(A[ok], rhs[ok][:, :, None])[:, :, 0]
+        opt = np.round(opt / self.grid) * self.grid
+        span = np.linalg.norm(pb - pa, axis=1)
+        ok &= np.linalg.norm(opt - mid, axis=1) <= span
+        cands = np.stack([pa, pb, mid, opt], axis=1)
+        costs = np.stack([_quadric_cost(Qs, cands[:, j]) for j in range(4)], axis=1)
+        costs[~ok, 3] = np.inf
+        q = np.floor(np.maximum(costs, 0.0) / self.quantum)
+        pick = q.argmin(axis=1)
+        qcost = q[np.arange(len(pairs)), pick]
+        for i, (x, y) in enumerate(pairs):
+            heapq.heappush(
+                self.heap,
+                (int(qcost[i]), int(pick[i]), x, y, self.version[x], self.version[y]),
+            )
+
+    def position(self, a: int, b: int, pick: int) -> np.ndarray:
+        Qs = self.Q[a] + self.Q[b]
+        if pick == 0:
+            return self.V[a].copy()
+        if pick == 1:
+            return self.V[b].copy()
+        mid = (self.V[a] + self.V[b]) / 2.0
+        if pick == 2:
+            return mid
+        opt = np.linalg.solve(Qs[:3, :3], -Qs[:3, 3])
+        return np.round(opt / self.grid) * self.grid
+
+    def collapse_ok(self, a: int, b: int, p: np.ndarray) -> tuple[bool, set[int]]:
+        shared = self.faces_of[a] & self.faces_of[b]
+        if len(shared) != 2:
+            return False, shared
+        opposite = {x for t in shared for x in self.F[t]} - {a, b}
+        if self.ring(a) & self.ring(b) != opposite:
+            return False, shared
+        moved = sorted((self.faces_of[a] | self.faces_of[b]) - shared)
+        if not moved:
+            return False, shared
+        rows = np.array([self.F[t] for t in moved], dtype=np.int64)
+        old = self.V[rows]
+        new = old.copy()
+        new[(rows == a) | (rows == b)] = p
+        n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
+        n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
+        len_new = np.linalg.norm(n_new, axis=1)
+        len_old = np.linalg.norm(n_old, axis=1)
+        if (len_new <= 1e-12 * np.maximum(len_old, 1e-300)).any():
+            return False, shared
+        if ((n_old * n_new).sum(axis=1) <= 0.0).any():
+            return False, shared
+        return True, shared
+
+    def run(self, target: int) -> int:
+        live = len(self.F)
+        edges: set[tuple[int, int]] = set()
+        for a, b, c in self.F:
+            for p, q in ((a, b), (b, c), (c, a)):
+                edges.add((p, q) if p < q else (q, p))
+        fixed = self.boundary
+        self.push(sorted(e for e in edges if e[0] not in fixed and e[1] not in fixed))
+        collapses = 0
+        while live > target and self.heap:
+            _, pick, a, b, va, vb = heapq.heappop(self.heap)
+            if self.dead[a] or self.dead[b] or va != self.version[a] or vb != self.version[b]:
+                continue
+            p = self.position(a, b, pick)
+            ok, shared = self.collapse_ok(a, b, p)
+            if not ok:
+                continue
+            for t in shared:
+                self.alive[t] = False
+                for v in self.F[t]:
+                    self.faces_of[v].discard(t)
+            for t in self.faces_of[b]:
+                self.F[t] = [a if v == b else v for v in self.F[t]]
+                self.faces_of[a].add(t)
+            self.faces_of[b] = set()
+            self.V[a] = p
+            self.Q[a] = self.Q[a] + self.Q[b]
+            self.dead[b] = True
+            self.version[a] += 1
+            self.version[b] += 1
+            live -= 2
+            collapses += 1
+            ring = [n for n in self.ring(a) if n not in self.boundary]
+            self.push(sorted((min(a, n), max(a, n)) for n in ring))
+        return collapses
+
+    def result(self) -> np.ndarray:
+        rows = np.array([row for row, ok in zip(self.F, self.alive, strict=True) if ok])
+        return self.V[rows.reshape(-1, 3)].reshape(-1, 3, 3)
 
 
 @register(
     "quadric_decimation",
     "processing",
     "identity",
-    "keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), fast "
-    "quadric-error decimation to the error-optimal position (fast-simplification, "
-    "MIT) with a 4-triangle floor; no face-preservation guard, faces lost to the "
-    "target show up as low-confidence or missing labels, and collapsing can "
-    "crack the mesh, so watertightness is not guaranteed",
-    preserves_watertight=False,
+    "keep ratio 1 - 0.9 * severity of triangles (10% at severity 1, 4-triangle floor): "
+    "the soup is welded into an indexed mesh and edges collapse in order of "
+    "Garland-Heckbert quadric error (area-weighted plane quadrics, accumulated) to "
+    "the error-optimal position; collapses that would break the link condition or "
+    "fold a triangle are refused, so a closed manifold stays closed and the mesh may "
+    "stop above the target; open-boundary vertices never move; faces narrower than "
+    "the collapse scale vanish",
+    preserves_watertight=True,
 )
 def quadric_decimation(mesh, severity, rng):
-    import fast_simplification
-
-    src_tris = mesh.tris.copy()
+    src_tris = np.asarray(mesh.tris, dtype=np.float64).copy()
     src_ids = mesh.face_id.copy()
     before = len(src_tris)
     keep = 1.0 - 0.9 * severity
     target = max(DECIMATE_MIN_TRIANGLES, int(round(before * keep)))
-    soup = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3)
-    faces = np.arange(len(soup), dtype=np.int32).reshape(-1, 3)
-    attempts = 0
-    while True:
-        P, Q = fast_simplification.simplify(soup, faces, target_count=target)
-        V2, F2 = np.asarray(P, dtype=np.float64), np.asarray(Q, dtype=np.int64)
-        V2, F2, dropped = _drop_degenerate(V2, F2)
-        if len(F2) >= DECIMATE_MIN_TRIANGLES or target >= before or attempts >= 5:
-            break
-        target = min(before, target * 2 + 1)
-        attempts += 1
-    mesh.tris = V2[F2].reshape(-1, 3, 3)
-    label = transfer_labels(mesh, src_tris, src_ids)
+    V, F = _weld(src_tris)
+    qem = _Qem(V, F)
+    collapses = qem.run(target)
+    mesh.tris = qem.result()
+    label = transfer_labels(mesh, src_tris, src_ids, mesh.metadata.get(CONFIDENCE_KEY))
     return {
         "keep_ratio_target": keep,
         "keep_ratio_achieved": len(mesh.tris) / before,
         "target_triangles": target,
-        "degenerate_dropped": dropped,
+        "collapses": collapses,
         "triangles_before": before,
         "triangles_after": len(mesh.tris),
         **label,
