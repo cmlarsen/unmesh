@@ -1,4 +1,7 @@
+import copy
 import json
+import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -120,10 +123,124 @@ def test_rejected_reasons_rejects_cap_mismatch(tmp_path):
         rejected_reasons(tmp_path / "v0.json")
 
 
+def _fake_probe_success(monkeypatch):
+    def fake_run(cmd, capture_output=True, text=True, timeout=None):
+        probe = {
+            "solids": 1,
+            "shells": 1,
+            "fingerprint": {
+                "volume": 1.0,
+                "face_count": 1,
+                "bbox_min": [0, 0, 0],
+                "bbox_max": [1, 1, 1],
+            },
+            "strata": {"category": "imported"},
+        }
+        return SimpleNamespace(
+            returncode=0, stdout=corpus.PROBE_MARKER + json.dumps(probe) + "\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
+def _write_cache_manifest(root, entries):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "manifest.json").write_text(json.dumps({"entries": entries}))
+
+
+def _cache_entry(fid, sha="0" * 64):
+    return {"id": fid, "files": {"step": {"sha256": sha, "path": "step/x.step"}}}
+
+
+def test_imported_candidates_keep_pinned_first_then_new_in_order(tmp_path, monkeypatch):
+    nist = [_cache_entry("nist-pmi/b"), _cache_entry("nist-pmi/a")]
+    freecad = [_cache_entry(f"freecad-library/{c}") for c in "zyxw"]
+    _write_cache_manifest(tmp_path / "nist-pmi", nist)
+    _write_cache_manifest(tmp_path / "freecad-library", freecad)
+    monkeypatch.setattr(corpus, "IMPORTED_TIER_CANDIDATE_CAP", 4)
+    got = corpus.imported_candidates(tmp_path, {"freecad-library/z", "nist-pmi/a"})
+    assert [(c["dataset"], c["file_id"]) for c in got] == [
+        ("freecad-library", "freecad-library/z"),
+        ("nist-pmi", "nist-pmi/a"),
+        ("freecad-library", "freecad-library/w"),
+        ("freecad-library", "freecad-library/x"),
+    ]
+
+
+def test_sync_imported_repins_larger_cache_without_touching_existing(tmp_path, monkeypatch):
+    existing_fc = [f"freecad-library/F{i:03d}" for i in range(198)]
+    existing_nist = [f"nist-pmi/N{i:03d}" for i in range(31)]
+    fresh_fc = [f"freecad-library/F{i:03d}" for i in range(198, 209)]
+    _write_cache_manifest(
+        tmp_path / "freecad-library", [_cache_entry(f) for f in existing_fc + fresh_fc]
+    )
+    _write_cache_manifest(tmp_path / "nist-pmi", [_cache_entry(f) for f in existing_nist])
+    manifest = {"entries": []}
+    for i, fid in enumerate(existing_fc + existing_nist):
+        manifest["entries"].append(
+            {
+                "id": f"imported-{i:04d}",
+                "tier": "imported",
+                "family": IMPORTED_FAMILY,
+                "seed": i,
+                "source": {
+                    "dataset": fid.split("/")[0],
+                    "file_id": fid,
+                    "sha256": "0" * 64,
+                },
+                "strata": {"category": "imported"},
+                "grids": ["standard"],
+                "fingerprint": {"volume": float(i)},
+            }
+        )
+    before = copy.deepcopy(manifest["entries"])
+    monkeypatch.setattr(corpus, "IMPORTED_TIER_CANDIDATE_CAP", 233)
+    _fake_probe_success(monkeypatch)
+    out = corpus.sync_imported(manifest, tmp_path, rejected={})
+    assert out["entries"][:229] == before
+    assert len(out["entries"]) == 233
+    assert [e["source"]["file_id"] for e in out["entries"][229:]] == fresh_fc[:4]
+    assert set(existing_nist) <= {e["source"]["file_id"] for e in out["entries"]}
+
+
+def test_sync_imported_caps_new_entries_when_cache_misses_pinned_files(tmp_path, monkeypatch):
+    existing_fc = [f"freecad-library/F{i:03d}" for i in range(198)]
+    existing_nist = [f"nist-pmi/N{i:03d}" for i in range(31)]
+    fresh_fc = [f"freecad-library/F{i:03d}" for i in range(198, 238)]
+    _write_cache_manifest(
+        tmp_path / "freecad-library", [_cache_entry(f) for f in existing_fc + fresh_fc]
+    )
+    manifest = {"entries": []}
+    for i, fid in enumerate(existing_fc + existing_nist):
+        manifest["entries"].append(
+            {
+                "id": f"imported-{i:04d}",
+                "tier": "imported",
+                "family": IMPORTED_FAMILY,
+                "seed": i,
+                "source": {
+                    "dataset": fid.split("/")[0],
+                    "file_id": fid,
+                    "sha256": "0" * 64,
+                },
+                "strata": {"category": "imported"},
+                "grids": ["standard"],
+                "fingerprint": {"volume": float(i)},
+            }
+        )
+    before = copy.deepcopy(manifest["entries"])
+    monkeypatch.setattr(corpus, "IMPORTED_TIER_CANDIDATE_CAP", 233)
+    _fake_probe_success(monkeypatch)
+    out = corpus.sync_imported(manifest, tmp_path, rejected={})
+    assert out["entries"][:229] == before
+    assert len(out["entries"]) == 233
+    assert [e["source"]["file_id"] for e in out["entries"][229:]] == fresh_fc[:4]
+
+
 def test_sync_imported_skips_previously_rejected_without_probing(monkeypatch, capsys):
     manifest = {"entries": []}
     cands = [{"dataset": "d", "file_id": "d/x", "sha256": "s"}]
-    monkeypatch.setattr(corpus, "imported_candidates", lambda cache_dir=None: cands)
+    monkeypatch.setattr(corpus, "imported_candidates", lambda cache_dir=None, have=(): cands)
     out = corpus.sync_imported(manifest, rejected={"d/x": "boom"})
     assert out["entries"] == []
     assert "previously rejected (boom)" in capsys.readouterr().out
