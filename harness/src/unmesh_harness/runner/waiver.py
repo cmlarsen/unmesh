@@ -47,6 +47,20 @@ def parse_waived_cells(body: Any) -> set[tuple[str, str, float]]:
     return cells
 
 
+def parse_waived_sha(body: Any) -> set[str]:
+    shas: set[str] = set()
+    if not isinstance(body, str):
+        return shas
+    for line in body.splitlines():
+        text = line.strip()
+        if not text.lower().startswith("sha:"):
+            continue
+        sha = text.split(":", 1)[1].strip()
+        if sha:
+            shas.add(sha)
+    return shas
+
+
 def _normalize_cells(cells: Any) -> set[tuple[str, str, float]]:
     out: set[tuple[str, str, float]] = set()
     for cell in cells or ():
@@ -64,15 +78,14 @@ def _normalize_cells(cells: Any) -> set[tuple[str, str, float]]:
 
 
 def _named_cells(
-    comments: list[dict[str, Any]], login: str, head: datetime
+    comments: list[dict[str, Any]], login: str, head_sha: str
 ) -> set[tuple[str, str, float]]:
     named: set[tuple[str, str, float]] = set()
     for comment in comments or ():
         user = comment.get("user") or {}
         if str(user.get("login") or "").lower() != login.lower():
             continue
-        when = parse_time(comment.get("created_at"))
-        if when is None or when <= head:
+        if head_sha not in parse_waived_sha(comment.get("body")):
             continue
         named |= parse_waived_cells(comment.get("body"))
     return named
@@ -84,7 +97,7 @@ def waiver_approved(
     comments: list[dict[str, Any]],
     label: str = WAIVER_LABEL,
     approvers: Any = (),
-    head_date: Any = None,
+    head_sha: Any = None,
     regressed: Any = (),
 ) -> tuple[bool, str]:
     names = {entry.get("name") for entry in issue.get("labels") or [] if isinstance(entry, dict)}
@@ -93,9 +106,9 @@ def waiver_approved(
     allowed = {str(a).strip().lower() for a in (approvers or ()) if str(a).strip()}
     if not allowed:
         return False, "no waiver approvers configured"
-    head = parse_time(head_date)
-    if head is None:
-        return False, "PR head commit date is unknown"
+    head = str(head_sha or "").strip()
+    if not head:
+        return False, "PR head SHA is unknown"
     user = issue.get("user") or {}
     author, author_type = str(user.get("login") or ""), str(user.get("type") or "")
     author_is_bot = bool(author) and _is_bot(author, author_type)
@@ -112,16 +125,25 @@ def waiver_approved(
             continue
         if author_is_bot and login.lower() == author.lower():
             continue
-        when = parse_time(event.get("created_at"))
-        if when is None or when <= head:
-            problems.append(f"@{login} labeled before the current head commit")
+        confirmed = head in {
+            sha
+            for c in comments or ()
+            if str((c.get("user") or {}).get("login") or "").lower() == login.lower()
+            for sha in parse_waived_sha(c.get("body"))
+        }
+        if not confirmed:
+            problems.append(f"@{login} did not confirm head {head[:12]} with a sha: line")
             continue
         named = _named_cells(comments, login, head)
         missing = sorted(targets - named, key=str)
         if missing:
-            problems.append(f"@{login} did not name waived cell(s) {missing}")
+            problems.append(f"@{login} did not name waived cell(s) {missing} for head {head[:12]}")
             continue
-        return True, f"label {label!r} approved by @{login} covering {len(targets)} cell(s)"
+        return (
+            True,
+            f"label {label!r} approved by @{login} for head {head[:12]} "
+            f"covering {len(targets)} cell(s)",
+        )
     if problems:
         return False, "; ".join(problems)
     return False, f"label {label!r} has no qualifying approval from an approver"

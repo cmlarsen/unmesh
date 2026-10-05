@@ -40,7 +40,9 @@ def read_approvers(repo: str, path: str, ref: str) -> list[str]:
         raise ValueError(f"{path}@{ref} is not a file")
     text = base64.b64decode(payload["content"]).decode("utf-8", "replace")
     return [
-        line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
     ]
 
 
@@ -79,11 +81,6 @@ def main() -> int:
         comments = gh_api_list(f"repos/{args.repo}/issues/{pr}/comments")
         pull = gh_api(f"repos/{args.repo}/pulls/{pr}")
         head_sha = pull["head"]["sha"]
-        commit = gh_api(f"repos/{args.repo}/commits/{head_sha}")
-        inner = commit.get("commit") or {}
-        committer = inner.get("committer") or {}
-        author = inner.get("author") or {}
-        head_date = committer.get("date") or author.get("date")
         approvers = read_approvers(args.repo, args.approvers_path, args.ref)
     except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError, KeyError) as e:
         print(f"GitHub API lookup failed: {e}", file=sys.stderr)
@@ -100,7 +97,7 @@ def main() -> int:
         comments,
         label=args.label,
         approvers=approvers,
-        head_date=head_date,
+        head_sha=head_sha,
         regressed=regressed,
     )
     print(("WAIVER: " if ok else "NO WAIVER: ") + reason)

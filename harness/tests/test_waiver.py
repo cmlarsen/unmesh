@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from unmesh_harness.runner.waiver import parse_waived_cells, waiver_approved
+from unmesh_harness.runner.waiver import parse_waived_cells, parse_waived_sha, waiver_approved
 
 LABEL = "waiver:approved"
-HEAD = "2026-10-02T12:00:00Z"
-BEFORE = "2026-10-02T11:00:00Z"
+HEAD_SHA = "a" * 40
+OTHER_SHA = "b" * 40
 AFTER = "2026-10-02T13:00:00Z"
 
 CELL = ("box", "identity", 0.0)
@@ -44,20 +44,26 @@ def waive_line(cell=CELL):
     return f"waive: {cell[0]} {cell[1]} {cell[2]:g}"
 
 
-def decide(events, comments, approvers=("cmlarsen",), head_date=HEAD, regressed=(CELL,), **kw):
+def approved_comment(login="cmlarsen", *cells, sha=HEAD_SHA, created_at=AFTER):
+    lines = [waive_line(c) for c in (cells or (CELL,))]
+    lines.append(f"sha: {sha}")
+    return comment(login, "\n".join(lines), created_at=created_at)
+
+
+def decide(events, comments, approvers=("cmlarsen",), head_sha=HEAD_SHA, regressed=(CELL,), **kw):
     return waiver_approved(
         kw.pop("issue", issue()),
         events,
         comments,
         approvers=approvers,
-        head_date=head_date,
+        head_sha=head_sha,
         regressed=regressed,
         **kw,
     )
 
 
 def test_listed_approver_waives_named_cells():
-    ok, reason = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())])
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment()])
     assert ok and "cmlarsen" in reason
 
 
@@ -67,19 +73,17 @@ def test_actor_outside_allowlist_is_rejected():
 
 
 def test_empty_allowlist_is_rejected():
-    ok, reason = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())], approvers=())
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment()], approvers=())
     assert not ok and "approvers" in reason
 
 
-def test_stale_label_event_is_rejected():
-    ok, _ = decide([labeled("cmlarsen", created_at=BEFORE)], [comment("cmlarsen", waive_line())])
-    assert not ok
+def test_label_event_time_is_ignored_when_sha_matches():
+    ok, _ = decide([labeled("cmlarsen", created_at="2020-01-01T00:00:00Z")], [approved_comment()])
+    assert ok
 
 
 def test_removed_label_is_not_a_waiver():
-    ok, _ = decide(
-        [labeled("cmlarsen")], [comment("cmlarsen", waive_line())], issue=issue(labels=())
-    )
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], issue=issue(labels=()))
     assert not ok
 
 
@@ -88,41 +92,75 @@ def test_missing_comment_is_not_a_waiver():
     assert not ok
 
 
-def test_stale_comment_is_not_a_waiver():
-    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line(), created_at=BEFORE)])
-    assert not ok
+def test_comment_time_is_ignored_when_sha_matches():
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment(created_at="2020-01-01T00:00:00Z")],
+    )
+    assert ok
 
 
 def test_comment_by_another_actor_is_not_a_waiver():
-    ok, _ = decide([labeled("cmlarsen")], [comment("mallory", waive_line())])
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment("mallory")])
     assert not ok
 
 
 def test_unnamed_regressed_cell_is_not_waived():
     other = ("cyl", "identity", 0.0)
-    ok, reason = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line(other))])
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment("cmlarsen", other)])
     assert not ok and "box" in reason
 
 
 def test_extra_named_cells_are_allowed():
-    body = waive_line() + "\n" + waive_line(("cyl", "identity", 0.0))
-    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", body)])
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment("cmlarsen", CELL, ("cyl", "identity", 0.0))],
+    )
     assert ok
 
 
 def test_cells_across_comments_combine():
     comments = [
-        comment("cmlarsen", waive_line()),
-        comment("cmlarsen", waive_line(("cyl", "x", 1.0))),
+        approved_comment("cmlarsen", CELL),
+        approved_comment("cmlarsen", ("cyl", "x", 1.0)),
     ]
     ok, _ = decide([labeled("cmlarsen")], comments, regressed=(CELL, ("cyl", "x", 1.0)))
     assert ok
 
 
+def test_cells_without_matching_sha_do_not_count():
+    comments = [
+        approved_comment("cmlarsen", CELL, sha=OTHER_SHA),
+        approved_comment("cmlarsen", ("cyl", "x", 1.0)),
+    ]
+    ok, _ = decide([labeled("cmlarsen")], comments, regressed=(CELL, ("cyl", "x", 1.0)))
+    assert not ok
+
+
+def test_approval_for_an_earlier_sha_does_not_waive_a_later_push():
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment(sha=OTHER_SHA)],
+        head_sha=HEAD_SHA,
+    )
+    assert not ok
+
+
+def test_comment_without_sha_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())])
+    assert not ok
+
+
+def test_sha_must_match_exactly():
+    almost = HEAD_SHA[:-1] + ("0" if HEAD_SHA[-1] != "0" else "1")
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment(sha=almost)])
+    assert not ok
+
+
 def test_bot_actor_is_rejected_even_when_listed():
     ok, _ = decide(
         [labeled("cmlarsen[bot]", "Bot")],
-        [comment("cmlarsen[bot]", waive_line())],
+        [approved_comment("cmlarsen[bot]")],
         approvers=("cmlarsen[bot]",),
     )
     assert not ok
@@ -132,7 +170,7 @@ def test_bot_author_cannot_waive_its_own_pr():
     bot_pr = issue(author="greptile[bot]", author_type="Bot")
     ok, _ = decide(
         [labeled("greptile[bot]", "User")],
-        [comment("greptile[bot]", waive_line())],
+        [approved_comment("greptile[bot]")],
         approvers=("greptile[bot]",),
         issue=bot_pr,
     )
@@ -141,13 +179,21 @@ def test_bot_author_cannot_waive_its_own_pr():
 
 def test_human_can_waive_a_bot_pr():
     bot_pr = issue(author="greptile[bot]", author_type="Bot")
-    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())], issue=bot_pr)
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], issue=bot_pr)
     assert ok
 
 
-def test_unknown_head_date_is_not_a_waiver():
-    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())], head_date=None)
+def test_unknown_head_sha_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], head_sha=None)
     assert not ok
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], head_sha="  ")
+    assert not ok
+
+
+def test_parse_waived_sha():
+    assert parse_waived_sha(f"waive: box identity 0\nsha: {HEAD_SHA}") == {HEAD_SHA}
+    assert parse_waived_sha("no sha here") == set()
+    assert parse_waived_sha(None) == set()
 
 
 def test_parse_waived_cells_ignores_garbage():
@@ -245,7 +291,8 @@ def test_check_waiver_end_to_end_with_stubbed_api(tmp_path, monkeypatch):
     run_b = tmp_path / "b.jsonl"
     run_a.write_text("\n".join(json.dumps(cell(i, 1.0)) for i in range(3)) + "\n")
     run_b.write_text("\n".join(json.dumps(cell(i, 0.9)) for i in range(3)) + "\n")
-    state = {"body": waive_line()}
+    head = "d" * 40
+    state = {"body": f"{waive_line()}\nsha: {head}"}
 
     def fake_gh_api(path):
         if path.endswith("/events?per_page=100&page=1"):
@@ -253,9 +300,7 @@ def test_check_waiver_end_to_end_with_stubbed_api(tmp_path, monkeypatch):
         if path.endswith("/comments?per_page=100&page=1"):
             return [comment("cmlarsen", state["body"])]
         if "/pulls/" in path:
-            return {"head": {"sha": "abc"}}
-        if "/commits/" in path:
-            return {"commit": {"committer": {"date": HEAD}}}
+            return {"head": {"sha": head}}
         if "/contents/" in path:
             content = base64.b64encode(b"cmlarsen\n").decode()
             return {"content": content, "encoding": "base64"}
@@ -275,5 +320,7 @@ def test_check_waiver_end_to_end_with_stubbed_api(tmp_path, monkeypatch):
     ]
     monkeypatch.setattr(sys, "argv", argv)
     assert module.main() == 0
-    state["body"] = waive_line(("other", "identity", 0.0))
+    state["body"] = f"{waive_line(('other', 'identity', 0.0))}\nsha: {head}"
+    assert module.main() == 1
+    state["body"] = f"{waive_line()}\nsha: {'e' * 40}"
     assert module.main() == 1
