@@ -482,3 +482,41 @@ def test_directed_samples_follow_reversed_points():
     assert len(by_point) == len(adj.points)
     for p, s in zip(d.points, d.samples, strict=True):
         assert s == pytest.approx(by_point[tuple(p)])
+
+
+def revolved_spline():
+    from build123d import (
+        Axis,
+        BuildLine,
+        BuildPart,
+        BuildSketch,
+        Line,
+        Spline,
+        make_face,
+        revolve,
+    )
+
+    with BuildPart() as part:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Line((0, 0), (8, 0))
+                Spline((8, 0), (6, 5), (9, 10))
+                Line((9, 10), (0, 10))
+                Line((0, 10), (0, 0))
+            make_face()
+        revolve(axis=Axis.Z)
+    return part.part
+
+
+def test_non_analytic_face_becomes_facets_region():
+    mesh = tessellate(revolved_spline(), 0.05, 0.3)
+    kinds = [f.surface for f in mesh.faces]
+    assert "revolution" in kinds
+    ir = build_oracle_ir(mesh)
+    assert validate(ir) == []
+    for face, region in zip(mesh.faces, ir.regions, strict=True):
+        expected = "facets" if face.surface == "revolution" else face.surface
+        assert region.surface.type == expected
+        assert (region.residual is None) == (expected == "facets")
+    facets = ir.regions[kinds.index("revolution")]
+    assert len(facets.surface.faces) == len(facets.triangles) > 0

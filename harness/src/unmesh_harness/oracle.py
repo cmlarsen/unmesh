@@ -25,6 +25,7 @@ from unmesh.ir import (
 )
 
 from .labels import TANGENT_THRESHOLD_DEG, EdgeAdjacency, FaceInfo, LabeledMesh, distance_to_surface
+from .metrics.recovery import ANALYTIC_TYPES
 
 
 def _surface(face: FaceInfo):
@@ -47,6 +48,14 @@ def _surface(face: FaceInfo):
             orientation,
         )
     raise NotImplementedError(f"oracle IR has no region for surface type {face.surface!r}")
+
+
+def _facets(verts: np.ndarray, faces: np.ndarray) -> Facets:
+    used, local = np.unique(faces.reshape(-1), return_inverse=True)
+    return Facets(
+        [tuple(v) for v in verts[used].tolist()],
+        [tuple(f) for f in local.reshape(-1, 3).tolist()],
+    )
 
 
 def _residual(face: FaceInfo, tris: np.ndarray) -> Residual:
@@ -201,18 +210,22 @@ def _merge(chain):
 
 
 def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_THRESHOLD_DEG) -> Ir:
-    verts, _, kept_src, _ = unmesh.weld(mesh.tris, 1e-6)
+    verts, welded, kept_src, _ = unmesh.weld(mesh.tris, 1e-6)
     kept = np.zeros(len(mesh.tris), dtype=bool)
     kept[kept_src] = True
+    row = np.full(len(mesh.tris), -1, dtype=np.int64)
+    row[kept_src] = np.arange(len(kept_src))
     order = np.argsort(mesh.face_id, kind="stable")
     bounds = np.searchsorted(mesh.face_id[order], np.arange(len(mesh.faces) + 1))
     regions = []
     for face in mesh.faces:
         ids = order[bounds[face.id] : bounds[face.id + 1]]
         ids = ids[kept[ids]]
-        regions.append(
-            Region(face.id, _surface(face), ids.tolist(), _residual(face, mesh.tris[ids]))
-        )
+        if face.surface in ANALYTIC_TYPES:
+            region = Region(face.id, _surface(face), ids.tolist(), _residual(face, mesh.tris[ids]))
+        else:
+            region = Region(face.id, _facets(verts, welded[row[ids]]), ids.tolist(), None)
+        regions.append(region)
 
     def kind_of(deg: float) -> str:
         return "tangent" if deg < tangent_threshold_deg else "transversal"
