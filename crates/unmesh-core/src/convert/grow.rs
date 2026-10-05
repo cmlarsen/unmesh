@@ -15,6 +15,7 @@ const MIN_MEMBERS: usize = 3;
 const SEED_TRIES: usize = 3;
 const INIT_GATE: f64 = 5.0;
 const ESCALATE: f64 = 500.0;
+const DROP_GATE: f64 = 50.0;
 const SAG_RATIO: f64 = 16.0;
 const SEED_POINTS: [usize; 3] = [12, 24, 48];
 const DOUBLY_POINTS: [usize; 3] = [16, 32, 64];
@@ -362,6 +363,44 @@ fn extend_chain(
             }
         }
     }
+}
+
+fn chain_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<Single, f64> {
+    let (pts, tris) = pool.union(chain);
+    let fit = curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol)?;
+    if pool.all_fit(chain, &fit, tol).is_some() {
+        Ok(fit)
+    } else {
+        Err(0.0)
+    }
+}
+
+/// The chain's fit, else the fit of the chain less one member when the
+/// chain came close (initial residual within `DROP_GATE` times `tol`). Where
+/// a fillet meets a sphere tangentially the planar stage can join a strip
+/// with a sliver of the sphere, and that one member spoils an otherwise exact
+/// seed; `peel` later moves the strip's own triangles into the group. Which
+/// strips pick up slivers depends on how the tessellator split each quad.
+fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<(Vec<u32>, Single), f64> {
+    let err = match chain_fit(pool, chain, tol) {
+        Ok(fit) => return Ok((chain.to_vec(), fit)),
+        Err(e) => e,
+    };
+    if err > DROP_GATE * tol || chain.len() <= MIN_MEMBERS {
+        return Err(err);
+    }
+    for skip in 0..chain.len() {
+        let rest: Vec<u32> = chain
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != skip)
+            .map(|(_, &r)| r)
+            .collect();
+        if let Ok(fit) = chain_fit(pool, &rest, tol) {
+            return Ok((rest, fit));
+        }
+    }
+    Err(err)
 }
 
 /// A fresh fit of the union (which can take the tessellation-law radius),
@@ -738,11 +777,10 @@ pub fn run(
                 if chain.len() == last {
                     break;
                 }
-                let (pts, tris) = pool.union(&chain);
-                match curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol) {
-                    Ok(fit) if pool.all_fit(&chain, &fit, tol).is_some() => {
+                match seed_fit(&mut pool, &chain, tol) {
+                    Ok((members, fit)) => {
                         let gid = groups.len() as u32;
-                        let grp = grow_group(&mut pool, &g, chain, fit, &mut owner, gid, tol);
+                        let grp = grow_group(&mut pool, &g, members, fit, &mut owner, gid, tol);
                         groups.push(grp);
                         break 'seed;
                     }
