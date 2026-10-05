@@ -132,3 +132,53 @@ def test_tangent_edges_survive_rotation_and_float32_all_families(
     family, seed, op, automatic, tmp_path
 ):
     _check_operator(family, seed, op, automatic, tmp_path)
+
+
+NOISY_FAMILIES = (
+    "through_bore",
+    "blind_bore",
+    "counterbore",
+    "round_boss",
+    "countersink",
+    "revolved_cone",
+    "revolved_torus",
+)
+
+
+def _noisy_write(family, seed, severity, tmp_path):
+    from unmesh_harness import degrade
+    from unmesh_harness.judge import judge, under_reports
+
+    mesh = tessellate(generate(family, seed).solid, *DEFLECTION)
+    mesh = degrade.chain(mesh, [("noise_isotropic", severity)], 0)
+    tris = np.asarray(mesh.tris, dtype=np.float64)
+    ir, rep = unmesh.convert(tris)
+    measured = judge(ir, tris, None, rep.max_deviation, samples_per_mm2=1.0).input
+    assert not under_reports(rep.max_deviation, measured)
+    report = step.write(ir, tmp_path / f"{family}-{seed}.step", mesh=tris)
+    assert report.valid, report.issues
+    return report
+
+
+@pytest.mark.slow
+def test_automatic_fallback_rate_under_1um_noise(tmp_path):
+    seeds = corpus_seeds(list(NOISY_FAMILIES))
+    reasons = []
+    total = 0
+    for family in NOISY_FAMILIES:
+        for seed in seeds[family]:
+            total += 1
+            report = _noisy_write(family, seed, 0.02, tmp_path)
+            if report.fallback is not None:
+                reasons.append(f"{family}-{seed}: {report.fallback_reason}")
+    assert len(reasons) <= 0.05 * total, reasons
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("family", "seed"),
+    [("through_bore", 3), ("round_boss", 5), ("blind_bore", 6), ("revolved_cone", 4)],
+)
+def test_noisy_junctions_write_analytic_under_5um_noise(family, seed, tmp_path):
+    report = _noisy_write(family, seed, 0.1, tmp_path)
+    assert report.fallback is None, report.fallback_reason
