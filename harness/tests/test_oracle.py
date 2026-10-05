@@ -1,4 +1,5 @@
 import math
+import random
 from collections import Counter
 
 import numpy as np
@@ -397,6 +398,66 @@ def test_split_runs_direction_independent_inside_band(samples):
 
     assert splits(fwd) and splits(fwd) == splits(rev)
     assert runs(fwd) == runs(rev)[::-1]
+
+
+def split_points(segs):
+    return sorted({v.point for s in segs for v in (s.start, s.end) if isinstance(v, _Split)})
+
+
+def run_key(segs, threshold=3.0):
+    return sorted((s.dihedral < threshold, s.dihedral, sorted(s.points)) for s in segs)
+
+
+def test_split_runs_short_run_merge_direction_independent():
+    samples = [10.0, 10.0, 10.0, 10.0, 10.0, 1.0, 1.0, 10.0, 1.0, 1.0, 1.0, 10.0]
+    xs = [10.0 * i for i in range(len(samples))]
+    fwd = _split_runs(make_directed(xs, samples, True), 3.0, (0, 1))
+    rev = _split_runs(make_directed(xs, samples, False), 3.0, (0, 1))
+    assert split_points(fwd) == split_points(rev)
+    assert run_key(fwd) == run_key(rev)
+
+
+def test_split_runs_direction_independent_fuzz():
+    rng = random.Random(89)
+    for trial in range(2000):
+        closed = trial % 2 == 1
+        n = rng.randint(4, 14)
+        samples = []
+        for _ in range(n):
+            r = rng.random()
+            if r < 0.45:
+                samples.append(rng.uniform(5.0, 30.0))
+            elif r < 0.9:
+                samples.append(rng.uniform(0.2, 2.4))
+            else:
+                samples.append(rng.uniform(2.5, 3.5))
+        if closed:
+            samples[-1] = samples[0]
+            m = n - 1
+            pts = [
+                (10.0 * math.cos(2 * math.pi * i / m), 10.0 * math.sin(2 * math.pi * i / m), 0.0)
+                for i in range(n)
+            ]
+            fwd = _split_runs(make_directed(pts, samples, True, closed=True), 3.0, (0, 1))
+            rev = _split_runs(make_directed(pts, samples, False, closed=True), 3.0, (0, 1))
+            assert split_points(fwd) == split_points(rev), trial
+            assert run_key(fwd) == run_key(rev), trial
+            k = rng.randint(1, n - 2)
+            cyc, cyc_samples = pts[:-1], samples[:-1]
+            rpts, rsamples = cyc[k:] + cyc[:k], cyc_samples[k:] + cyc_samples[:k]
+            rot = _split_runs(
+                make_directed(rpts + [rpts[0]], rsamples + [rsamples[0]], True, closed=True),
+                3.0,
+                (0, 1),
+            )
+            assert split_points(fwd) == split_points(rot), trial
+            assert run_key(fwd) == run_key(rot), trial
+        else:
+            xs = [10.0 * i for i in range(n)]
+            fwd = _split_runs(make_directed(xs, samples, True), 3.0, (0, 1))
+            rev = _split_runs(make_directed(xs, samples, False), 3.0, (0, 1))
+            assert split_points(fwd) == split_points(rev), trial
+            assert run_key(fwd) == run_key(rev), trial
 
 
 def test_directed_samples_follow_reversed_points():
