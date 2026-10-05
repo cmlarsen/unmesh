@@ -20,29 +20,66 @@ CASES = [
 
 
 def uv_sphere(n_u, n_v, radius=10.0):
+    assert n_v >= 3
     us = np.linspace(0.0, 2 * np.pi, n_u, endpoint=False)
     vs = np.linspace(0.0, np.pi, n_v + 1)
     su, cu = np.sin(us), np.cos(us)
     sv, cv = np.sin(vs), np.cos(vs)
-    grid = np.array(
+    north = np.array([0.0, 0.0, radius])
+    south = np.array([0.0, 0.0, -radius])
+    rings = np.array(
         [
             [radius * sv[j] * cu[i], radius * sv[j] * su[i], radius * cv[j]]
-            for j in range(n_v + 1)
+            for j in range(1, n_v)
             for i in range(n_u)
         ]
     )
-    tris = np.empty((2 * n_u * n_v, 3, 3))
+    tris = np.empty((2 * n_u * (n_v - 1), 3, 3))
     k = 0
-    for j in range(n_v):
+    for i in range(n_u):
+        tris[k] = [north, rings[i], rings[(i + 1) % n_u]]
+        k += 1
+    for j in range(n_v - 2):
         for i in range(n_u):
             a = j * n_u + i
             b = j * n_u + (i + 1) % n_u
             c = (j + 1) * n_u + i
             d = (j + 1) * n_u + (i + 1) % n_u
-            tris[k] = [grid[a], grid[c], grid[b]]
-            tris[k + 1] = [grid[b], grid[c], grid[d]]
+            tris[k] = [rings[a], rings[c], rings[b]]
+            tris[k + 1] = [rings[b], rings[c], rings[d]]
             k += 2
+    base = (n_v - 2) * n_u
+    for i in range(n_u):
+        tris[k] = [rings[base + i], south, rings[base + (i + 1) % n_u]]
+        k += 1
+    assert k == len(tris)
     return tris
+
+
+def assert_closed_manifold(tris):
+    key = np.round(tris.reshape(-1, 3), 9)
+    ids = np.unique(key, axis=0, return_inverse=True)[1].reshape(len(tris), 3)
+    seen = set()
+    for a, b, c in ids:
+        for u, v in ((a, b), (b, c), (c, a)):
+            assert (u, v) not in seen
+            seen.add((u, v))
+    for u, v in seen:
+        assert (v, u) in seen
+
+
+SPHERE_GRIDS = [(100, 51), (250, 201), (500, 251)]
+
+
+@pytest.mark.parametrize("n_u,n_v", SPHERE_GRIDS)
+def test_uv_sphere_is_closed_manifold(n_u, n_v):
+    tris = uv_sphere(n_u, n_v)
+    assert len(tris) == 2 * n_u * (n_v - 1)
+    assert_closed_manifold(tris)
+    e1 = tris[:, 1] - tris[:, 0]
+    e2 = tris[:, 2] - tris[:, 0]
+    areas = np.linalg.norm(np.cross(e1, e2)) / 2.0
+    assert np.all(areas >= 1e-12 * areas.mean())
 
 
 def subdivided_box(size=10.0, n=29):
@@ -72,8 +109,8 @@ def subdivided_box(size=10.0, n=29):
 
 def make_mesh(shape, target):
     if shape == "sphere":
-        for n_u, n_v in [(100, 50), (250, 200), (500, 250), (250, 100), (200, 125)]:
-            if 2 * n_u * n_v == target:
+        for n_u, n_v in SPHERE_GRIDS:
+            if 2 * n_u * (n_v - 1) == target:
                 return uv_sphere(n_u, n_v)
         raise AssertionError(f"no exact uv grid for {target}")
     for n in range(1, 500):
