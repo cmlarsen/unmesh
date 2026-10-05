@@ -117,9 +117,7 @@ def test_nightly_matrix_matches_standard_plan():
     from unmesh_harness.runner.grid import repo_root
 
     text = (repo_root() / ".github" / "workflows" / "nightly.yml").read_text()
-    triples = re.findall(
-        r"-\s+category:\s+(\S+)\s*\n\s+index:\s+(\d+)\s*\n\s+count:\s+(\d+)", text
-    )
+    triples = re.findall(r"-\s+category:\s+(\S+)\s*\n\s+index:\s+(\d+)\s*\n\s+count:\s+(\d+)", text)
     assert triples, "no matrix entries parsed from nightly.yml"
     assert len(triples) == len(set(triples))
     names = [f"standard-{c}-{i}-of-{n}" for c, i, n in triples]

@@ -107,9 +107,7 @@ def test_heat_all_is_mean_over_all_matching_records():
     assert marginal["f1"] == (0.2 + 1.0 + 1.0) / 3
     direct = sum(r["f1"] for r in records) / len(records)
     assert marginal["f1"] == direct
-    weighted = (
-        sum(r["f1"] * r["n"] for r in data["heat"]) / sum(r["n"] for r in data["heat"])
-    )
+    weighted = sum(r["f1"] * r["n"] for r in data["heat"]) / sum(r["n"] for r in data["heat"])
     assert weighted == direct
     assert marginal["valid"] == 1.0
     assert marginal["under_report"] == 0.0

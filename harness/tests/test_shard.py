@@ -37,9 +37,7 @@ def test_shards_are_disjoint_and_complete_within_category():
             e["strata"].get("category") == category
             for e in select_run_entries(grid, [category], None).entries
         )
-        shards = [
-            set(ids(select_run_entries(grid, [category], f"{i}/3"))) for i in range(3)
-        ]
+        shards = [set(ids(select_run_entries(grid, [category], f"{i}/3"))) for i in range(3)]
         assert set().union(*shards) == base
         assert sum(map(len, shards)) == len(base)
 
@@ -104,9 +102,7 @@ def test_assign_shard_balances_cost_not_counts():
 
     table = {"planar": 100.0, "complex": 1.0}
     shards = [assign_shard(_fake_entries(), i, 2, 10, table) for i in range(2)]
-    loads = [
-        sum(10 * table[e["strata"]["category"]] for e in shard) for shard in shards
-    ]
+    loads = [sum(10 * table[e["strata"]["category"]] for e in shard) for shard in shards]
     assert sorted(loads) == [1020.0, 1020.0]
     got = sorted(e["id"] for shard in shards for e in shard)
     assert got == sorted(e["id"] for e in _fake_entries())
