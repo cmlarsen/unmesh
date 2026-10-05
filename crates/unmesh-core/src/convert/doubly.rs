@@ -972,11 +972,18 @@ mod tests {
             }
             let (axis, shape) = init_torus(&pts, &tris).unwrap();
             let label = format!("R={big} r={small} flip={flip}");
-            assert!(dot(axis.a, frame.dir([0.0, 0.0, 1.0])).abs() > 1.0 - 1e-6, "{label}");
+            assert!(
+                dot(axis.a, frame.dir([0.0, 0.0, 1.0])).abs() > 1.0 - 1e-6,
+                "{label}"
+            );
             let center = add(axis.c, scale(axis.a, shape[0]));
             assert!(norm(sub(center, frame.map(c))) < 1e-3 * big, "{label}");
             assert!((shape[1] - big).abs() < 2e-3 * big, "{label}: {}", shape[1]);
-            assert!((shape[2] - small).abs() < 1e-2 * small, "{label}: {}", shape[2]);
+            assert!(
+                (shape[2] - small).abs() < 1e-2 * small,
+                "{label}: {}",
+                shape[2]
+            );
             let r = max_residual(Kind::Torus, &axis, &shape, &pts);
             assert!(r < 1e-2 * small, "{label}: {r}");
         }
