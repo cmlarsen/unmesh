@@ -136,3 +136,31 @@ def test_cli_hidden_without_env_fails_fast(tmp_path, monkeypatch, capsys):
     )
     assert rc == 2
     assert "UNMESH_HIDDEN_SEEDS" in capsys.readouterr().out
+
+
+def test_hidden_mode_prints_no_part_ids(tmp_path, monkeypatch, capsys):
+    import dataclasses
+
+    monkeypatch.setenv("UNMESH_HIDDEN_SEEDS", "101,102")
+    grid = tiny_grid()
+    bad_id = "hidden-part-xyz-0000"
+    bad_entry = {
+        "id": bad_id,
+        "tier": "generated",
+        "family": "no_such_family",
+        "seed": 0,
+        "strata": {"category": "planar"},
+        "grids": ["smoke"],
+        "fingerprint": {"volume": 1.0, "face_count": 1},
+    }
+    grid = dataclasses.replace(grid, entries=[bad_entry])
+    summary = run_grid(
+        grid, ["unmesh"], tmp_path, jobs=1, sha="h", timeout=60, log=print, hidden=True
+    )
+    assert summary.ran == 2
+    captured = capsys.readouterr()
+    assert bad_id not in captured.out
+    assert bad_id not in captured.err
+    assert "1 part(s)" in captured.out
+    payload = json.loads((tmp_path / "smoke.hidden.json").read_text())
+    assert bad_id not in json.dumps(payload)

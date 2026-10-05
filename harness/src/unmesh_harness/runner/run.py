@@ -133,7 +133,7 @@ def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunS
         def collect(cell, result):
             collected.append(make_record(cell, result))
 
-        _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, collect)
+        _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, collect, hidden=True)
     path = hidden_results_path(out, grid)
     payload = aggregate(collected, grid.grid_hash)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -141,7 +141,7 @@ def _run_hidden(grid, converters, out, jobs, sha, timeout, log, started) -> RunS
     return RunSummary(path, collected, 0, len(collected), time.perf_counter() - started, sha)
 
 
-def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit) -> int:
+def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit, hidden=False) -> int:
     needed = sorted(
         {c.part for c, _ in cells if not (cache / f"{c.part}.labeled.npz").is_file()}
         | (
@@ -166,11 +166,17 @@ def _run_cells(grid, sha, timeout, jobs, cache, work, cells, log, emit) -> int:
         for part in needed
     ]
     ready: set[str] = {c.part for c, _ in cells} - set(needed)
+    prep_failures = 0
     for part, result in run_pool(prep_jobs, jobs, max(timeout, PREP_TIMEOUT_S)):
         if result["status"] != "ok":
-            log(f"prep failed for {part}: {result.get('error')}")
+            if hidden:
+                prep_failures += 1
+            else:
+                log(f"prep failed for {part}: {result.get('error')}")
         else:
             ready.add(part)
+    if hidden and prep_failures:
+        log(f"prep failed for {prep_failures} part(s); ids withheld in hidden mode")
 
     cell_jobs = []
     failed_prep = []

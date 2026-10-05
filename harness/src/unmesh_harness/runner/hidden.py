@@ -63,7 +63,7 @@ def hidden_seeds() -> list[int]:
     try:
         return [int(s) for s in seeds]
     except ValueError:
-        raise ValueError(f"{ENV_VAR} must hold comma-separated integers, got {raw!r}") from None
+        raise ValueError(f"{ENV_VAR} must hold comma-separated integers") from None
 
 
 def family_of(operator: str) -> str:
