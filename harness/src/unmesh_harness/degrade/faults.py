@@ -80,6 +80,11 @@ DISPOSITION: dict[str, str] = {
 }
 
 
+def _has_interior_edge(mesh) -> bool:
+    _, _, owners = _edge_owners(mesh.tris)
+    return any(len(members) == 2 for members in owners.values())
+
+
 @register(
     "unwelded_corners",
     "defect",
@@ -224,6 +229,7 @@ def _spokes_agree(v, moving: set[int], owners, faces, n: int, p_nbrs: set[int]) 
     "with blunt tips, the copies on one side only shifted along the averaged "
     "in-surface perpendicular",
     preserves_watertight=False,
+    applies_to=lambda mesh: bool(_has_interior_edge(mesh)),
 )
 def crack_seam(mesh, severity, rng):
     uniq, faces, owners = _edge_owners(mesh.tris)

@@ -15,6 +15,7 @@ from . import (
 from .core import (
     OPERATORS,
     Operator,
+    applies,
     apply,
     apply_chain,
     chain,
@@ -29,6 +30,7 @@ __all__ = [
     "Operator",
     "PRESETS",
     "Preset",
+    "applies",
     "apply",
     "apply_chain",
     "apply_pair_preprocess",

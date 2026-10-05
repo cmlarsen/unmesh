@@ -26,6 +26,7 @@ class Operator:
     changes_frame: bool = False
     may_collapse: bool = False
     binary: bool = False
+    applies_to: Callable[[LabeledMesh], bool] | None = None
 
 
 OPERATORS: dict[str, Operator] = {}
@@ -40,6 +41,7 @@ def register(
     changes_frame: bool = False,
     may_collapse: bool = False,
     binary: bool = False,
+    applies_to: Callable[[LabeledMesh], bool] | None = None,
 ):
     def wrap(fn: OperatorFn) -> OperatorFn:
         if name in OPERATORS:
@@ -54,10 +56,16 @@ def register(
             changes_frame,
             may_collapse,
             binary,
+            applies_to,
         )
         return fn
 
     return wrap
+
+
+def applies(name: str, mesh: LabeledMesh) -> bool:
+    op = OPERATORS[name]
+    return True if op.applies_to is None else bool(op.applies_to(mesh))
 
 
 def apply(name: str, mesh: LabeledMesh, severity: float, seed: int) -> LabeledMesh:

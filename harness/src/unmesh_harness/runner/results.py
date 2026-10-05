@@ -58,7 +58,7 @@ def append_result(path: Path, cell: Cell, result: dict[str, Any]) -> dict[str, A
 
 
 def completed_keys(records: list[dict[str, Any]]) -> set[tuple]:
-    return {record_key(r) for r in records if r.get("status") == "ok"}
+    return {record_key(r) for r in records if r.get("status") in ("ok", "skipped")}
 
 
 def latest(records: list[dict[str, Any]], git_sha: str | None = None) -> dict[tuple, dict]:
@@ -189,6 +189,8 @@ def summarize(records: list[dict[str, Any]]) -> str:
             f"{max(times) if times else float('nan'):>10.3f}"
         )
     lines += _breakdown(records)
+    skipped = sum(1 for r in records if r.get("status") == "skipped")
+    lines.append(f"skipped as inapplicable: {skipped} cells")
     return "\n".join(lines)
 
 
@@ -267,6 +269,8 @@ def gate(records: list[dict[str, Any]], grid, converters: list[str], sha: str | 
                 f"{cell.converter} {cell.part} {cell.operator}@{cell.severity:g} "
                 f"seed {cell.seed}: no result"
             )
+        elif r["status"] == "skipped":
+            continue
         elif r["status"] != "ok":
             result.violations.append(f"{_label(r)}: {r['status']}: {r.get('error')}")
         elif cell.converter in gated:

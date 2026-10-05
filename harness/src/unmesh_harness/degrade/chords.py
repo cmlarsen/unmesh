@@ -4,7 +4,7 @@ import numpy as np
 
 from ..labels import outward_normals
 from .core import displace_vertices, register, vertex_table
-from .refine import project_onto
+from .refine import UnsupportedSurface, project_onto
 
 CURVED = ("cylinder", "cone", "sphere", "torus")
 
@@ -86,7 +86,10 @@ def nonuniform_chords(mesh, severity, rng):
                 continue
             scale = float(np.linalg.norm(uniq[neighbours] - uniq[i], axis=-1).min())
         planned = (rng.random() * 2.0 - 1.0) * 0.45 * scale * severity
-        x = project_onto([mesh.faces[f] for f in sorted(faces)], uniq[i] + direction * planned)
+        try:
+            x = project_onto([mesh.faces[f] for f in sorted(faces)], uniq[i] + direction * planned)
+        except UnsupportedSurface:
+            x = uniq[i] + direction * planned
         if np.all(np.isfinite(x)) and np.linalg.norm(x - uniq[i]) <= 3 * abs(planned) + 1e-12:
             planned_disp[i] = x - uniq[i]
     pos = uniq.copy()
