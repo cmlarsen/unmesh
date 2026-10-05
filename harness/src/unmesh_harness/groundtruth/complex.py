@@ -393,8 +393,9 @@ def _build_finned(rng, small: bool = False):
     ys = np.linspace(-width / 2 + 4, width / 2 - 4, n_fins)
     ys = [_r(y + rng.uniform(-0.3, 0.3)) for y in ys]
     features = []
+    thin_lo = 0.05 if not small else 0.15
     for y in ys:
-        th = _r(rng.uniform(0.15, 0.6))
+        th = _r(rng.uniform(thin_lo, 0.6))
         fh = _r(rng.uniform(3, 10))
         fl = _r(length - 2 * inset)
         solid = solid + _prism(_rect_points(0, y, fl, th), fh, t)
@@ -537,7 +538,7 @@ def _build_void(rng, small: bool = False):
     if kind == "chamfer":
         solid, size = _apply_treatment(solid, kind, size, 16, 2, _chamfer_loss(length, width))
     elif kind == "fillet":
-        solid, size = _apply_treatment(solid, kind, size, 20, 2, _fillet_loss(4 * height + 4 * hc))
+        solid, size = _apply_treatment(solid, kind, size, 20, 2, _fillet_loss(4 * height - 4 * hc))
     treatment = {"kind": kind, "size": size} if size else None
     features = [
         {
@@ -615,8 +616,11 @@ def void_volume(params, features) -> float:
             c = tr["size"]
             vol -= c * c * (length + width) - 4 * c**3 / 3
         else:
+            # Fillets run along the outer vertical edges (convex: remove material)
+            # and the cavity vertical edges (concave: add material).
             r = tr["size"]
-            vol -= 4 * (1 - math.pi / 4) * r**2 * (height + hc)
+            vol -= 4 * (1 - math.pi / 4) * r**2 * height
+            vol += 4 * (1 - math.pi / 4) * r**2 * hc
     for x in features:
         if x["type"] in ("rect_pocket", "side_pocket"):
             vol -= x["size"][0] * x["size"][1] * x["depth"]
@@ -654,6 +658,7 @@ def complex_assembly(rng):
             tagged = dict(f)
             tagged["body"] = i
             tagged["body_kind"] = kind
+            tagged["center"] = [offsets[i] + f["center"][0], *f["center"][1:]]
             features.append(tagged)
     params = {
         "bodies": [p for _, p, _, _ in bodies],

@@ -9991,7 +9991,7 @@
         "category": "complex",
         "face_count": 91,
         "face_bucket": "51-300",
-        "min_feature_ratio": 28.5,
+        "min_feature_ratio": 21.5,
         "feature_bucket": "10-100"
       },
       "grids": [
@@ -9999,7 +9999,7 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 26453.167645114,
+        "volume": 26398.344142906,
         "face_count": 91,
         "bbox_min": [
           -42.739,
@@ -10020,7 +10020,7 @@
       "seed": 0,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 201.9,
         "feature_bucket": "100+"
@@ -10030,8 +10030,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 123995.007800408,
-        "face_count": 57,
+        "volume": 124264.280668588,
+        "face_count": 65,
         "bbox_min": [
           -42.739,
           -29.047,
@@ -10051,7 +10051,7 @@
       "seed": 0,
       "strata": {
         "category": "complex",
-        "face_count": 225,
+        "face_count": 233,
         "face_bucket": "51-300",
         "min_feature_ratio": 15.7,
         "feature_bucket": "10-100"
@@ -10061,8 +10061,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 146067.589925396,
-        "face_count": 225,
+        "volume": 146359.814295902,
+        "face_count": 233,
         "bbox_min": [
           7.9995,
           -27.698,
@@ -10114,14 +10114,14 @@
         "category": "complex",
         "face_count": 136,
         "face_bucket": "51-300",
-        "min_feature_ratio": 26.8,
+        "min_feature_ratio": 19.4,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 38612.307073461,
+        "volume": 38473.137835211,
         "face_count": 136,
         "bbox_min": [
           -40.2365,
@@ -10172,7 +10172,7 @@
       "seed": 1,
       "strata": {
         "category": "complex",
-        "face_count": 204,
+        "face_count": 212,
         "face_bucket": "51-300",
         "min_feature_ratio": 26.6,
         "feature_bucket": "10-100"
@@ -10181,8 +10181,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 135268.98265876,
-        "face_count": 204,
+        "volume": 135512.803223342,
+        "face_count": 212,
         "bbox_min": [
           8.0005,
           -34.5045,
@@ -10234,14 +10234,14 @@
         "category": "complex",
         "face_count": 89,
         "face_bucket": "51-300",
-        "min_feature_ratio": 32.6,
+        "min_feature_ratio": 26.5,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 38229.228787588,
+        "volume": 38146.920565876,
         "face_count": 89,
         "bbox_min": [
           -35.232,
@@ -10354,14 +10354,14 @@
         "category": "complex",
         "face_count": 120,
         "face_bucket": "51-300",
-        "min_feature_ratio": 28.2,
+        "min_feature_ratio": 21.1,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 33130.886326545,
+        "volume": 33065.052109845,
         "face_count": 120,
         "bbox_min": [
           -31.713,
@@ -10382,7 +10382,7 @@
       "seed": 3,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 200.9,
         "feature_bucket": "100+"
@@ -10391,8 +10391,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 140853.999560846,
-        "face_count": 57,
+        "volume": 141160.022253355,
+        "face_count": 65,
         "bbox_min": [
           -31.713,
           -28.552,
@@ -10412,7 +10412,7 @@
       "seed": 3,
       "strata": {
         "category": "complex",
-        "face_count": 200,
+        "face_count": 208,
         "face_bucket": "51-300",
         "min_feature_ratio": 15.9,
         "feature_bucket": "10-100"
@@ -10421,8 +10421,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 165300.170995744,
-        "face_count": 200,
+        "volume": 165581.689293921,
+        "face_count": 208,
         "bbox_min": [
           8.0005,
           -28.7275,
@@ -10474,14 +10474,14 @@
         "category": "complex",
         "face_count": 110,
         "face_bucket": "51-300",
-        "min_feature_ratio": 31.6,
+        "min_feature_ratio": 25.3,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 65747.899945805,
+        "volume": 65612.165301473,
         "face_count": 110,
         "bbox_min": [
           -48.861,
@@ -10502,17 +10502,17 @@
       "seed": 4,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
-        "min_feature_ratio": 287.7,
+        "min_feature_ratio": 211.9,
         "feature_bucket": "100+"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 265679.520216929,
-        "face_count": 57,
+        "volume": 266353.320932877,
+        "face_count": 65,
         "bbox_min": [
           -48.861,
           -32.67,
@@ -10594,14 +10594,14 @@
         "category": "complex",
         "face_count": 98,
         "face_bucket": "51-300",
-        "min_feature_ratio": 17.7,
-        "feature_bucket": "10-100"
+        "min_feature_ratio": 8.3,
+        "feature_bucket": "1-10"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 55133.594980385,
+        "volume": 54936.977775137,
         "face_count": 98,
         "bbox_min": [
           -46.1,
@@ -10622,17 +10622,17 @@
       "seed": 5,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
-        "min_feature_ratio": 212.5,
+        "min_feature_ratio": 171.374,
         "feature_bucket": "100+"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 237857.684065632,
-        "face_count": 57,
+        "volume": 238224.848621613,
+        "face_count": 65,
         "bbox_min": [
           -46.1,
           -37.119,
@@ -10652,7 +10652,7 @@
       "seed": 5,
       "strata": {
         "category": "complex",
-        "face_count": 206,
+        "face_count": 214,
         "face_bucket": "51-300",
         "min_feature_ratio": 15.1,
         "feature_bucket": "10-100"
@@ -10661,8 +10661,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 147211.470441569,
-        "face_count": 206,
+        "volume": 147322.496140022,
+        "face_count": 214,
         "bbox_min": [
           8.0,
           -33.0795,
@@ -10714,14 +10714,14 @@
         "category": "complex",
         "face_count": 105,
         "face_bucket": "51-300",
-        "min_feature_ratio": 20.5,
+        "min_feature_ratio": 11.7,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 34603.90195337,
+        "volume": 34486.469005166,
         "face_count": 105,
         "bbox_min": [
           -40.7635,
@@ -10742,7 +10742,7 @@
       "seed": 6,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 171.2,
         "feature_bucket": "100+"
@@ -10751,8 +10751,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 144179.766132487,
-        "face_count": 57,
+        "volume": 144449.11153321,
+        "face_count": 65,
         "bbox_min": [
           -40.7635,
           -30.149,
@@ -10834,14 +10834,14 @@
         "category": "complex",
         "face_count": 107,
         "face_bucket": "51-300",
-        "min_feature_ratio": 22.2,
+        "min_feature_ratio": 13.8,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 61574.970569965,
+        "volume": 61425.317143497,
         "face_count": 107,
         "bbox_min": [
           -42.502,
@@ -10954,14 +10954,14 @@
         "category": "complex",
         "face_count": 123,
         "face_bucket": "51-300",
-        "min_feature_ratio": 21.8,
+        "min_feature_ratio": 13.3,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 41036.141412038,
+        "volume": 40884.043322355,
         "face_count": 123,
         "bbox_min": [
           -36.5395,
@@ -10982,7 +10982,7 @@
       "seed": 8,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 251.2,
         "feature_bucket": "100+"
@@ -10991,8 +10991,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 167144.142246865,
-        "face_count": 57,
+        "volume": 167412.853114591,
+        "face_count": 65,
         "bbox_min": [
           -36.5395,
           -39.809,
@@ -11074,14 +11074,14 @@
         "category": "complex",
         "face_count": 120,
         "face_bucket": "51-300",
-        "min_feature_ratio": 17.9,
-        "feature_bucket": "10-100"
+        "min_feature_ratio": 8.6,
+        "feature_bucket": "1-10"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 45791.65145476,
+        "volume": 45700.998278286,
         "face_count": 120,
         "bbox_min": [
           -47.405,
@@ -11132,7 +11132,7 @@
       "seed": 9,
       "strata": {
         "category": "complex",
-        "face_count": 218,
+        "face_count": 226,
         "face_bucket": "51-300",
         "min_feature_ratio": 20.6,
         "feature_bucket": "10-100"
@@ -11141,8 +11141,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 150062.630117111,
-        "face_count": 218,
+        "volume": 150182.008081931,
+        "face_count": 226,
         "bbox_min": [
           7.9995,
           -27.868,
@@ -11194,14 +11194,14 @@
         "category": "complex",
         "face_count": 101,
         "face_bucket": "51-300",
-        "min_feature_ratio": 30.2,
+        "min_feature_ratio": 23.6,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 51149.71317175,
+        "volume": 51065.514376454,
         "face_count": 101,
         "bbox_min": [
           -49.12,
@@ -11222,7 +11222,7 @@
       "seed": 10,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 335.7,
         "feature_bucket": "100+"
@@ -11231,8 +11231,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 220196.319046767,
-        "face_count": 57,
+        "volume": 221189.826771463,
+        "face_count": 65,
         "bbox_min": [
           -49.12,
           -28.115,
@@ -11252,7 +11252,7 @@
       "seed": 10,
       "strata": {
         "category": "complex",
-        "face_count": 199,
+        "face_count": 207,
         "face_bucket": "51-300",
         "min_feature_ratio": 17.2,
         "feature_bucket": "10-100"
@@ -11261,8 +11261,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 167408.022130095,
-        "face_count": 199,
+        "volume": 167641.042799874,
+        "face_count": 207,
         "bbox_min": [
           8.0,
           -27.486,
@@ -11314,14 +11314,14 @@
         "category": "complex",
         "face_count": 100,
         "face_bucket": "51-300",
-        "min_feature_ratio": 24.2,
+        "min_feature_ratio": 16.2,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 35213.909842429,
+        "volume": 35081.917913272,
         "face_count": 100,
         "bbox_min": [
           -32.5715,
@@ -11342,7 +11342,7 @@
       "seed": 11,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
         "min_feature_ratio": 185.5,
         "feature_bucket": "100+"
@@ -11351,8 +11351,8 @@
         "standard"
       ],
       "fingerprint": {
-        "volume": 151660.227703243,
-        "face_count": 57,
+        "volume": 151854.229090586,
+        "face_count": 65,
         "bbox_min": [
           -32.5715,
           -32.489,
@@ -11434,14 +11434,14 @@
         "category": "complex",
         "face_count": 98,
         "face_bucket": "51-300",
-        "min_feature_ratio": 15.1,
-        "feature_bucket": "10-100"
+        "min_feature_ratio": 5.2,
+        "feature_bucket": "1-10"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 34734.797458981,
+        "volume": 34590.979501748,
         "face_count": 98,
         "bbox_min": [
           -35.0165,
@@ -11554,14 +11554,14 @@
         "category": "complex",
         "face_count": 104,
         "face_bucket": "51-300",
-        "min_feature_ratio": 20.3,
+        "min_feature_ratio": 11.4,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 68781.220588491,
+        "volume": 68588.634957519,
         "face_count": 104,
         "bbox_min": [
           -47.296,
@@ -11582,17 +11582,17 @@
       "seed": 13,
       "strata": {
         "category": "complex",
-        "face_count": 57,
+        "face_count": 65,
         "face_bucket": "51-300",
-        "min_feature_ratio": 206.1,
+        "min_feature_ratio": 157.865,
         "feature_bucket": "100+"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 273999.973823738,
-        "face_count": 57,
+        "volume": 274409.542710111,
+        "face_count": 65,
         "bbox_min": [
           -47.296,
           -37.8295,
@@ -11674,14 +11674,14 @@
         "category": "complex",
         "face_count": 100,
         "face_bucket": "51-300",
-        "min_feature_ratio": 25.3,
+        "min_feature_ratio": 17.6,
         "feature_bucket": "10-100"
       },
       "grids": [
         "standard"
       ],
       "fingerprint": {
-        "volume": 49411.105059905,
+        "volume": 49295.561130835,
         "face_count": 100,
         "bbox_min": [
           -46.6195,
