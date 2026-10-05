@@ -202,8 +202,13 @@ def fillet_rows(mesh, severity, rng, segments=None):
     by_face: dict[int, list[int]] = {}
     for ti, f in enumerate(fids):
         by_face.setdefault(f, []).append(ti)
-    before = len(tris)
-    done, skipped, neighbours = [], [], []
+    edges_of: dict[int, list[int]] = {}
+    for idx, adj in enumerate(mesh.adjacency):
+        edges_of.setdefault(adj.face_a, []).append(idx)
+        if adj.face_b != adj.face_a:
+            edges_of.setdefault(adj.face_b, []).append(idx)
+    plans = {}
+    skipped = []
     for fid in sorted(by_face):
         if mesh.faces[fid].surface != "cylinder":
             continue
@@ -212,55 +217,57 @@ def fillet_rows(mesh, severity, rng, segments=None):
         )
         if plan is None:
             skipped.append(fid)
-            continue
-        drop = set(by_face[fid])
-        tris2 = [t for ti, t in enumerate(tris) if ti not in drop]
-        fids2 = [f for ti, f in enumerate(fids) if ti not in drop]
-        tris2 += plan["grid_tris"]
-        fids2 += [fid] * len(plan["grid_tris"])
-        poly2 = dict(polymap)
-        for idx, pts in plan["across"]:
-            poly2[idx] = pts
-        ok = True
-        for other in plan["neighbours"]:
-            edge_polys = [
-                poly2[idx]
-                for idx, adj in enumerate(mesh.adjacency)
-                if adj.face_a == other or adj.face_b == other
-            ]
-            loops = _chain(edge_polys)
-            if loops is None:
-                ok = False
+        else:
+            plans[fid] = plan
+    accepted = sorted(plans)
+    cache: dict = {}
+    while True:
+        across = {idx: pts for f in accepted for idx, pts in plans[f]["across"]}
+        failed = None
+        for other in sorted({n for f in accepted for n in plans[f]["neighbours"]}):
+            key = (other, tuple(f for f in accepted if other in plans[f]["neighbours"]))
+            if key not in cache:
+                cache[key] = _retriangulate_neighbour(mesh, other, edges_of, polymap, across)
+            if cache[key] is None:
+                failed = other
                 break
-            clipped = canonical_triangulate_loops(
-                np.array(mesh.faces[other].params["normal"]), loops
-            )
-            if clipped is None:
-                ok = False
-                break
-            drop2 = {ti for ti, f in enumerate(fids2) if f == other}
-            tris2 = [t for ti, t in enumerate(tris2) if ti not in drop2]
-            fids2 = [f for ti, f in enumerate(fids2) if ti not in drop2]
-            tris2 += clipped
-            fids2 += [other] * len(clipped)
-        if not ok:
-            skipped.append(fid)
-            continue
-        tris, fids, polymap = tris2, fids2, poly2
-        by_face = {}
-        for ti, f in enumerate(fids):
-            by_face.setdefault(f, []).append(ti)
-        done.append(fid)
-        neighbours += [n for n in plan["neighbours"] if n not in neighbours]
-    mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
-    mesh.face_id = np.array(fids, dtype=mesh.face_id.dtype)
+        if failed is None:
+            break
+        accepted = [f for f in accepted if failed not in plans[f]["neighbours"]]
+    skipped = sorted(skipped + [f for f in plans if f not in accepted])
+    written: dict[int, list[tuple]] = {}
+    for f in accepted:
+        written.pop(f, None)
+        written[f] = plans[f]["grid_tris"]
+        for other in plans[f]["neighbours"]:
+            key = (other, tuple(g for g in accepted if other in plans[g]["neighbours"]))
+            written.pop(other, None)
+            written[other] = cache[key]
+    out_tris = [t for t, f in zip(tris, fids, strict=True) if f not in written]
+    out_fids = [f for f in fids if f not in written]
+    for f, block in written.items():
+        out_tris += block
+        out_fids += [f] * len(block)
+    for f in accepted:
+        for idx, pts in plans[f]["across"]:
+            polymap[idx] = pts
+    neighbours = sorted({n for f in accepted for n in plans[f]["neighbours"]})
+    mesh.tris = np.array(out_tris, dtype=np.float64).reshape(-1, 3, 3)
+    mesh.face_id = np.array(out_fids, dtype=mesh.face_id.dtype)
     for idx, pts in polymap.items():
         mesh.adjacency[idx].points = [list(p) for p in pts]
     return {
         "segments": k,
-        "fillet_faces": done,
-        "neighbours_retriangulated": sorted(neighbours),
+        "fillet_faces": accepted,
+        "neighbours_retriangulated": neighbours,
         "faces_skipped": skipped,
-        "triangles_before": before,
-        "triangles_after": len(tris),
+        "triangles_before": len(tris),
+        "triangles_after": len(out_tris),
     }
+
+
+def _retriangulate_neighbour(mesh, other, edges_of, polymap, across):
+    loops = _chain([across.get(idx, polymap[idx]) for idx in edges_of.get(other, [])])
+    if loops is None:
+        return None
+    return canonical_triangulate_loops(np.array(mesh.faces[other].params["normal"]), loops)

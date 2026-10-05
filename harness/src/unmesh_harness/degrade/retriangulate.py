@@ -71,13 +71,17 @@ def _min_angle(a, b, c) -> float:
     return min(math.acos(max(-1.0, min(1.0, x))) for x in cosines)
 
 
-def _rings_inside(pts: np.ndarray, ring: np.ndarray) -> np.ndarray:
-    a, b = ring[None, :, :], np.roll(ring, -1, axis=0)[None, :, :]
+def _parity_inside(pts: np.ndarray, ea: np.ndarray, eb: np.ndarray) -> np.ndarray:
     x, y = pts[:, None, 0], pts[:, None, 1]
-    cross = (a[..., 1] > y) != (b[..., 1] > y)
+    a0, a1, b0, b1 = ea[None, :, 0], ea[None, :, 1], eb[None, :, 0], eb[None, :, 1]
+    cross = (a1 > y) != (b1 > y)
     with np.errstate(divide="ignore", invalid="ignore"):
-        at = (b[..., 0] - a[..., 0]) * (y - a[..., 1]) / (b[..., 1] - a[..., 1]) + a[..., 0]
-    return np.count_nonzero(cross & (x < at), axis=1) % 2 == 1
+        at = (b0 - a0) * (y - a1) / (b1 - a1) + a0
+    return cross & (x < at)
+
+
+def _ring_edges(ring: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return ring, np.roll(ring, -1, axis=0)
 
 
 def _sides(x0, x1, y0, y1, z0, z1):
@@ -114,17 +118,33 @@ class _Segments:
         return out
 
 
-def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, others) -> np.ndarray:
+class _Holes:
+    def __init__(self, hole_arrs: list[np.ndarray]):
+        sizes = [len(h) for h in hole_arrs]
+        self.starts = np.concatenate([[0], np.cumsum(sizes)[:-1]]).astype(np.int64)
+        edges = [_ring_edges(h) for h in hole_arrs]
+        self.ea = np.concatenate([e[0] for e in edges])
+        self.eb = np.concatenate([e[1] for e in edges])
+
+    def inside_other(self, pts: np.ndarray, skip: int) -> np.ndarray:
+        hits = _parity_inside(pts, self.ea, self.eb).astype(np.int64)
+        odd = np.add.reduceat(hits, self.starts, axis=1) % 2 == 1
+        odd[:, skip] = False
+        return odd.any(axis=1)
+
+
+def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, holes, k) -> np.ndarray:
     j, i = np.divmod(flat, n_outer)
     p, q = outer_arr[i], hole_arr[j]
     ok = ~segs.crossed(p, q)
     keep = np.flatnonzero(ok)
-    mid = np.stack([(p[keep, 0] + q[keep, 0]) / 2, (p[keep, 1] + q[keep, 1]) / 2], axis=1).reshape(
-        -1, 2
-    )
-    good = _rings_inside(mid, outer_arr)
-    for o in others:
-        good &= ~_rings_inside(mid, o)
+    if not len(keep):
+        return ok
+    mid = np.stack([(p[keep, 0] + q[keep, 0]) / 2, (p[keep, 1] + q[keep, 1]) / 2], axis=1)
+    good = np.count_nonzero(_parity_inside(mid, *_ring_edges(outer_arr)), axis=1) % 2 == 1
+    sub = np.flatnonzero(good)
+    if len(sub):
+        good[sub] = ~holes.inside_other(mid[sub], k)
     ok[keep] = good
     return ok
 
@@ -132,36 +152,33 @@ def _pairs_ok(flat, n_outer, outer_arr, hole_arr, segs, others) -> np.ndarray:
 def _bridge(outer, holes) -> list | None:
     outer = list(outer)
     hole_arrs = [np.array(h, dtype=np.float64).reshape(-1, 2) for h in holes]
-    hole_edges = np.concatenate([np.stack([h, np.roll(h, -1, axis=0)], axis=1) for h in hole_arrs])
+    all_holes = _Holes(hole_arrs)
     for k, h in enumerate(holes):
         outer_arr = np.array(outer, dtype=np.float64)
-        edges = np.concatenate(
-            [np.stack([outer_arr, np.roll(outer_arr, -1, axis=0)], axis=1), hole_edges]
-        )
-        segs = _Segments(edges[:, 0], edges[:, 1])
-        others = [o for j, o in enumerate(hole_arrs) if j != k]
+        oa, ob = _ring_edges(outer_arr)
+        segs = _Segments(np.concatenate([oa, all_holes.ea]), np.concatenate([ob, all_holes.eb]))
         hole_arr = hole_arrs[k]
         n_outer = len(outer)
-
         approx = np.hypot(
             hole_arr[:, None, 0] - outer_arr[None, :, 0],
             hole_arr[:, None, 1] - outer_arr[None, :, 1],
         ).ravel()
-        order = np.argsort(approx, kind="stable")
         found = None
-        chunk, at = 16, 0
-        while at < len(order) and found is None:
-            flats = order[at : at + chunk]
-            good = np.flatnonzero(_pairs_ok(flats, n_outer, outer_arr, hole_arr, segs, others))
-            if len(good):
-                found = float(approx[flats[good[0]]])
-            at += chunk
-            chunk = min(chunk * 4, 1024)
-        if found is None:
-            return None
+        window = 64
+        while found is None:
+            if window < len(approx):
+                flats = np.argpartition(approx, window - 1)[:window]
+            else:
+                flats = np.arange(len(approx))
+            ok = _pairs_ok(flats, n_outer, outer_arr, hole_arr, segs, all_holes, k)
+            if ok.any():
+                found = float(approx[flats[ok]].min())
+            elif window >= len(approx):
+                return None
+            window *= 8
         near = np.flatnonzero(approx <= found * (1.0 + 1e-9))
         best = None
-        for flat in near[_pairs_ok(near, n_outer, outer_arr, hole_arr, segs, others)]:
+        for flat in near[_pairs_ok(near, n_outer, outer_arr, hole_arr, segs, all_holes, k)]:
             j, i = divmod(int(flat), n_outer)
             key = (math.dist(outer[i], h[j]), j, i)
             if best is None or key < best:
@@ -177,11 +194,18 @@ class _EarState:
         self.eps = eps
         n = len(poly)
         self.xy = np.array(poly, dtype=np.float64).reshape(-1, 2)
+        self.x, self.y = self.xy[:, 0].copy(), self.xy[:, 1].copy()
+        self.by_x = np.argsort(self.x, kind="stable")
+        self.sorted_x = self.x[self.by_x]
+        reach = float(np.abs(self.xy).max()) if n else 0.0
+        self.margin = 2.0 * math.sqrt(eps) + 8.0 * float(np.spacing(reach))
         self.prev = np.roll(np.arange(n), 1)
         self.next = np.roll(np.arange(n), -1)
         self.alive = np.ones(n, dtype=bool)
         self.convex = np.zeros(n, dtype=bool)
+        self.cand = np.zeros(n, dtype=bool)
         self.blocked = np.zeros(n, dtype=np.int64)
+        self.box = np.zeros((n, 4))
         self.angle = np.full(n, np.nan)
         self.ids_of: dict = {}
         for i, p in enumerate(poly):
@@ -201,11 +225,21 @@ class _EarState:
         a, b, c = self.corners(i)
         eps = self.eps
         self.angle[i] = np.nan
-        self.convex[i] = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) > eps
-        if not self.convex[i]:
+        self.cand[i] = False
+        convex = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) > eps
+        self.convex[i] = convex
+        if not convex:
             return
-        live = np.flatnonzero(self.alive)
-        self.blocked[i] = int(np.count_nonzero(self._blocks(a, b, c, self.xy[live])))
+        m = self.margin
+        x0, x1 = min(a[0], b[0], c[0]) - m, max(a[0], b[0], c[0]) + m
+        y0, y1 = min(a[1], b[1], c[1]) - m, max(a[1], b[1], c[1]) + m
+        self.box[i] = (x0, x1, y0, y1)
+        lo = np.searchsorted(self.sorted_x, x0, side="left")
+        hi = np.searchsorted(self.sorted_x, x1, side="right")
+        ids = self.by_x[lo:hi]
+        ids = ids[self.alive[ids] & (self.y[ids] >= y0) & (self.y[ids] <= y1)]
+        self.blocked[i] = int(np.count_nonzero(self._blocks(a, b, c, self.xy[ids])))
+        self.cand[i] = self.blocked[i] == 0
 
     def _blocks(self, a, b, c, q):
         eps = self.eps
@@ -254,7 +288,7 @@ class _EarState:
         return inside & ~same
 
     def candidates(self) -> np.ndarray:
-        return np.flatnonzero(self.alive & self.convex & (self.blocked == 0))
+        return np.flatnonzero(self.cand)
 
     def min_angle(self, i: int) -> float:
         if np.isnan(self.angle[i]):
@@ -264,13 +298,24 @@ class _EarState:
     def remove(self, i: int) -> None:
         p, n = int(self.prev[i]), int(self.next[i])
         self.alive[i] = False
+        self.convex[i] = False
+        self.cand[i] = False
         self.ids_of[self.poly[i]].remove(i)
         self.next[p], self.prev[n] = n, p
         self.size -= 1
-        ids = np.flatnonzero(self.alive & self.convex)
+        q = self.poly[i]
+        box = self.box
+        ids = np.flatnonzero(
+            self.convex
+            & (box[:, 0] <= q[0])
+            & (box[:, 1] >= q[0])
+            & (box[:, 2] <= q[1])
+            & (box[:, 3] >= q[1])
+        )
         ids = ids[(ids != p) & (ids != n)]
         if len(ids):
-            self.blocked[ids] -= self.blocked_by(self.poly[i], ids)
+            self.blocked[ids] -= self.blocked_by(q, ids)
+            self.cand[ids] = self.blocked[ids] == 0
         self.refresh(p)
         self.refresh(n)
 
