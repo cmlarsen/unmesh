@@ -26,7 +26,7 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --locked
       - run: scripts/check.sh
-      - run: uv run --locked pytest harness/tests --slow -q
+      - run: uv run --locked pytest harness/tests --slow -q -n auto --dist worksteal
 
   standard:
     runs-on: ubuntu-latest
