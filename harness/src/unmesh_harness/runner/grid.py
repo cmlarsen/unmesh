@@ -32,7 +32,7 @@ FACE_LABEL_SENSITIVE_OPS = frozenset(
 def ambiguity_rejected_ops(cells: list[dict[str, Any]]) -> list[str]:
     rejected = []
     for spec in cells:
-        for name, _ in spec.get("steps", []):
+        for name, _ in steps_for(spec):
             if name in FACE_LABEL_SENSITIVE_OPS and name not in rejected:
                 rejected.append(name)
     return rejected

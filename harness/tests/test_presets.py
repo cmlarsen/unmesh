@@ -169,6 +169,32 @@ def test_load_grid_rejects_preset_and_steps(tmp_path, monkeypatch):
         load_grid("bad")
 
 
+def test_ambiguity_grid_rejects_label_sensitive_steps(tmp_path, monkeypatch):
+    import unmesh_harness.runner.grid as grid_module
+
+    raw = json.loads(find_grid("ambiguity").read_text())
+    raw["cells"] = [
+        {"operator": "retriangulate", "severity": 1.0, "steps": [["retriangulate", 1.0]]}
+    ]
+    path = tmp_path / "amb.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    with pytest.raises(ValueError, match="read face labels"):
+        load_grid("amb")
+
+
+def test_ambiguity_grid_rejects_label_sensitive_preset(tmp_path, monkeypatch):
+    import unmesh_harness.runner.grid as grid_module
+
+    raw = json.loads(find_grid("ambiguity").read_text())
+    raw["cells"] = [{"operator": "fusion-export", "severity": 1.0, "preset": "fusion-export"}]
+    path = tmp_path / "amb.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    with pytest.raises(ValueError, match="read face labels"):
+        load_grid("amb")
+
+
 def test_run_grid_resolves_preset_cell(tmp_path):
     grid = load_grid("smoke")
     grid = dataclasses.replace(
