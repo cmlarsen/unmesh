@@ -15,9 +15,13 @@ from OCP.TopAbs import TopAbs_FACE  # noqa: E402
 from OCP.TopExp import TopExp_Explorer  # noqa: E402
 from OCP.TopoDS import TopoDS  # noqa: E402
 
+import unmesh  # noqa: E402
 import unmesh.step as step  # noqa: E402
 from unmesh._writer import occ  # noqa: E402
-from unmesh.ir import Facets, Ir, IrError, Plane  # noqa: E402
+from unmesh.ir import Facets, Ir, IrError, Plane, Region, Shell  # noqa: E402
+from unmesh_harness import labels  # noqa: E402
+from unmesh_harness.degrade import core as degrade_core  # noqa: E402
+from unmesh_harness.groundtruth import generate  # noqa: E402
 
 FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "ir"
 
@@ -47,6 +51,11 @@ def reimported_faces(path):
 
 def expected_face_count(ir):
     return sum(len(r.surface.faces) if isinstance(r.surface, Facets) else 1 for r in ir.regions)
+
+
+def signed_volume(tris):
+    a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+    return float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
 
 
 def mesh_from_ir(ir):
@@ -121,13 +130,15 @@ def shifted_box():
 
 def test_inconsistent_plane_falls_back_to_faceted(tmp_path):
     ir, bad = shifted_box()
+    tris = mesh_from_ir(ir)
     path = tmp_path / "f.step"
-    report = step.write(bad, path, mesh=mesh_from_ir(ir))
+    report = step.write(bad, path, mesh=tris)
     assert report.fallback == "faceted"
     assert report.fallback_reason
     assert report.valid
     shape, types = reimported_faces(path)
     assert occ.volume_of(shape) == pytest.approx(1000.0, rel=1e-9)
+    assert report.shells[0].volume == pytest.approx(signed_volume(tris), rel=1e-9)
     assert len(types) == 6
 
 
@@ -146,11 +157,14 @@ def test_faceted_fallback_keeps_cavities_and_bodies(name, tmp_path):
     ir = load(name)
     bad = copy.deepcopy(ir)
     bad.regions[0].surface.origin = tuple(c + 1.0 for c in bad.regions[0].surface.origin)
+    tris = mesh_from_ir(ir)
     path = tmp_path / "f.step"
-    report = step.write(bad, path, mesh=mesh_from_ir(ir))
+    report = step.write(bad, path, mesh=tris)
     assert report.fallback == "faceted" and report.valid
     shape, _ = reimported_faces(path)
     assert occ.volume_of(shape) == pytest.approx(VOLUMES[name], rel=1e-9)
+    total = sum(s.volume for s in report.shells)
+    assert total == pytest.approx(signed_volume(tris), rel=1e-9)
     assert report.solids == (1 if name == "cavity" else 2)
 
 
@@ -159,6 +173,7 @@ def test_flipped_mesh_winding_still_builds_faceted(tmp_path):
     tris = mesh_from_ir(ir)[:, ::-1]
     report = step.write(bad, tmp_path / "w.step", mesh=tris)
     assert report.fallback == "faceted" and report.valid
+    assert report.shells[0].volume == pytest.approx(abs(signed_volume(tris)), rel=1e-9)
 
 
 def test_unsupported_surface_reports_reason(tmp_path):
@@ -253,3 +268,88 @@ def test_missing_ocp_gives_install_hint():
         "    raise SystemExit(1)\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def unit_box_with_stray():
+    a = (0.0, 0.0, 0.0)
+    b = (1.0, 0.0, 0.0)
+    c = (1.0, 1.0, 0.0)
+    d = (0.0, 1.0, 0.0)
+    e = (0.0, 0.0, 1.0)
+    f = (1.0, 0.0, 1.0)
+    g = (1.0, 1.0, 1.0)
+    h = (0.0, 1.0, 1.0)
+    box = np.array(
+        [
+            [a, d, c],
+            [a, c, b],
+            [e, f, g],
+            [e, g, h],
+            [a, b, f],
+            [a, f, e],
+            [d, h, g],
+            [d, g, c],
+            [a, e, h],
+            [a, h, d],
+            [b, c, g],
+            [b, g, f],
+        ]
+    )
+    stray = np.array([[[5.0, 5.0, 5.0], [6.0, 5.0, 5.0], [5.5, 6.0, 5.0]]])
+    return box, stray
+
+
+def box_plus_stray_ir():
+    box, stray = unit_box_with_stray()
+    ir, _ = unmesh.convert(box)
+    stray_id = len(ir.regions)
+    ir.regions.append(
+        Region(
+            stray_id,
+            Facets([tuple(p) for p in stray[0].tolist()], [(0, 1, 2)]),
+            [len(box)],
+            None,
+        )
+    )
+    ir.shells.append(Shell(False, "outer", None, [stray_id]))
+    ir.source.triangle_count = len(box) + len(stray)
+    return ir, box, stray
+
+
+def test_stray_open_triangle_written_as_shell_in_compound(tmp_path):
+    ir, box, stray = box_plus_stray_ir()
+    mesh = np.concatenate([box, stray])
+    assert signed_volume(box) == pytest.approx(1.0, rel=1e-9)
+    analytic = step.write(ir, tmp_path / "a.step")
+    assert analytic.valid and analytic.fallback is None
+    assert [s.kind for s in analytic.shells] == ["solid", "shell"]
+    assert analytic.open_shells == [1]
+    bad = copy.deepcopy(ir)
+    bad.regions[0].surface.origin = tuple(c + 1.0 for c in bad.regions[0].surface.origin)
+    path = tmp_path / "s.step"
+    report = step.write(bad, path, mesh=mesh)
+    assert report.fallback == "faceted" and report.valid
+    assert report.solids == 1
+    assert [s.kind for s in report.shells] == ["solid", "shell"]
+    assert report.open_shells == [1]
+    shape, _ = reimported_faces(path)
+    assert occ.count_solids(shape) == 1
+    assert report.shells[0].volume == pytest.approx(signed_volume(box), rel=1e-9)
+
+
+def test_noisy_curved_mesh_fallback_keeps_positive_volume(tmp_path):
+    import unmesh_harness.degrade.defects  # noqa: F401,E402
+    import unmesh_harness.degrade.noise  # noqa: F401,E402
+
+    gt = generate("revolved_cone", 1)
+    mesh = labels.tessellate(gt.solid, 0.01, 0.2)
+    degraded = degrade_core.apply_chain(mesh, [("slivers", 1.0), ("noise_isotropic", 1.0)], 6001)
+    tris = degraded.tris
+    expected = signed_volume(tris)
+    assert expected > 0
+    ir, _ = unmesh.convert(tris)
+    path = tmp_path / "n.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.fallback == "faceted" and report.valid
+    assert report.shells[0].volume == pytest.approx(expected, rel=1e-9)
+    assert occ.is_valid(occ.read_step(path))

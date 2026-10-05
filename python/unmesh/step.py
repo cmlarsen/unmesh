@@ -57,6 +57,7 @@ class WriteReport:
     issues: list[str] = field(default_factory=list)
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
+    open_shells: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -113,10 +114,13 @@ def _check(g: _Group, occ, max_tol: float) -> None:
     g.valid = ok
 
 
-def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
+def _finish_group(g: _Group, occ, outer_shell, cavities, options, require_positive=False) -> None:
     if g.kind == "solid":
         solid = occ.make_solid(outer_shell, cavities)
         g.shape, g.context = occ.fix_shape(solid)
+        if require_positive and occ.volume_of(g.shape) < 0:
+            g.shape = occ.reversed_solid(g.shape)
+            g.context = None
     else:
         g.shape = outer_shell
     _check(g, occ, options.max_shape_tolerance)
@@ -182,7 +186,7 @@ def _faceted(ir: Ir, tris: np.ndarray, options: WriteOptions, occ, topology):
                         t = t[:, ::-1]
                 shells[idx] = occ.build_triangle_shell(np.ascontiguousarray(t))
             cavities = [sh for idx, sh in shells.items() if idx != outer]
-            _finish_group(g, occ, shells[outer], cavities, options)
+            _finish_group(g, occ, shells[outer], cavities, options, require_positive=True)
             if g.kind == "solid" and g.valid:
                 merged = occ.unify_exact(g.shape)
                 trial = _Group(outer, "solid", merged)
@@ -247,4 +251,5 @@ def write(
         issues=issues,
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
+        open_shells=[g.outer for g in written if g.kind == "shell"],
     )

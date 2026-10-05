@@ -23,7 +23,7 @@ from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS, TopoDS_Compound
+from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell
 
 from .topology import BuildError, FacePlan, ShellPlan
 
@@ -149,7 +149,18 @@ def make_solid(outer_shell, cavities):
     return mk2.Solid()
 
 
+def reversed_solid(solid):
+    return TopoDS.Solid_s(solid.Reversed())
+
+
 def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):
+    if len(faces_with_regions) == 1:
+        region, face = faces_with_regions[0]
+        shell = TopoDS_Shell()
+        builder = BRep_Builder()
+        builder.MakeShell(shell)
+        builder.Add(shell, face)
+        return shell, [(region, face)]
     sewing = sew([f for _, f in faces_with_regions], tolerance)
     sewn = sewing.SewedShape()
     shells = _shells_of(sewn)
