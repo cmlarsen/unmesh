@@ -254,6 +254,62 @@ fn convert_indexed<'py>(
     output_to_py(py, out)
 }
 
+fn labels_from_array(py: Python<'_>, labels: &Bound<'_, PyAny>) -> PyResult<Vec<u32>> {
+    let np = py.import("numpy")?;
+    let arr = np.call_method1("asarray", (labels,))?;
+    let kind: String = arr.getattr("dtype")?.getattr("kind")?.extract()?;
+    if kind != "i" && kind != "u" {
+        return Err(PyValueError::new_err(format!(
+            "labels must be integers, got dtype kind {kind:?}"
+        )));
+    }
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", np.getattr("int64")?)?;
+    let arr = np.call_method("ascontiguousarray", (arr,), Some(&kwargs))?;
+    let arr = arr
+        .cast_into::<numpy::PyArrayDyn<i64>>()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    if arr.shape().len() != 1 {
+        return Err(PyValueError::new_err(format!(
+            "expected labels of shape (n,), got {:?}",
+            arr.shape()
+        )));
+    }
+    let readonly = arr.readonly();
+    readonly
+        .as_slice()?
+        .iter()
+        .map(|&l| {
+            u32::try_from(l).map_err(|_| PyValueError::new_err(format!("label {l} out of range")))
+        })
+        .collect()
+}
+
+#[pyfunction]
+#[pyo3(signature = (tris, labels, linear_tolerance, angular_snap_deg, tangent_threshold_deg, vertex_merge))]
+fn convert_soup_from_labels<'py>(
+    py: Python<'py>,
+    tris: &Bound<'py, PyAny>,
+    labels: &Bound<'py, PyAny>,
+    linear_tolerance: Option<f64>,
+    angular_snap_deg: f64,
+    tangent_threshold_deg: f64,
+    vertex_merge: f64,
+) -> PyResult<(String, Bound<'py, PyDict>)> {
+    let soup = soup_from_array(py, tris)?;
+    let labels = labels_from_array(py, labels)?;
+    let options = options_from(
+        linear_tolerance,
+        angular_snap_deg,
+        tangent_threshold_deg,
+        vertex_merge,
+    );
+    let out = py
+        .detach(|| unmesh_core::convert_soup_from_labels(&soup, &labels, &options))
+        .map_err(convert_err)?;
+    output_to_py(py, out)
+}
+
 type SampleOutput<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<u32>>);
 
 fn stats_dict<'py>(py: Python<'py>, s: &unmesh_core::judge::Stats) -> PyResult<Bound<'py, PyDict>> {
@@ -384,6 +440,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(weld, m)?)?;
     m.add_function(wrap_pyfunction!(convert_soup, m)?)?;
     m.add_function(wrap_pyfunction!(convert_indexed, m)?)?;
+    m.add_function(wrap_pyfunction!(convert_soup_from_labels, m)?)?;
     m.add_function(wrap_pyfunction!(judge_ir, m)?)?;
     m.add_function(wrap_pyfunction!(sample_ir, m)?)?;
     m.add_function(wrap_pyfunction!(mesh_distances, m)?)?;
