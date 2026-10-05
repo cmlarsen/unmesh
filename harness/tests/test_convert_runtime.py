@@ -55,3 +55,26 @@ def test_noisy_curved_corpus_costs_a_bounded_multiple_of_clean():
 
     ratio = cpu(noisy) / cpu([np.asarray(m.tris) for m in clean])
     assert ratio <= NOISY_TO_CLEAN_CPU, ratio
+
+
+WORST_IMPORTED = "imported-0201"
+IMPORTED_BUDGET_S = 20.0
+CI_FACTOR = 2.5
+
+
+@pytest.mark.benchmark
+def test_slowest_imported_part_converts_within_budget():
+    from unmesh_harness.corpus import load_manifest
+    from unmesh_harness.imported import load_imported_shape
+
+    entry = next(e for e in load_manifest()["entries"] if e["id"] == WORST_IMPORTED)
+    try:
+        shape = load_imported_shape(entry)
+    except RuntimeError as e:
+        pytest.skip(str(e))
+    tris = np.asarray(tessellate(shape, 0.01, 0.2).tris)
+    start = time.process_time()
+    out = unmesh.convert(tris)
+    seconds = time.process_time() - start
+    assert out.ir.regions
+    assert seconds <= IMPORTED_BUDGET_S * CI_FACTOR, (seconds, len(tris))
