@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
@@ -15,7 +16,6 @@ const MIN_MEMBERS: usize = 3;
 const SEED_TRIES: usize = 3;
 const INIT_GATE: f64 = 5.0;
 const ESCALATE: f64 = 500.0;
-const DROP_GATE: f64 = 50.0;
 const SAG_RATIO: f64 = 16.0;
 const SEED_POINTS: [usize; 3] = [12, 24, 48];
 const DOUBLY_POINTS: [usize; 3] = [16, 32, 64];
@@ -365,7 +365,7 @@ fn extend_chain(
     }
 }
 
-fn chain_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<Single, f64> {
+fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<Single, f64> {
     let (pts, tris) = pool.union(chain);
     let fit = curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol)?;
     if pool.all_fit(chain, &fit, tol).is_some() {
@@ -375,32 +375,78 @@ fn chain_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<Single, f64
     }
 }
 
-/// The chain's fit, else the fit of the chain less one member when the
-/// chain came close (initial residual within `DROP_GATE` times `tol`). Where
-/// a fillet meets a sphere tangentially the planar stage can join a strip
-/// with a sliver of the sphere, and that one member spoils an otherwise exact
-/// seed; `peel` later moves the strip's own triangles into the group. Which
-/// strips pick up slivers depends on how the tessellator split each quad.
-fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], tol: f64) -> Result<(Vec<u32>, Single), f64> {
-    let err = match chain_fit(pool, chain, tol) {
-        Ok(fit) => return Ok((chain.to_vec(), fit)),
-        Err(e) => e,
-    };
-    if err > DROP_GATE * tol || chain.len() <= MIN_MEMBERS {
-        return Err(err);
-    }
-    for skip in 0..chain.len() {
-        let rest: Vec<u32> = chain
+/// The surfaces of the sphere and torus groups, with the chord sagitta
+/// limit `peel` would apply to them, by group.
+/// Where a fillet meets a sphere or torus blend tangentially, the planar
+/// stage can join a fillet strip with a sliver of the blend into one region,
+/// and such a member can spoil an otherwise exact cylinder or cone seed.
+/// Which strips pick up slivers depends on how the tessellator split each
+/// quad. A seed chain that fails is retried without those members (the
+/// regions with a triangle that fits an adjacent blend group); `peel` later
+/// moves the strips' own triangles into the group.
+struct Junction<'a> {
+    nbr: &'a [[u32; 3]],
+    label: &'a [u32],
+    blends: Vec<Option<Blend>>,
+}
+
+struct Blend {
+    members: Vec<u32>,
+    fit: Single,
+    surface: OnceCell<Option<(Surface, f64)>>,
+}
+
+impl<'a> Junction<'a> {
+    fn new(nbr: &'a [[u32; 3]], label: &'a [u32], groups: &[Group]) -> Self {
+        let blends = groups
             .iter()
-            .enumerate()
-            .filter(|&(i, _)| i != skip)
-            .map(|(_, &r)| r)
+            .map(|grp| {
+                doubly(grp.fit.0).then(|| Blend {
+                    members: grp.members.clone(),
+                    fit: grp.fit.clone(),
+                    surface: OnceCell::new(),
+                })
+            })
             .collect();
-        if let Ok(fit) = chain_fit(pool, &rest, tol) {
-            return Ok((rest, fit));
-        }
+        Self { nbr, label, blends }
     }
-    Err(err)
+
+    fn any(&self) -> bool {
+        self.blends.iter().any(Option::is_some)
+    }
+
+    /// Whether a triangle of region `r` borders a sphere or torus group and
+    /// fits that group's surface as `peel` would accept it.
+    fn sliver(&self, pool: &Pool<'_>, owner: &[u32], r: u32, tol: f64) -> bool {
+        pool.regions[r as usize].faces.iter().any(|&f| {
+            self.nbr[f as usize].iter().any(|&h| {
+                if h == NONE {
+                    return false;
+                }
+                let x = self.label[h as usize];
+                if x == r || x == NONE || owner[x as usize] == NONE {
+                    return false;
+                }
+                let Some(Some(blend)) = self.blends.get(owner[x as usize] as usize) else {
+                    return false;
+                };
+                let surface = blend.surface.get_or_init(|| {
+                    let sags = pool.all_fit(&blend.members, &blend.fit, tol)?;
+                    let (kind, axis, shape) = (blend.fit.0, &blend.fit.1, &blend.fit.2);
+                    let m = Member {
+                        pts: Vec::new(),
+                        kind,
+                        slot: 0,
+                    };
+                    let surf = curved::surface_of(axis, shape, &m);
+                    Some((surf, SAG_RATIO * median(&sags).max(tol)))
+                });
+                surface
+                    .as_ref()
+                    .is_some_and(|(surf, limit)| pool.face_fits(f, &blend.fit, surf, *limit, tol))
+            })
+        })
+    }
 }
 
 /// A fresh fit of the union (which can take the tessellation-law radius),
@@ -762,6 +808,7 @@ pub fn run(
             seeded[r as usize] = true;
         }
     }
+    let junction = Junction::new(nbr, label, &groups);
     for s in 0..n as u32 {
         if owner[s as usize] != NONE || spent[s as usize] || g.adj[s as usize].is_empty() {
             continue;
@@ -777,15 +824,33 @@ pub fn run(
                 if chain.len() == last {
                     break;
                 }
-                match seed_fit(&mut pool, &chain, tol) {
-                    Ok((members, fit)) => {
+                let init = match seed_fit(&mut pool, &chain, tol) {
+                    Ok(fit) => {
                         let gid = groups.len() as u32;
-                        let grp = grow_group(&mut pool, &g, members, fit, &mut owner, gid, tol);
+                        let grp = grow_group(&mut pool, &g, chain, fit, &mut owner, gid, tol);
                         groups.push(grp);
                         break 'seed;
                     }
-                    Err(init) if init > ESCALATE * tol => break,
-                    _ => {}
+                    Err(init) => init,
+                };
+                if init > ESCALATE * tol {
+                    break;
+                }
+                if junction.any() {
+                    let pure: Vec<u32> = chain
+                        .iter()
+                        .copied()
+                        .filter(|&r| !junction.sliver(&pool, &owner, r, tol))
+                        .collect();
+                    if pure.len() < chain.len()
+                        && pure.len() >= MIN_MEMBERS
+                        && let Ok(fit) = seed_fit(&mut pool, &pure, tol)
+                    {
+                        let gid = groups.len() as u32;
+                        let grp = grow_group(&mut pool, &g, pure, fit, &mut owner, gid, tol);
+                        groups.push(grp);
+                        break 'seed;
+                    }
                 }
                 last = chain.len();
             }
