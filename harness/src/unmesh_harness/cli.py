@@ -33,10 +33,31 @@ def _finish(records: list[dict], gate_enabled: bool, grid, converters, sha) -> i
 
 
 def _run(args) -> int:
+    import dataclasses
+
     from .runner import load_grid, run_grid
 
     converters = [c for arg in args.converter for c in arg.split(",")]
     grid = load_grid(args.grid)
+    if args.category:
+        wanted = set(args.category)
+        entries = [e for e in grid.entries if e["strata"].get("category") in wanted]
+        if not entries:
+            print(f"error: --category {sorted(wanted)} selects no parts")
+            return 2
+        grid = dataclasses.replace(grid, entries=entries)
+    if args.shard is not None:
+        try:
+            index, _, count = args.shard.partition("/")
+            index, count = int(index), int(count)
+        except ValueError:
+            print(f"error: --shard must look like 0/3, got {args.shard!r}")
+            return 2
+        if not 0 <= index < count or count < 1:
+            print(f"error: --shard must look like 0/3, got {args.shard!r}")
+            return 2
+        ordered = sorted(grid.entries, key=lambda e: e["id"])
+        grid = dataclasses.replace(grid, entries=ordered[index::count])
     try:
         summary = run_grid(
             grid, converters, args.out, args.jobs, timeout=args.timeout, hidden=args.hidden
@@ -131,6 +152,19 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--jobs", type=int, default=None)
     run.add_argument("--timeout", type=float, default=None)
     run.add_argument("--gate", action="store_true", help="exit 1 on any gate violation")
+    run.add_argument(
+        "--category",
+        action="append",
+        default=None,
+        help="run only parts whose strata category is listed (repeatable; "
+        "used to split the nightly grid into a per-category matrix)",
+    )
+    run.add_argument(
+        "--shard",
+        default=None,
+        help="run every COUNT-th part starting at INDEX, e.g. 0/3 "
+        "(deterministic by part id; used to split large nightly categories)",
+    )
     run.add_argument(
         "--hidden",
         action="store_true",
