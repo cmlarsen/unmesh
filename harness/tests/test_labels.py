@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 import pytest
-from build123d import Box, Cone, Cylinder, Plane, Sphere, Torus, fillet, mirror
+from build123d import Box, Cone, Cylinder, Plane, Sphere, Torus, chamfer, fillet, mirror
 
 import unmesh
 from unmesh_harness.corpus import load_manifest, select
@@ -181,3 +181,44 @@ def test_npz_and_stl_round_trip(tmp_path):
     assert stl.shape == mesh.tris.shape
     assert np.allclose(stl, mesh.tris, atol=1e-5)
     assert closed_manifold_problems(stl.astype(np.float64))[0] == []
+
+
+def test_tee_dihedral_profile_spans_threshold():
+    from build123d import Pos, Rotation
+
+    tee = Cylinder(5, 20) + (Pos(0, 0, 0) * Rotation(0, 90, 0) * Cylinder(5, 20))
+    mesh = tessellate(tee, 0.01, 0.2)
+    crossed = [
+        a
+        for a in mesh.adjacency
+        if len(a.dihedral_samples) == len(a.points)
+        and min(a.dihedral_samples) < math.radians(TANGENT_THRESHOLD_DEG) < max(a.dihedral_samples)
+    ]
+    assert crossed
+    for a in crossed:
+        assert math.degrees(a.dihedral_min) < TANGENT_THRESHOLD_DEG
+        assert math.degrees(a.dihedral_max) > TANGENT_THRESHOLD_DEG
+
+
+def test_box_dihedral_profile_has_no_crossing():
+    mesh = tessellate(Box(10, 20, 30), 0.1, 0.5)
+    assert len(mesh.adjacency) == 12
+    for a in mesh.adjacency:
+        assert len(a.dihedral_samples) == len(a.points)
+        assert all(math.degrees(s) >= TANGENT_THRESHOLD_DEG for s in a.dihedral_samples)
+
+
+def test_chamfer_profile_uses_outward_normals():
+    shape = Box(10, 10, 10)
+    edge = next(e for e in shape.edges() if abs(e.center().Z - 5) < 1e-9)
+    mesh = tessellate(chamfer(edge, 2), 0.1, 0.5)
+    angled = [
+        a
+        for a in mesh.adjacency
+        if abs(math.degrees(a.dihedral) - 45.0) < 1.0
+        and len(a.dihedral_samples) == len(a.points)
+        and (mesh.faces[a.face_a].reversed != mesh.faces[a.face_b].reversed)
+    ]
+    assert angled
+    for a in angled:
+        assert all(abs(math.degrees(s) - 45.0) < 1.0 for s in a.dihedral_samples)

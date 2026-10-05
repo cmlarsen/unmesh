@@ -61,6 +61,130 @@ class _Directed:
         self.start = adj.start_vertex if fwd else adj.end_vertex
         self.end = adj.end_vertex if fwd else adj.start_vertex
         self.dihedral = math.degrees(adj.dihedral)
+        samples = [math.degrees(s) for s in adj.dihedral_samples]
+        self.samples = samples if (fwd or not samples) else samples[::-1]
+        if len(self.samples) != len(self.points):
+            self.samples = []
+
+
+class _Split:
+    def __init__(self, point: tuple[float, ...], faces: tuple[int, int]):
+        self.point = point
+        self.faces = faces
+
+
+class _Seg:
+    def __init__(self, points, dihedral: float, start: int | _Split, end: int | _Split):
+        self.points = points
+        self.dihedral = dihedral
+        self.start = start
+        self.end = end
+
+
+KIND_HYSTERESIS_DEG = 0.5
+MIN_RUN_SEGMENTS = 2
+
+
+def _near_node(samples: list[float], i: int, threshold_deg: float) -> int:
+    return i if abs(samples[i] - threshold_deg) <= abs(samples[i + 1] - threshold_deg) else i + 1
+
+
+def _span_nodes(span: tuple[int, int, bool], n: int) -> list[int]:
+    lo, hi, wrap = span
+    if not wrap:
+        return list(range(lo, hi + 1))
+    return list(range(lo, n)) + list(range(1, hi + 1))
+
+
+def _span_len(span: tuple[int, int, bool], n: int) -> int:
+    lo, hi, wrap = span
+    return (n - 1 - lo + hi) if wrap else hi - lo
+
+
+def _spans(joints: list[int], n: int, closed: bool) -> list[tuple[int, int, bool]]:
+    if not closed:
+        bounds = [0] + joints + [n - 1]
+        return [(bounds[j], bounds[j + 1], False) for j in range(len(bounds) - 1)]
+    return [
+        (joints[j], joints[(j + 1) % len(joints)], j == len(joints) - 1) for j in range(len(joints))
+    ]
+
+
+def _split_runs(d: _Directed, threshold_deg: float, pair: tuple[int, int]) -> list[_Seg]:
+    samples = d.samples
+    n = len(d.points)
+    if len(samples) != n or n < 2:
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    lo = threshold_deg - KIND_HYSTERESIS_DEG
+    hi = threshold_deg + KIND_HYSTERESIS_DEG
+    tangent = [s < lo for s in samples]
+    transversal = [s > hi for s in samples]
+    if not any(tangent) or not any(transversal):
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    first = next(i for i in range(n) if tangent[i] or transversal[i])
+    state: list[bool] = []
+    cur = bool(tangent[first])
+    for i in range(n):
+        if tangent[i]:
+            cur = True
+        elif transversal[i]:
+            cur = False
+        state.append(cur)
+    closed = d.start == d.end
+    joints = sorted(
+        _near_node(samples, i, threshold_deg) for i in range(n - 1) if state[i] != state[i + 1]
+    )
+    if closed and state[0] != state[-1]:
+        wrap = n - 1 if abs(samples[n - 1] - threshold_deg) < abs(samples[0] - threshold_deg) else 0
+        joints.append(wrap)
+        joints.sort()
+    while True:
+        spans = _spans(joints, n, closed)
+        bad = next((j for j, s in enumerate(spans) if _span_len(s, n) < MIN_RUN_SEGMENTS), None)
+        if bad is None:
+            break
+        if len(joints) < (2 if closed else 1):
+            return [_Seg(d.points, d.dihedral, d.start, d.end)]
+        if not closed:
+            del joints[bad - 1 if bad > 0 else 0]
+        else:
+            del joints[bad % len(joints)]
+    if not joints or (closed and len(joints) < 2):
+        return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    while True:
+        spans = _spans(joints, n, closed)
+        kinds = [
+            float(np.median([samples[i] for i in _span_nodes(s, n)])) < threshold_deg for s in spans
+        ]
+        if closed:
+            nxt = next(
+                (j for j in range(len(spans)) if kinds[j] == kinds[(j + 1) % len(spans)]), None
+            )
+            if nxt is None:
+                break
+            del joints[(nxt + 1) % len(joints)]
+        else:
+            nxt = next((j for j in range(len(spans) - 1) if kinds[j] == kinds[j + 1]), None)
+            if nxt is None:
+                break
+            del joints[nxt]
+        if not joints or (closed and len(joints) < 2):
+            return [_Seg(d.points, d.dihedral, d.start, d.end)]
+    pts = [tuple(p) for p in d.points]
+    splits = {j: _Split(pts[j], pair) for j in joints}
+    segs = []
+    for j, span in enumerate(_spans(joints, n, closed)):
+        nodes = _span_nodes(span, n)
+        if closed:
+            start = splits[joints[j]]
+            end = splits[joints[(j + 1) % len(joints)]]
+        else:
+            start = d.start if j == 0 else splits[span[0]]
+            end = d.end if j == len(joints) else splits[span[1]]
+        segs.append(
+            _Seg([pts[i] for i in nodes], float(np.median([samples[i] for i in nodes])), start, end)
+        )
+    return segs
 
 
 def _walk(first, outgoing, used, roles):
@@ -99,33 +223,37 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     def kind_of(deg: float) -> str:
         return "tangent" if deg < tangent_threshold_deg else "transversal"
 
-    by_pair: dict[tuple[int, int], list[_Directed]] = defaultdict(list)
-    faces_at: dict[int, set[int]] = defaultdict(set)
-    ends_at: dict[int, list[str]] = defaultdict(list)
+    by_pair: dict[tuple[int, int], list[_Seg]] = defaultdict(list)
+    faces_at: dict[int | _Split, set[int]] = defaultdict(set)
+    ends_at: dict[int | _Split, list[str]] = defaultdict(list)
     for adj in mesh.adjacency:
-        d = _Directed(adj)
-        by_pair[(adj.face_a, adj.face_b)].append(d)
-        kind = kind_of(d.dihedral)
-        for v in (adj.start_vertex, adj.end_vertex):
-            faces_at[v].update((adj.face_a, adj.face_b))
-            ends_at[v].append(kind)
+        pair = (adj.face_a, adj.face_b)
+        for seg in _split_runs(_Directed(adj), tangent_threshold_deg, pair):
+            by_pair[pair].append(seg)
+            kind = kind_of(seg.dihedral)
+            for v in (seg.start, seg.end):
+                faces_at[v].update(pair)
+                ends_at[v].append(kind)
 
-    roles: dict[int, str] = {}
+    def position_of(v) -> tuple[float, ...]:
+        return v.point if isinstance(v, _Split) else tuple(mesh.vertices[v])
+
+    roles: dict[int | _Split, str] = {}
     for v, faces in faces_at.items():
         if len(faces) >= 3:
             roles[v] = "junction"
         elif len(faces) == 2 and sorted(ends_at[v]) == ["tangent", "transversal"]:
             roles[v] = "kind_change"
 
-    order = sorted(roles, key=lambda v: tuple(mesh.vertices[v]))
+    order = sorted(roles, key=position_of)
     vertex_id = {v: i for i, v in enumerate(order)}
     vertices = [
         Vertex(
             vertex_id[v],
             roles[v],
-            tuple(mesh.vertices[v]),
+            position_of(v),
             sorted(faces_at[v]),
-            [tuple(mesh.vertices[v])],
+            [position_of(v)],
         )
         for v in order
     ]
@@ -133,7 +261,7 @@ def build_oracle_ir(mesh: LabeledMesh, tangent_threshold_deg: float = TANGENT_TH
     adjacencies = []
     for pair in sorted(by_pair):
         edges = by_pair[pair]
-        outgoing: dict[int, list[_Directed]] = defaultdict(list)
+        outgoing: dict[int | _Split, list[_Seg]] = defaultdict(list)
         for e in edges:
             outgoing[e.start].append(e)
         used: set[int] = set()
