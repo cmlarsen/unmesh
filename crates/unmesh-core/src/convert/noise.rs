@@ -2,7 +2,7 @@ use super::linalg::{V3, cross, dot, norm, scale, sub, unit};
 use super::segment::TriInfo;
 use super::topology::NONE;
 
-const SMOOTH_DIHEDRAL_DEG: f64 = 30.0;
+const SMOOTH_DIHEDRAL_DEG: f64 = 15.0;
 const MAX_TILT_DEG: f64 = 60.0;
 const MAX_PATCH_FACES: usize = 256;
 const KEEP_FRACTION: f64 = 0.75;
@@ -442,6 +442,20 @@ pub(super) mod tests {
                 "r={radius}: sigma={sigma} vs std={std}"
             );
         }
+    }
+
+    #[test]
+    fn cylinder_to_cone_crease_does_not_read_as_noise() {
+        let rings = [(10.0, -8.5), (10.0, 0.0), (14.0, 13.7)];
+        let mut v = Vec::new();
+        for i in 0..120 {
+            let a = 1.5 * i as f64 / 119.0;
+            for &(r, z) in &rings {
+                v.push([r * a.cos(), r * a.sin(), z]);
+            }
+        }
+        let sigma = grid_sigma(&v, 120, 3);
+        assert!(sigma < 1e-5, "sigma={sigma}");
     }
 
     #[test]
