@@ -57,75 +57,35 @@ jobs:
           name: smoke-results-${{ matrix.os }}
           path: ${{ runner.temp }}/smoke/smoke.jsonl
           if-no-files-found: ignore
-      - name: Upload smoke baseline
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-baseline-${{ matrix.os }}
-          path: ${{ runner.temp }}/smoke/smoke.jsonl
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Compare against main baseline
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          base="$RUNNER_TEMP/baseline"
           main_tree="$RUNNER_TEMP/unmesh-main"
+          base="$RUNNER_TEMP/baseline"
           mkdir -p "$base"
           git fetch origin main --depth 1
           git worktree add --detach "$main_tree" FETCH_HEAD
-          export PYTHONPATH="$main_tree/harness/src"
-          base_sha="${{ github.event.pull_request.base.sha }}"
-          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow ci.yml \
-            --status success --commit "$base_sha" --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "::warning::no successful main run for base sha $base_sha, falling back to latest"
-            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow ci.yml \
-              --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          fi
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "::warning::no successful main run yet, skipping compare"
+          uv run --locked scripts/ci-baseline-plan \
+            --repo "$GITHUB_REPOSITORY" \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
+            --artifact "smoke-results-${{ matrix.os }}" \
+            --out "$base/baseline.jsonl" \
+            --main-tree "$main_tree"
+          if [ ! -s "$base/baseline.jsonl" ]; then
             exit 0
           fi
-          if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-            -n "smoke-baseline-${{ matrix.os }}" -D "$base"; then
-            echo "::error::baseline artifact missing for main run $run_id"
-            exit 1
-          fi
-          # Compare and waive with origin/main's code. While main predates this
-          # feature the PR that introduces it runs its own code instead, loudly.
-          use_main=1
-          if [ ! -f "$main_tree/harness/src/unmesh_harness/runner/compare.py" ]; then
-            echo "::warning::main predates compare, using PR code (transitional)"
-            use_main=0
-          else
-            export PYTHONPATH="$main_tree/harness/src"
-          fi
-          run_compare() {
-            if [ "$use_main" = 1 ]; then
-              uv run --locked python -c "from unmesh_harness.cli import main; import sys; raise SystemExit(main(['compare', sys.argv[1], sys.argv[2]]))" "$1" "$2"
-            else
-              uv run --locked unmesh-harness compare "$1" "$2"
-            fi
-          }
-          if run_compare "$base/smoke.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
+          if uv run --project "$main_tree" --locked unmesh-harness compare \
+            "$base/baseline.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
             echo "compare: no regressions"
             exit 0
           fi
           echo "compare: regressions found, checking for an approved waiver"
-          waiver="scripts/check-waiver"
-          waiver_args="--run-a $base/smoke.jsonl --run-b $RUNNER_TEMP/smoke/smoke.jsonl"
-          if [ "$use_main" = 1 ]; then
-            waiver="$main_tree/scripts/check-waiver"
-            if ! uv run --locked python "$waiver" --help | grep -q -- --run-a; then
-              echo "::warning::main check-waiver predates --run-a/--run-b, using its semantics"
-              waiver_args=""
-            fi
-          fi
-          # shellcheck disable=SC2086
-          if uv run --locked python "$waiver" $waiver_args; then
+          if uv run --project "$main_tree" --locked python "$main_tree/scripts/check-waiver" \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
+            --run-a "$base/baseline.jsonl" --run-b "$RUNNER_TEMP/smoke/smoke.jsonl"; then
             echo "compare: regression waived"
             exit 0
           fi
