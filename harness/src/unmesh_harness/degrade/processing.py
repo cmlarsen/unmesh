@@ -138,33 +138,47 @@ def _exact_votes(
     k = _LABEL_KNN
     best_t = np.full(len(flat), -1, dtype=np.int64)
     best_d = np.full(len(flat), np.inf)
-    for _ in range(4):
+    todo = np.arange(len(flat))
+    while len(todo):
         use = min(k, len(tree.data))
-        idx = tree.query(flat, k=use)[1]
-        idx = np.asarray(idx).reshape(len(flat), use)
-        cand = owner[idx.ravel()]
-        rows = np.repeat(np.arange(len(flat)), use)
-        raw = _point_tri_dist2(flat[rows], src[cand, 0], src[cand, 1], src[cand, 2])
-        raw = raw.reshape(len(flat), use)
+        idx = _canonical_knn(tree, flat[todo], use)
+        cand = owner[idx]
+        rows = np.repeat(todo, use)
+        raw = _point_tri_dist2(
+            flat[rows], src[cand.ravel(), 0], src[cand.ravel(), 1], src[cand.ravel(), 2]
+        )
+        raw = raw.reshape(len(todo), use)
         d2 = raw
         if src_n is not None:
-            facing = (src_n[cand] * normals[rows]).sum(axis=1) > 0.0
-            d2 = np.where(facing.reshape(len(flat), use), raw, np.inf)
-        pick = d2.argmin(axis=1)
-        row_best = d2[np.arange(len(flat)), pick]
-        row_tri = cand.reshape(len(flat), use)[np.arange(len(flat)), pick]
-        improved = row_best < best_d
-        best_d[improved] = row_best[improved]
-        best_t[improved] = row_tri[improved]
+            facing = (src_n[cand.ravel()] * normals[rows]).sum(axis=1) > 0.0
+            d2 = np.where(facing.reshape(len(todo), use), raw, np.inf)
+        floor = d2.min(axis=1, keepdims=True)
+        pick = np.where(d2 <= floor + tol2, cand, len(src)).argmin(axis=1)
+        here = np.arange(len(todo))
+        row_best = d2[here, pick]
+        improved = row_best < best_d[todo]
+        best_d[todo[improved]] = row_best[improved]
+        best_t[todo[improved]] = cand[here, pick][improved]
         kth = raw[:, -1]
-        retry = (best_d > tol2) & ((best_d > 4.0 * kth) | ~np.isfinite(best_d))
-        if not retry.any() or k >= _LABEL_KNN_CAP or use >= len(tree.data):
+        bd = best_d[todo]
+        retry = (bd > tol2) & ((bd > 4.0 * kth) | ~np.isfinite(bd))
+        if k >= _LABEL_KNN_CAP or use >= len(tree.data):
             break
+        todo = todo[retry]
         k = min(k * 8, _LABEL_KNN_CAP)
     lost = best_t < 0
     if lost.any():
         best_t[lost], best_d[lost] = _exact_votes(flat[lost], src, owner, tree, tol2)
     return best_t, best_d
+
+
+def _canonical_knn(tree: cKDTree, points: np.ndarray, k: int) -> np.ndarray:
+    wide = min(2 * k, len(tree.data))
+    dist, idx = tree.query(points, k=wide)
+    dist = np.asarray(dist).reshape(len(points), wide).astype(np.float32)
+    idx = np.asarray(idx).reshape(len(points), wide)
+    order = np.lexsort((idx, dist), axis=1)
+    return np.take_along_axis(idx, order, axis=1)[:, :k]
 
 
 def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
@@ -202,8 +216,8 @@ def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
         missing = np.nonzero(~exact.all(axis=1))[0]
         src_n = _unit_normals(src)
         out_n = _unit_normals(out)
-        idx = tree.query(probes[missing].reshape(-1, 3), k=_LABEL_KNN)[1]
-        knn = np.asarray(idx).reshape(len(missing), 4, _LABEL_KNN)
+        knn = _canonical_knn(tree, probes[missing].reshape(-1, 3), _LABEL_KNN)
+        knn = knn.reshape(len(missing), 4, _LABEL_KNN)
         exm = exact[missing]
         for j in range(4):
             loc = np.nonzero(~exm[:, j])[0]
@@ -272,7 +286,7 @@ def _drop_degenerate(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarr
 
 DECIMATE_KEEP_AT_ONE = 0.1
 DECIMATE_MIN_TRIANGLES = 4
-_QEM_COST_QUANTUM = 1e-15
+_QEM_COST_QUANTUM = 1e-12
 _QEM_SNAP_BITS = 36
 
 
@@ -311,7 +325,7 @@ class _Qem:
         self.quantum = _QEM_COST_QUANTUM * diagonal**4
         self.grid = diagonal * 2.0**-_QEM_SNAP_BITS
         self.boundary = self._boundary_vertices()
-        self.heap: list[tuple[int, int, int, int, int]] = []
+        self.heap: list[tuple[float, int, int, int, int, int]] = []
 
     def _boundary_vertices(self) -> set[int]:
         count: dict[tuple[int, int], int] = {}
@@ -346,13 +360,14 @@ class _Qem:
         cands = np.stack([pa, pb, mid, opt], axis=1)
         costs = np.stack([_quadric_cost(Qs, cands[:, j]) for j in range(4)], axis=1)
         costs[~ok, 3] = np.inf
-        q = np.floor(np.maximum(costs, 0.0) / self.quantum)
+        scaled = np.maximum(costs, 0.0) / self.quantum
+        q = np.where(scaled < 1.0, 0.0, scaled.astype(np.float32).astype(np.float64))
         pick = q.argmin(axis=1)
         qcost = q[np.arange(len(pairs)), pick]
         for i, (x, y) in enumerate(pairs):
             heapq.heappush(
                 self.heap,
-                (int(qcost[i]), int(pick[i]), x, y, self.version[x], self.version[y]),
+                (float(qcost[i]), int(pick[i]), x, y, self.version[x], self.version[y]),
             )
 
     def position(self, a: int, b: int, pick: int) -> np.ndarray:
@@ -429,7 +444,7 @@ class _Qem:
 
     def result(self) -> np.ndarray:
         rows = np.array([row for row, ok in zip(self.F, self.alive, strict=True) if ok])
-        return self.V[rows.reshape(-1, 3)].reshape(-1, 3, 3)
+        return self.V[rows.reshape(-1, 3)].reshape(-1, 3, 3) + 0.0
 
 
 @register(
@@ -569,6 +584,11 @@ class _Projector:
         normal = np.cross(self.src[:, 1] - self.src[:, 0], self.src[:, 2] - self.src[:, 0])
         self.normals = normal / np.maximum(np.linalg.norm(normal, axis=1), 1e-300)[:, None]
         self.n_labels = int(self.labels.max()) + 1 if len(self.labels) else 1
+        spread = np.zeros(self.n_labels)
+        first = np.zeros((self.n_labels, 3))
+        first[self.labels[::-1]] = self.normals[::-1]
+        np.maximum.at(spread, self.labels, 1.0 - (self.normals * first[self.labels]).sum(axis=1))
+        self.planar = spread <= 1e-12
         self.pts, self.owner = sample_source(self.src)
         self.tree = cKDTree(self.pts)
 
@@ -578,7 +598,7 @@ class _Projector:
     def facing(self, tris: np.ndarray, S: np.ndarray) -> np.ndarray:
         n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
         ok = (n * self.normals[S]).sum(axis=1) > 0.0
-        if not ok.all():
+        if not ok.all() or self.planar[self.labels[S]].all():
             return ok
         want = self.labels[S]
 
@@ -596,7 +616,7 @@ class _Projector:
         k = _PROJECT_KNN
         while len(pending):
             use = min(k, len(self.pts))
-            idx = np.asarray(self.tree.query(P[pending], k=use)[1]).reshape(len(pending), use)
+            idx = _canonical_knn(self.tree, P[pending], use)
             cand = self.owner[idx]
             rows = np.repeat(pending, use)
             flat = cand.ravel()
@@ -604,7 +624,9 @@ class _Projector:
             d2 = ((P[rows] - q) ** 2).sum(axis=1).reshape(len(pending), use)
             if not (use >= len(self.pts) or k >= _PROJECT_KNN_CAP):
                 d2 = np.where(accept(rows, flat).reshape(len(pending), use), d2, np.inf)
-            pick = d2.argmin(axis=1)
+            floor = d2.min(axis=1, keepdims=True)
+            tied = d2 <= floor * (1.0 + 1e-9)
+            pick = np.where(tied, cand, len(self.src)).argmin(axis=1)
             here = np.arange(len(pending))
             found = np.isfinite(d2[here, pick])
             out[pending[found]] = q.reshape(len(pending), use, 3)[here, pick][found]
@@ -1012,7 +1034,7 @@ def isotropic_remesh(mesh, severity, rng):
         V = _relax_pass(V, F, L, proj)
         L = proj.rebase(V, F, L)
     V, F, dropped = _drop_degenerate(V, F)
-    mesh.tris = V[F].reshape(-1, 3, 3)
+    mesh.tris = V[F].reshape(-1, 3, 3) + 0.0
     label = transfer_labels(mesh, src_tris, src_ids, mesh.metadata.get(CONFIDENCE_KEY))
     return {
         "target_edge_mm": h,
@@ -1181,7 +1203,7 @@ def vertex_clustering(mesh, severity, rng):
             continue
         seen.add(key)
         rows.append(t)
-    mesh.tris = np.array(rows, dtype=np.float64).reshape(-1, 3, 3)
+    mesh.tris = np.array(rows, dtype=np.float64).reshape(-1, 3, 3) + 0.0
     label = transfer_labels(mesh, src_tris, src_ids, mesh.metadata.get(CONFIDENCE_KEY))
     return {
         "cell_mm": size,
