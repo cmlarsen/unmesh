@@ -236,6 +236,7 @@ def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
     np.add.at(counts, (np.arange(len(out))[:, None], np.searchsorted(faces, votes)), 1)
     win = counts.argmax(axis=1)
     conf = counts[np.arange(len(out)), win] / 4.0
+    conf[welds_away(out, bbox_diagonal(src))] = 0.0
     if src_conf is not None:
         carried = np.asarray(src_conf, dtype=np.float64)[best_t.reshape(len(out), 4)[:, 0]]
         conf = np.minimum(conf, carried)
@@ -247,27 +248,57 @@ def transfer_labels(mesh, src_tris, src_ids, src_conf=None) -> dict:
     }
 
 
-def carry_confidence(mesh, src_tris: np.ndarray, src_ids: np.ndarray, src_conf) -> None:
+def carry_confidence(
+    mesh, src_tris: np.ndarray, src_ids: np.ndarray, src_conf, source=None
+) -> None:
     conf = np.asarray(src_conf, dtype=np.float64)
     out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
-    if len(out) == len(conf) and np.array_equal(mesh.face_id, src_ids):
+    src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3)
+    src_ids = np.asarray(src_ids)
+    if source is None and len(out) == len(conf) and np.array_equal(mesh.face_id, src_ids):
         return
-    if len(out) == 0 or len(src_tris) == 0:
-        mesh.metadata[CONFIDENCE_KEY] = [1.0] * len(out)
-        return
-    names, labels = np.unique(np.asarray(src_ids), return_inverse=True)
-    proj = _Projector(src_tris, labels)
-    pos = np.clip(np.searchsorted(names, mesh.face_id), 0, len(names) - 1)
-    known = names[pos] == mesh.face_id
-    want = np.where(known, pos, -1)
+    carried = np.full(len(out), np.nan)
+    if source is not None:
+        source = np.asarray(source, dtype=np.int64)
+        kept = source >= 0
+        carried[kept] = conf[source[kept]]
+    else:
+        first: dict[tuple, int] = {}
+        for i in range(len(src) - 1, -1, -1):
+            first[(int(src_ids[i]), frozenset(map(tuple, src[i].tolist())))] = i
+        for i, (tri, fid) in enumerate(zip(out.tolist(), mesh.face_id.tolist(), strict=True)):
+            hit = first.get((int(fid), frozenset(map(tuple, tri))))
+            if hit is not None:
+                carried[i] = conf[hit]
+    fresh = np.nonzero(np.isnan(carried))[0]
+    if len(fresh):
+        names, labels = np.unique(src_ids, return_inverse=True)
+        pos = np.clip(np.searchsorted(names, mesh.face_id[fresh]), 0, len(names) - 1)
+        known = names[pos] == mesh.face_id[fresh]
+        want = np.where(known, pos, -1)
+        if len(src) and known.any():
+            proj = _Projector(src, labels)
 
-    def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
-        return labels[flat] == want[rows]
+            def accept(rows: np.ndarray, flat: np.ndarray) -> np.ndarray:
+                return labels[flat] == want[rows]
 
-    tri = proj.search(out.mean(axis=1), accept)[1]
-    carried = np.where(labels[tri] == want, conf[tri], 0.0)
-    carried = np.where(known, carried, 1.0)
+            tri = proj.search(out[fresh].mean(axis=1), accept)[1]
+            near = np.where(labels[tri] == want, conf[tri], 0.0)
+        else:
+            near = np.zeros(len(fresh))
+        carried[fresh] = np.where(known, near, 1.0)
+    carried[welds_away(out, bbox_diagonal(src) if len(src) else 0.0)] = 0.0
     mesh.metadata[CONFIDENCE_KEY] = [float(v) for v in carried]
+
+
+WELD_MM = 1e-6
+
+
+def welds_away(tris: np.ndarray, diagonal: float) -> np.ndarray:
+    t = np.asarray(tris, dtype=np.float64).reshape(-1, 3, 3)
+    double_area = np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+    shortest = np.linalg.norm(t - np.roll(t, -1, axis=1), axis=2).min(axis=1)
+    return (double_area <= (diagonal * _EXACT_TOL_REL) ** 2) | (shortest <= WELD_MM)
 
 
 def _weld(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -324,6 +355,7 @@ class _Qem:
         diagonal = float(np.linalg.norm(hi - lo)) or 1.0
         self.quantum = _QEM_COST_QUANTUM * diagonal**4
         self.grid = diagonal * 2.0**-_QEM_SNAP_BITS
+        self.area_floor = (diagonal * _EXACT_TOL_REL) ** 2
         self.boundary = self._boundary_vertices()
         self.heap: list[tuple[float, int, int, int, int, int]] = []
 
@@ -400,9 +432,10 @@ class _Qem:
         n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
         len_new = np.linalg.norm(n_new, axis=1)
         len_old = np.linalg.norm(n_old, axis=1)
-        if (len_new <= 1e-12 * np.maximum(len_old, 1e-300)).any():
+        live = len_old > self.area_floor
+        if (len_new[live] <= 1e-12 * len_old[live]).any():
             return False, shared
-        if ((n_old * n_new).sum(axis=1) <= 0.0).any():
+        if ((n_old[live] * n_new[live]).sum(axis=1) <= 0.0).any():
             return False, shared
         return True, shared
 
@@ -467,6 +500,7 @@ def quadric_decimation(mesh, severity, rng):
     keep = 1.0 - 0.9 * severity
     target = max(DECIMATE_MIN_TRIANGLES, int(round(before * keep)))
     V, F = _weld(src_tris)
+    F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 2] != F[:, 0])]
     qem = _Qem(V, F)
     collapses = qem.run(target)
     mesh.tris = qem.result()
@@ -591,6 +625,7 @@ class _Projector:
         self.planar = spread <= 1e-12
         self.pts, self.owner = sample_source(self.src)
         self.tree = cKDTree(self.pts)
+        self.tie2 = (bbox_diagonal(self.src) * _EXACT_TOL_REL) ** 2
 
     def incidence(self, F: np.ndarray, S: np.ndarray) -> np.ndarray:
         return np.unique(F.ravel() * self.n_labels + np.repeat(self.labels[S], 3))
@@ -625,7 +660,7 @@ class _Projector:
             if not (use >= len(self.pts) or k >= _PROJECT_KNN_CAP):
                 d2 = np.where(accept(rows, flat).reshape(len(pending), use), d2, np.inf)
             floor = d2.min(axis=1, keepdims=True)
-            tied = d2 <= floor * (1.0 + 1e-9)
+            tied = d2 <= floor * (1.0 + 1e-9) + self.tie2
             pick = np.where(tied, cand, len(self.src)).argmin(axis=1)
             here = np.arange(len(pending))
             found = np.isfinite(d2[here, pick])
@@ -1091,7 +1126,9 @@ def _budgeted_smooth(
     if capped:
         disp = disp * (budget / peak)
     peak = displace_vertices(mesh, V0, inverse, disp)
-    mesh.metadata.setdefault(CONFIDENCE_KEY, [1.0] * len(mesh.tris))
+    if CONFIDENCE_KEY not in mesh.metadata:
+        flat = welds_away(mesh.tris, diagonal)
+        mesh.metadata[CONFIDENCE_KEY] = [0.0 if f else 1.0 for f in flat.tolist()]
     return peak, capped, budget
 
 
