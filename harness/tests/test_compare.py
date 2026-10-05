@@ -217,6 +217,25 @@ def test_cli_exit_codes(tmp_path):
     assert cli_main(["compare", str(b), str(a)]) == 0
 
 
+def test_empty_a_is_an_error(tmp_path):
+    a = write_jsonl(tmp_path / "a.jsonl", [])
+    b = write_jsonl(tmp_path / "b.jsonl", [record(status="error", error="boom")])
+    comp = compare_files(a, b)
+    assert comp.error and "empty" in comp.error
+    assert "a.jsonl" in comp.error
+    assert cli_main(["compare", str(a), str(b)]) == 2
+
+
+def test_a_without_converter_records_is_an_error(tmp_path):
+    recs = [record(converter="faceted", f1=0.5)]
+    a = write_jsonl(tmp_path / "a.jsonl", recs)
+    b = write_jsonl(tmp_path / "b.jsonl", seeds([0.9, 0.9, 0.9]))
+    comp = compare_files(a, b)
+    assert comp.error and "faceted" not in comp.error
+    assert "unmesh" in comp.error
+    assert cli_main(["compare", str(a), str(b)]) == 2
+
+
 def test_empty_b_is_an_error(tmp_path):
     a = write_jsonl(tmp_path / "a.jsonl", seeds([1.0, 1.0, 1.0]))
     b = write_jsonl(tmp_path / "b.jsonl", [])

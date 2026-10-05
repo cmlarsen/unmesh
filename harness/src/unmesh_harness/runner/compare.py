@@ -268,7 +268,11 @@ def compare_files(path_a: Path, path_b: Path, converter: str = "unmesh") -> Comp
         group_records(records_a, converter),
         group_records(records_b, converter),
     )
-    if not records_b:
+    if not records_a:
+        comp.error = f"run A {path_a} is empty"
+    elif not any(r.get("converter") == converter for r in records_a):
+        comp.error = f"run A {path_a} has no records for converter {converter!r}"
+    elif not records_b:
         comp.error = f"run B {path_b} is empty"
     elif not any(r.get("converter") == converter for r in records_b):
         comp.error = f"run B {path_b} has no records for converter {converter!r}"
