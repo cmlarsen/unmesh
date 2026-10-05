@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 
@@ -32,32 +33,36 @@ def _finish(records: list[dict], gate_enabled: bool, grid, converters, sha) -> i
     return 0
 
 
-def _run(args) -> int:
-    import dataclasses
+def select_run_entries(grid, category: list[str] | None, shard: str | None):
+    if category:
+        wanted = set(category)
+        entries = [e for e in grid.entries if e["strata"].get("category") in wanted]
+        if not entries:
+            raise ValueError(f"--category {sorted(wanted)} selects no parts")
+        grid = dataclasses.replace(grid, entries=entries)
+    if shard is not None:
+        try:
+            index, _, count = shard.partition("/")
+            index, count = int(index), int(count)
+        except ValueError:
+            raise ValueError(f"--shard must look like 0/3, got {shard!r}") from None
+        if not 0 <= index < count or count < 1:
+            raise ValueError(f"--shard must look like 0/3, got {shard!r}")
+        ordered = sorted(grid.entries, key=lambda e: e["id"])
+        grid = dataclasses.replace(grid, entries=ordered[index::count])
+    return grid
 
+
+def _run(args) -> int:
     from .runner import load_grid, run_grid
 
     converters = [c for arg in args.converter for c in arg.split(",")]
     grid = load_grid(args.grid)
-    if args.category:
-        wanted = set(args.category)
-        entries = [e for e in grid.entries if e["strata"].get("category") in wanted]
-        if not entries:
-            print(f"error: --category {sorted(wanted)} selects no parts")
-            return 2
-        grid = dataclasses.replace(grid, entries=entries)
-    if args.shard is not None:
-        try:
-            index, _, count = args.shard.partition("/")
-            index, count = int(index), int(count)
-        except ValueError:
-            print(f"error: --shard must look like 0/3, got {args.shard!r}")
-            return 2
-        if not 0 <= index < count or count < 1:
-            print(f"error: --shard must look like 0/3, got {args.shard!r}")
-            return 2
-        ordered = sorted(grid.entries, key=lambda e: e["id"])
-        grid = dataclasses.replace(grid, entries=ordered[index::count])
+    try:
+        grid = select_run_entries(grid, args.category, args.shard)
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
     try:
         summary = run_grid(
             grid, converters, args.out, args.jobs, timeout=args.timeout, hidden=args.hidden
