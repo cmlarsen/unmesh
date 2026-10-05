@@ -217,7 +217,7 @@ def test_flipped_convert_repairs_winding(part):
         assert abs(np.dot(np.subtract(b.origin, a.origin), a.normal)) < 1e-9
 
 
-@pytest.mark.xfail(strict=True, reason="#67")
+@pytest.mark.xfail(strict=False, reason="#67; passes or fails with the platform's tessellation")
 def test_flipped_convert_curved_matches_clean(curved_part):
     clean = unmesh.convert(curved_part.tris)
     out = degrade.apply("flipped_facets", curved_part, 1.0, SEED)

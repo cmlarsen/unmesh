@@ -33,8 +33,8 @@ write_report = unmesh.step.write(result.ir, "part.step")
 
 | field | default | meaning |
 |---|---|---|
-| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh: the converter segments once at 5e-4 of the bounding-box diagonal, estimates the vertex noise of its best-supported planar regions, and refits at five times that noise, clamped between a floor of 2e-5 of the diagonal and the first guess. Becomes `ir.tolerances.linear`. |
-| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). |
+| `linear_tolerance` | `None` | Linear tolerance. `None` derives it from the mesh before segmenting: five times the estimated vertex noise σ, floored at the larger of 1e-6 of the bounding-box diagonal and 5e-7 of the largest absolute coordinate, and capped at 5e-4 of the diagonal. σ is curvature-independent: around every welded vertex the converter takes each smooth sector of its fan (triangles joined across edges under 15°), gathers the sector's 2-ring without crossing an edge of 15° or more or tilting past 60° from the sector normal, and fits a height-field quadric in the frame of the sector normal. On a neighbourhood of fewer than 12 points it keeps a plane instead when the quadric does not reduce the residual significantly (F < 3) or when there are too few points for three degrees of freedom; on 12 or more points it trims the worst quarter twice (least trimmed squares) and rescales by the Gaussian truncated variance and a measured selection factor, so σ matches the standard deviation of Gaussian noise (uniform noise reads about 5% high). Each sector contributes its residual variance and degrees of freedom; for the pooled aggregate below it contributes the plane fit's instead whenever the plane is adequate by the same F-test, since a flat patch then keeps three more degrees of freedom. σ combines two aggregates of those samples: the area-weighted median of the per-sample RMS (each median-unbiased for its degrees of freedom by Wilson-Hilferty), which is robust, and a pooled variance over the samples whose variance is plausible for that σ (inside the 1% and 99.999% chi-square quantiles, iterated from the median and capped at four times it), weighted by degrees of freedom per point, which is efficient. The pooled estimate dominates when the mesh carries little evidence (total degrees of freedom D well under 200) and the median when it carries much: σ² = λ·pooled² + (1 − λ)·median² with λ = 200² / (200² + D²). A quadric absorbs plane, cylinder, cone and sphere curvature, so a clean tessellation gives σ near zero and a noisy mesh gives σ near the noise's standard deviation along the normal. Becomes `ir.tolerances.linear`. |
+| `angular_snap_deg` | 0.5 | See [IR § Tolerances](ir.md#tolerances). The cap widens under noise by `atan(3σ/width)` per region, with σ the quadric noise estimate above, clamped to a fifth of the final tolerance (with an explicit `linear_tolerance`, σ is a fifth of it). |
 | `tangent_threshold_deg` | 3.0 | See [IR § Tangent versus transversal](ir.md#tangent-versus-transversal). |
 | `vertex_merge` | 1e-6 | See IR tolerances. |
 
@@ -50,9 +50,14 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
 
-A clean mesh therefore gets the floor (2e-5 of the bounding-box diagonal, so the
-tolerance scales with the part's units) and a noisy one a tolerance that follows its noise, so snapping
+A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the tolerance scales
+with the part's units), curved or not, and a noisy one a tolerance that follows its noise, so snapping
 (see [IR § Tolerances](ir.md#tolerances)) never moves a surface by more than the data justifies.
+Two limits follow from the median on well-sampled meshes. Noise confined to less than half of the area (for example, only on
+the planar faces) is not seen, and the tolerance stays near the floor. And where most vertices sit on
+tangent seams between different surfaces (a box with every edge and corner filleted, tessellated
+coarsely), no neighbourhood is one quadric, so curvature reads as noise and the tolerance rises
+toward the 5e-4 cap.
 
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
@@ -147,8 +152,10 @@ structural problem; `unmesh.ir.validate(ir)` returns the list instead. `Ir.loads
 
 The planar converter welds the input, groups triangles into regions by growing them while every
 vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each
-plane robustly (Huber IRLS), snaps normals to the world axes and to exact parallel and perpendicular
-relations when the snapped plane still fits within the estimated noise, and moves every vertex onto
+plane robustly (Huber IRLS), re-grows regions that still exceed the tolerance at strict tolerance
+over the union of creased regions and re-merges, snaps normals to the world axes and to exact
+parallel and perpendicular relations when the snapped plane still fits within the estimated noise
+(allowing `angular_snap_deg + atan(3σ/width)` per region), and moves every vertex onto
 the planes it belongs to (one plane: projection; two: their line; three or more: their
 least-squares point, with a conditioning guard). `report.max_deviation` is the largest distance any
 vertex moved plus its remaining distance to its planes, so it bounds the distance between the input

@@ -81,8 +81,8 @@ input, and no id is validated against it. The IR does not embed the mesh.
 
 | field | default | meaning |
 |---|---|---|
-| `linear` | 1e-3 | Linear tolerance the IR was built with. Boundary points lie within it of both adjacent surfaces; a region whose max residual exceeds it becomes `facets`. |
-| `angular_snap_deg` | 0.5 | Angle within which near-parallel, near-perpendicular and near-axis-aligned surfaces were snapped to exact relations. |
+| `linear` | auto | Linear tolerance the IR was built with: five times the estimated vertex noise (from the residuals of local quadric fits, see [API](api.md)), floored at the larger of 1e-6 of the bounding-box diagonal and a float-precision term. Boundary points lie within it of both adjacent surfaces; a region whose max residual exceeds it is re-grown at strict tolerance and re-merged, and only what then still fits no surface stays `facets`. |
+| `angular_snap_deg` | 0.5 | Angle within which near-parallel, near-perpendicular and near-axis-aligned surfaces were snapped to exact relations, widened under noise by `atan(3σ/width)` per region, where σ is the same vertex-noise estimate. |
 | `tangent_threshold_deg` | 3.0 | Dihedral angle below which a boundary is `tangent`. See below. |
 | `vertex_merge` | 1e-6 | Distance within which mesh vertices were merged into one IR vertex. Also the tolerance for "this point is that vertex". |
 

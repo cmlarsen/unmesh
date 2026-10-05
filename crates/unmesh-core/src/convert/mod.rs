@@ -5,6 +5,7 @@ mod dsu;
 mod emit;
 mod fit;
 mod linalg;
+mod noise;
 mod project;
 mod segment;
 mod snap;
@@ -26,10 +27,11 @@ use snap::NOISE_FACTOR;
 use topology::NONE;
 
 const INITIAL_TOL_REL: f64 = 5e-4;
-const MIN_TOL_REL: f64 = 2e-5;
+const MIN_TOL_REL: f64 = 1e-6;
+const FLOAT_TOL_REL: f64 = 5e-7;
 
-fn floor(diag: f64) -> f64 {
-    MIN_TOL_REL * diag
+fn floor(diag: f64, max_abs: f64) -> f64 {
+    (MIN_TOL_REL * diag).max(FLOAT_TOL_REL * max_abs)
 }
 
 pub fn convert_soup(
@@ -142,7 +144,7 @@ fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, Co
                 "linear_tolerance must be finite and > 0".to_string(),
             ));
         }
-        None => (INITIAL_TOL_REL * w.diag).max(floor(w.diag)),
+        None => (INITIAL_TOL_REL * w.diag).max(floor(w.diag, w.max_abs)),
     };
 
     let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
@@ -164,16 +166,17 @@ fn finish(
     mut warnings: Vec<ConvertWarning>,
     fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
 ) -> Result<ConvertOutput, ConvertError> {
-    let (mut label2, mut regions) = fit_once(tol);
     let mut sigma = tol / NOISE_FACTOR;
     if auto_tol {
-        sigma = snap::estimate_noise(&w.vc, &regions, tol);
-        let derived = (NOISE_FACTOR * sigma).max(floor(w.diag));
-        if derived < tol {
-            tol = derived;
-            (label2, regions) = fit_once(tol);
+        let fl = floor(w.diag, w.max_abs);
+        if let Some(est) =
+            noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
+        {
+            tol = tol.min((NOISE_FACTOR * est).max(fl));
+            sigma = est.min(tol / NOISE_FACTOR);
         }
     }
+    let (label2, mut regions) = fit_once(tol);
     snap::snap_normals(
         &w.vc,
         &mut regions,
@@ -181,6 +184,7 @@ fn finish(
         sigma,
         options.angular_snap_deg,
         w.diag,
+        w.max_abs,
     );
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
@@ -367,6 +371,50 @@ mod tests {
             assert_eq!(a.boundaries[0].kind, Kind::Transversal);
             assert!((a.boundaries[0].dihedral_deg - 90.0).abs() < 1e-9);
         }
+    }
+
+    #[test]
+    fn clean_300mm_plate_gets_micron_floor() {
+        let out = convert_tris(grid_box([0.0, 0.0, 0.0], [300.0, 300.0, 10.0], 1, false));
+        assert_eq!(out.ir.regions.len(), 6);
+        let diag = (300.0_f64.powi(2) * 2.0 + 10.0_f64.powi(2)).sqrt();
+        assert!((out.ir.tolerances.linear - 1e-6 * diag).abs() < 1e-12);
+        assert!(out.ir.tolerances.linear < 1e-3);
+    }
+
+    #[test]
+    fn floor_scales_with_part_size() {
+        for s in [1000.0, 0.001] {
+            let tris: Vec<[V3; 3]> = grid_box([0.0; 3], [10.0, 20.0, 30.0], 1, false)
+                .into_iter()
+                .map(|t| t.map(|p| scale(p, s)))
+                .collect();
+            let out = convert_tris(tris);
+            assert_eq!(out.ir.regions.len(), 6, "scale {s}");
+            let diag = super::linalg::norm(sub([10.0 * s, 20.0 * s, 30.0 * s], [0.0; 3]));
+            assert!(
+                (out.ir.tolerances.linear / diag - 1e-6).abs() < 1e-9,
+                "scale {s}: linear={}",
+                out.ir.tolerances.linear
+            );
+        }
+    }
+
+    #[test]
+    fn offset_part_gets_float_precision_floor() {
+        let out = convert_tris(grid_box(
+            [1e6, 0.0, 0.0],
+            [1e6 + 10.0, 10.0, 10.0],
+            1,
+            false,
+        ));
+        assert_eq!(out.ir.regions.len(), 6);
+        let expect = 5e-7 * 1_000_010.0;
+        assert!(
+            (out.ir.tolerances.linear - expect).abs() < 1e-9,
+            "linear={}",
+            out.ir.tolerances.linear
+        );
     }
 
     #[test]
