@@ -592,13 +592,13 @@ def test_absent_and_all_one_confidence_score_identical():
     mesh = tessellate(Box(10, 10, 10), LIN, ANG)
     ir = build_oracle_ir(mesh)
     plain = score_recovery(mesh, mesh.face_id, ir, np.eye(4))
+    assert "faces_unrecoverable" not in plain
     assert json.dumps(
         score_recovery(mesh, mesh.face_id, ir, np.eye(4), None), sort_keys=True
     ) == json.dumps(plain, sort_keys=True)
-    assert json.dumps(
-        score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.ones(len(mesh.face_id))),
-        sort_keys=True,
-    ) == json.dumps(plain, sort_keys=True)
+    ones = score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.ones(len(mesh.face_id)))
+    assert ones.pop("faces_unrecoverable") == 0
+    assert json.dumps(ones, sort_keys=True) == json.dumps(plain, sort_keys=True)
 
 
 def test_masked_mislabel_is_excluded_from_both_sides():
@@ -616,16 +616,67 @@ def test_masked_mislabel_is_excluded_from_both_sides():
     assert masked["f1"] == 1.0
 
 
-def test_masked_face_with_no_confident_triangles_is_unmatched():
+def test_face_with_no_confident_triangles_leaves_both_denominators():
     mesh = tessellate(Box(10, 10, 10), LIN, ANG)
     ir = build_oracle_ir(mesh)
     conf = np.ones(len(mesh.face_id))
     conf[mesh.face_id == 0] = 0.0
     result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), conf)
-    assert result["matched"] == len(mesh.faces) - 1
-    detail = next(d for d in result["faces_detail"] if d["face"] == 0)
-    assert detail["region"] is None
-    assert detail["iou"] == 0.0
+    assert result["faces_unrecoverable"] == 1
+    assert (result["faces"], result["regions"], result["matched"]) == (5, 5, 5)
+    assert result["f1"] == 1.0
+    assert result["per_type"]["plane"]["faces"] == 5
+    assert result["per_type"]["plane"]["regions"] == 5
+
+
+def _without_face(mesh, face: int):
+    keep = np.nonzero(mesh.face_id != face)[0]
+    base = build_oracle_ir(mesh)
+    regions = []
+    for r in base.regions:
+        if r.id == face:
+            continue
+        tris = np.nonzero(mesh.face_id[keep] == r.id)[0]
+        regions.append(Region(len(regions), r.surface, tris.tolist(), None))
+    return mesh.face_id[keep], dataclasses.replace(base, regions=regions, adjacencies=[])
+
+
+def test_erased_face_is_unrecoverable_only_with_confidence():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    face_id, ir = _without_face(mesh, 0)
+    legacy = score_recovery(mesh, face_id, ir, np.eye(4))
+    assert (legacy["faces"], legacy["matched"]) == (6, 5)
+    assert legacy["recall"] == pytest.approx(5 / 6)
+    scored = score_recovery(mesh, face_id, ir, np.eye(4), np.ones(len(face_id)))
+    assert scored["faces_unrecoverable"] == 1
+    assert (scored["faces"], scored["matched"], scored["f1"]) == (5, 5, 1.0)
+
+
+def test_confident_spurious_region_still_costs_precision():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    first = ir.regions[0]
+    half = len(first.triangles) // 2
+    regions = [dataclasses.replace(first, triangles=first.triangles[:half])]
+    regions += list(ir.regions[1:])
+    regions.append(Region(len(ir.regions), first.surface, first.triangles[half:], None))
+    split = dataclasses.replace(ir, regions=regions)
+    conf = np.ones(len(mesh.face_id))
+    result = score_recovery(mesh, mesh.face_id, split, np.eye(4), conf)
+    assert result["regions"] == 7
+    assert result["precision"] < 1.0
+    conf[first.triangles[half:]] = 0.0
+    masked = score_recovery(mesh, mesh.face_id, split, np.eye(4), conf)
+    assert masked["regions"] == 6
+    assert masked["f1"] == 1.0
+
+
+def test_nothing_confident_scores_vacuously():
+    mesh = tessellate(Box(10, 10, 10), LIN, ANG)
+    ir = build_oracle_ir(mesh)
+    result = score_recovery(mesh, mesh.face_id, ir, np.eye(4), np.zeros(len(mesh.face_id)))
+    assert (result["faces"], result["regions"], result["faces_unrecoverable"]) == (0, 0, 6)
+    assert result["f1"] == 1.0
 
 
 def test_confidence_length_mismatch_raises():

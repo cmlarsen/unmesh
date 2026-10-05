@@ -378,6 +378,22 @@ def _masked_regions(face_id: np.ndarray, masked: set[int], ir: Ir) -> set[int]:
     return out
 
 
+def _unrecoverable(
+    clean: LabeledMesh, face_id: np.ndarray, ir: Ir, confidence: np.ndarray | None
+) -> tuple[set[int], set[int]]:
+    if confidence is None:
+        return set(), set()
+    keep = np.asarray(confidence, dtype=np.float64) >= CONFIDENCE_MASK
+    present = set(np.asarray(face_id)[keep].tolist())
+    faces = {f.id for f in clean.faces if f.id not in present}
+    regions = set()
+    for region in ir.regions:
+        tris = np.asarray(region.triangles, dtype=np.int64)
+        if len(tris) and not keep[tris].any():
+            regions.add(region.id)
+    return faces, regions
+
+
 def _prf(matched: int, faces: int, regions: int) -> tuple[float, float, float]:
     recall = matched / faces if faces else 0.0
     precision = matched / regions if regions else 0.0
@@ -574,13 +590,14 @@ def score_recovery(
     matches, owner = match_faces(clean, face_id, ir, confidence)
     masked = _masked_faces(clean)
     masked_regions = _masked_regions(face_id, masked, ir)
+    lost_faces, lost_regions = _unrecoverable(clean, face_id, ir, confidence)
     matched_regions: set[int] = set()
     matched = unsupported = 0
     faces_detail = []
     error_values: dict[str, list[float]] = {}
     per_type: dict[str, dict[str, Any]] = {}
     for face, match in zip(clean.faces, matches, strict=True):
-        if face.id in masked:
+        if face.id in masked or face.id in lost_faces:
             bucket = None
         else:
             bucket = per_type.setdefault(
@@ -628,13 +645,15 @@ def score_recovery(
             detail["recovered"] = True
         faces_detail.append(detail)
     for region in ir.regions:
-        if region.id in masked_regions:
+        if region.id in masked_regions or region.id in lost_regions:
             continue
         if region.surface.type in per_type:
             per_type[region.surface.type]["regions"] += 1
-    faces = len(clean.faces) - len(masked)
-    regions = len(ir.regions) - len(masked_regions)
+    faces = len(clean.faces) - len(masked | lost_faces)
+    regions = len(ir.regions) - len(masked_regions | lost_regions)
     precision, recall, f1 = _prf_regions(matched, len(matched_regions), faces, regions)
+    if confidence is not None and faces == 0 and regions == 0:
+        precision = recall = f1 = 1.0
     recovered_region = {d["face"]: d["region"] for d in faces_detail if d["recovered"]}
     by_type = {}
     for surface, bucket in per_type.items():
@@ -670,6 +689,8 @@ def score_recovery(
         "edge_error": _edge_position_error(clean, recovered_region, ir, frame),
         "faces_detail": faces_detail,
     }
+    if confidence is not None:
+        out["faces_unrecoverable"] = len(lost_faces)
     return out
 
 
