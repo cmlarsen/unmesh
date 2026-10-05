@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 from OCP.BRep import BRep_Builder
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
@@ -21,7 +20,6 @@ from OCP.Interface import Interface_Static
 from OCP.Message import Message
 from OCP.ShapeAnalysis import ShapeAnalysis_ShapeTolerance
 from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Shell, ShapeFix_Solid
-from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
@@ -151,19 +149,6 @@ def make_solid(outer_shell, cavities):
     return mk2.Solid()
 
 
-def make_faceted_solid(outer_shell, cavities):
-    mk = BRepBuilderAPI_MakeSolid(outer_shell)
-    for c in cavities:
-        mk.Add(c)
-    return mk.Solid()
-
-
-def orient_like_mesh(shell, expect_positive: bool):
-    if (volume_of(BRepBuilderAPI_MakeSolid(shell).Solid()) < 0) == expect_positive:
-        return TopoDS.Shell_s(shell.Reversed())
-    return shell
-
-
 def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):
     if len(faces_with_regions) == 1:
         region, face = faces_with_regions[0]
@@ -203,19 +188,6 @@ def build_plan_shell(plan: ShellPlan):
     return shell, mapping
 
 
-def build_triangle_shell(triangles: np.ndarray):
-    pool = _Pool()
-    faces = []
-    for t in triangles:
-        f = triangle_face(pool, t[0], t[1], t[2])
-        if f is not None:
-            faces.append((-1, f))
-    if not faces:
-        raise BuildError("no non-degenerate triangles")
-    shell, _ = build_sewn_shell(faces)
-    return _orient_shell(shell)
-
-
 def compound_of(shapes):
     if len(shapes) == 1:
         return shapes[0]
@@ -225,14 +197,6 @@ def compound_of(shapes):
     for s in shapes:
         builder.Add(comp, s)
     return comp
-
-
-def unify_exact(solid):
-    usd = ShapeUpgrade_UnifySameDomain(solid, True, True, False)
-    usd.SetLinearTolerance(1e-9)
-    usd.SetAngularTolerance(1e-9)
-    usd.Build()
-    return usd.Shape()
 
 
 def write_step(shape, path) -> None:
@@ -299,15 +263,6 @@ def read_back(path) -> tuple[list[ReadSolid], int]:
         for s in _solids_of(shape)
     ]
     return solids, len(_shells_of(shape))
-
-
-def triangle_face(pool: _Pool, a, b, c):
-    n = np.cross(b - a, c - a)
-    norm = np.linalg.norm(n)
-    if norm < 1e-14:
-        return None
-    plan = FacePlan(-1, "facets", a, n / norm, [[a, b, c]])
-    return _face(pool, plan)
 
 
 def fix_shape(shape):

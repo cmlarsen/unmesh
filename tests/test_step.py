@@ -346,20 +346,18 @@ def test_stray_open_triangle_written_as_shell_in_compound(tmp_path):
     assert report.shells[0].volume == pytest.approx(signed_volume(box), rel=1e-9)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCP transfer mis-orients rough faceted shells: BRepClass3d::OuterShell's "
-    "infinite-point probe returns IN for the outward noisy shell, so the single shell "
-    "reads back with flipped volume; the in-memory solid is correct",
-)
-def test_noisy_curved_mesh_fallback_keeps_positive_volume(tmp_path):
+def rough_cone():
     import unmesh_harness.degrade.defects  # noqa: F401,E402
     import unmesh_harness.degrade.noise  # noqa: F401,E402
 
     gt = generate("revolved_cone", 1)
     mesh = labels.tessellate(gt.solid, 0.01, 0.2)
     degraded = degrade_core.apply_chain(mesh, [("slivers", 1.0), ("noise_isotropic", 1.0)], 6001)
-    tris = degraded.tris
+    return degraded.tris
+
+
+def test_noisy_curved_mesh_fallback_keeps_positive_volume(tmp_path):
+    tris = rough_cone()
     expected = signed_volume(tris)
     assert expected > 0
     ir, _ = unmesh.convert(tris)
@@ -436,21 +434,12 @@ def test_two_disjoint_boxes_fallback(tmp_path):
     assert occ.volume_of(occ.read_step(path)) == pytest.approx(signed_volume(tris), rel=1e-9)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OCP transfer mis-orients rough faceted shells: BRepClass3d::OuterShell's "
-    "infinite-point probe returns IN for the outward noisy shell, so "
-    "TopoDSToStep_MakeBrepWithVoids maps nothing and the file reads back empty; "
-    "the in-memory solid is correct",
-)
-def test_noisy_cone_with_cavity_fallback(tmp_path):
-    import unmesh_harness.degrade.defects  # noqa: F401,E402
-    import unmesh_harness.degrade.noise  # noqa: F401,E402
+def rough_cone_with_cavity():
+    return np.concatenate([rough_cone(), box_tris((-1.5, -1.5, 17.5), 3.0, inward=True)])
 
-    gt = generate("revolved_cone", 1)
-    mesh = labels.tessellate(gt.solid, 0.01, 0.2)
-    degraded = degrade_core.apply_chain(mesh, [("slivers", 1.0), ("noise_isotropic", 1.0)], 6001)
-    tris = np.concatenate([degraded.tris, box_tris((-1.5, -1.5, 17.5), 3.0, inward=True)])
+
+def test_noisy_cone_with_cavity_fallback(tmp_path):
+    tris = rough_cone_with_cavity()
     expected = signed_volume(tris)
     assert expected > 0
     ir, _ = unmesh.convert(tris)
@@ -466,13 +455,16 @@ def test_noisy_cone_with_cavity_fallback(tmp_path):
 def test_faceted_mesh_winding_decision():
     outer = box_tris((0.0, 0.0, 0.0), 2.0)
     cavity = box_tris((0.5, 0.5, 0.5), 0.5, inward=True)
+    vertices = np.concatenate([outer, cavity]).reshape(-1, 3)
+    ids = np.arange(len(vertices)).reshape(-1, 3)
+    raw = {0: ids[:12], 1: ids[12:]}
     expect = {0: True, 1: False}
-    oriented = step._orient_closed({0: outer, 1: cavity}, expect)
-    assert signed_volume(oriented[0]) == pytest.approx(8.0, rel=1e-9)
-    assert signed_volume(oriented[1]) == pytest.approx(-0.125, rel=1e-9)
-    flipped = step._orient_closed({0: outer[:, ::-1], 1: cavity[:, ::-1]}, expect)
-    assert signed_volume(flipped[0]) == pytest.approx(8.0, rel=1e-9)
-    assert signed_volume(flipped[1]) == pytest.approx(-0.125, rel=1e-9)
+    oriented = step._orient_closed(vertices, raw, expect)
+    assert signed_volume(vertices[oriented[0]]) == pytest.approx(8.0, rel=1e-9)
+    assert signed_volume(vertices[oriented[1]]) == pytest.approx(-0.125, rel=1e-9)
+    flipped = step._orient_closed(vertices, {k: v[:, ::-1] for k, v in raw.items()}, expect)
+    assert signed_volume(vertices[flipped[0]]) == pytest.approx(8.0, rel=1e-9)
+    assert signed_volume(vertices[flipped[1]]) == pytest.approx(-0.125, rel=1e-9)
 
 
 def test_noise_only_cone_with_cavity_fallback(tmp_path):
@@ -513,6 +505,27 @@ def test_readback_reports_success_with_measured_values(tmp_path):
     assert 0 < rb.volume_tolerance < 1e-3
 
 
+def test_readback_catches_a_dropped_cavity(tmp_path, monkeypatch):
+    from unmesh._writer import faceted
+
+    real = faceted.write
+
+    def drop_voids(path, vertices, bodies, open_shells, **kw):
+        real(path, vertices, [faceted.Body(b.outer) for b in bodies], open_shells, **kw)
+
+    monkeypatch.setattr(faceted, "write", drop_voids)
+    bad, tris = box_with_cavity()
+    report = step.write(bad, tmp_path / "drop.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert not report.valid
+    assert not report.readback.ok
+    assert (report.readback.shells, report.readback.expected_shells) == (1, 2)
+    assert report.readback.volume == pytest.approx(64.0, rel=1e-9)
+    assert not report.shells[0].valid
+    assert any("read-back" in i for i in report.shells[0].issues)
+    assert any(i.startswith("read-back of the written file does not match") for i in report.issues)
+
+
 def test_readback_catches_analytic_writer_mismatch(tmp_path, monkeypatch):
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
@@ -524,3 +537,148 @@ def test_readback_catches_analytic_writer_mismatch(tmp_path, monkeypatch):
     assert not report.valid
     assert report.readback.volume == pytest.approx(1.0, rel=1e-9)
     assert report.readback.expected_volume == pytest.approx(1000.0, rel=1e-9)
+
+
+def fold_faces(tris):
+    a = tris[:, 0]
+    e1 = tris[:, 1] - a
+    e2 = tris[:, 2] - a
+    n = np.cross(e1, e2)
+    n /= np.linalg.norm(n, axis=1)[:, None]
+    folds = []
+    for k in range(len(tris)):
+        for w in ([1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]):
+            p = np.array(w) @ tris[k]
+            pvec = np.cross(n[k], e2)
+            inv = 1.0 / np.einsum("ij,ij->i", e1, pvec)
+            tvec = p - a
+            u = np.einsum("ij,ij->i", tvec, pvec) * inv
+            qvec = np.cross(tvec, e1)
+            v = (qvec @ n[k]) * inv
+            s = np.einsum("ij,ij->i", e2, qvec) * inv
+            hit = np.flatnonzero((u > 1e-9) & (v > 1e-9) & (u + v < 1 - 1e-9))
+            last = hit[np.argmax(s[hit])]
+            if n[last] @ n[k] < 0:
+                folds.append(k)
+                break
+    return folds
+
+
+def test_fold_faces_first_still_read_back_with_the_mesh_sign(tmp_path):
+    tris = rough_cone()
+    folds = fold_faces(tris)
+    assert folds
+    order = folds + [k for k in range(len(tris)) if k not in set(folds)]
+    tris = tris[order]
+    ir, _ = unmesh.convert(tris)
+    report = step.write(ir, tmp_path / "f.step", mesh=tris)
+    assert report.fallback == "faceted" and report.valid and report.readback.ok
+    assert occ.volume_of(occ.read_step(tmp_path / "f.step")) == pytest.approx(
+        signed_volume(tris), rel=1e-9
+    )
+
+
+def test_readback_catches_a_file_the_reader_inverts(tmp_path, monkeypatch):
+    from unmesh._writer import faceted
+
+    real = faceted.write
+
+    def probes_last(path, vertices, bodies, open_shells, **kw):
+        moved = []
+        for b in bodies:
+            faces, k = b.outer.faces, b.outer.probes
+            moved.append(faceted.Body(faceted.ShellFaces(faces[k:] + faces[:k]), b.voids))
+        real(path, vertices, moved, open_shells, **kw)
+
+    monkeypatch.setattr(faceted, "write", probes_last)
+    tris = rough_cone()
+    folds = fold_faces(tris)
+    tris = tris[folds + [k for k in range(len(tris)) if k not in set(folds)]]
+    ir, _ = unmesh.convert(tris)
+    report = step.write(ir, tmp_path / "inv.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert not report.valid
+    assert report.readback.volume == pytest.approx(-signed_volume(tris), rel=1e-9)
+    assert any("volume" in i for i in report.readback.issues)
+
+
+def step_entities(path):
+    import re
+
+    data = pathlib.Path(path).read_text().split("DATA;", 1)[1].split("ENDSEC;", 1)[0]
+    ents = {}
+    for m in re.finditer(r"#(\d+) = (\w+)\((.*?)\);\n", data, re.S):
+        ents[int(m.group(1))] = (m.group(2), m.group(3))
+    return ents
+
+
+def step_signed_volume(path):
+    import re
+
+    ents = step_entities(path)
+
+    def refs(text):
+        return [int(r) for r in re.findall(r"#(\d+)", text)]
+
+    def point(ref):
+        _, args = ents[ref]
+        return np.array([float(x) for x in args.split("(", 1)[1].rstrip(")").split(",")])
+
+    def shell_volume(ref, sign):
+        kind, args = ents[ref]
+        if kind == "ORIENTED_CLOSED_SHELL":
+            return shell_volume(refs(args)[0], sign * (1 if args.endswith(".T.") else -1))
+        total = 0.0
+        for face in refs(args):
+            kind, fargs = ents[face]
+            assert kind == "ADVANCED_FACE" and fargs.endswith(".T.")
+            bound = refs(fargs)[0]
+            loop = refs(ents[bound][1])[0]
+            pts = []
+            for oe in refs(ents[loop][1]):
+                oargs = ents[oe][1]
+                start, end = refs(ents[refs(oargs)[0]][1])[:2]
+                vp = start if oargs.endswith(".T.") else end
+                pts.append(point(refs(ents[vp][1])[0]))
+            pts = np.array(pts)
+            total += float(np.cross(pts, np.roll(pts, -1, axis=0)).sum(axis=0) @ pts[0]) / 6.0
+        return sign * total
+
+    volume = 0.0
+    for kind, args in ents.values():
+        if kind == "MANIFOLD_SOLID_BREP":
+            volume += shell_volume(refs(args)[0], 1)
+        elif kind == "BREP_WITH_VOIDS":
+            outer, *voids = refs(args)
+            volume += shell_volume(outer, 1) + sum(shell_volume(v, 1) for v in voids)
+    return volume
+
+
+def test_faceted_step_text_matches_the_mesh_without_occt(tmp_path):
+    tris = rough_cone_with_cavity()
+    ir, _ = unmesh.convert(tris)
+    paths = [tmp_path / "a.step", tmp_path / "b.step"]
+    for path in paths:
+        assert step.write(ir, path, mesh=tris).fallback == "faceted"
+    assert paths[0].read_bytes() == paths[1].read_bytes()
+    assert step_signed_volume(paths[0]) == pytest.approx(signed_volume(tris), rel=1e-9)
+    ents = step_entities(paths[0])
+    kinds = [k for k, _ in ents.values()]
+    assert kinds.count("BREP_WITH_VOIDS") == 1 and kinds.count("ORIENTED_CLOSED_SHELL") == 1
+    points = [a for k, a in ents.values() if k == "CARTESIAN_POINT"]
+    assert len(points) == len(set(points))
+
+
+def test_zero_area_triangle_is_absorbed_into_its_neighbour(tmp_path):
+    tris = box_tris((0.0, 0.0, 0.0), 1.0)
+    a, c, b = tris[1]
+    m = (a + c) / 2
+    tris = np.concatenate([tris[[0]], [[a, m, b], [m, c, b], [a, c, m]], tris[2:]])
+    assert signed_volume(tris) == pytest.approx(1.0, rel=1e-12)
+    ir, _ = unmesh.convert(tris)
+    path = tmp_path / "z.step"
+    report = step.write(break_first_region(ir), path, mesh=tris)
+    assert report.fallback == "faceted" and report.valid and report.readback.ok
+    shape, types = reimported_faces(path)
+    assert occ.volume_of(shape) == pytest.approx(1.0, rel=1e-9)
+    assert len(types) == 6

@@ -233,53 +233,77 @@ def _nesting(closed: dict[int, np.ndarray]) -> dict[int, bool]:
     return expect
 
 
-def _orient_closed(raw: dict[int, np.ndarray], expect: dict[int, bool]) -> dict[int, np.ndarray]:
+def _orient_closed(
+    vertices: np.ndarray, raw: dict[int, np.ndarray], expect: dict[int, bool]
+) -> dict[int, np.ndarray]:
     oriented = {}
-    for idx, t in raw.items():
-        if idx in expect and (_signed_volume(t) < 0) == expect[idx]:
-            t = t[:, ::-1]
-        oriented[idx] = t
+    for idx, f in raw.items():
+        if idx in expect and (_signed_volume(vertices[f]) < 0) == expect[idx]:
+            f = f[:, ::-1]
+        oriented[idx] = f
     return oriented
 
 
-def _faceted(ir: Ir, tris: np.ndarray, options: WriteOptions, occ, topology):
+def _faceted(ir: Ir, tris: np.ndarray, topology, faceted):
+    from unmesh import weld
+
+    vertices, faces, source, _ = weld(tris, ir.tolerances.vertex_merge)
+    faces = faces.astype(np.int64)
+    welded = np.full(len(tris), -1, dtype=np.int64)
+    welded[source] = np.arange(len(faces))
+    shift = np.linalg.norm(tris[source] - vertices[faces], axis=2)
+    moved = float(shift.max(initial=0.0))
     groups: list[_Group] = []
     for outer, shell in enumerate(ir.shells):
         if shell.role != "outer":
             continue
-        g = _Group(outer, "solid" if shell.closed else "shell")
+        g = _Group(
+            outer, "solid" if shell.closed else "shell", moved=moved, tolerance=faceted.UNCERTAINTY
+        )
         groups.append(g)
         try:
             raw = {}
             for idx in _members(ir, outer):
-                ids = sorted(t for r in ir.shells[idx].regions for t in ir.regions[r].triangles)
-                if ids and ids[-1] >= len(tris):
+                ids = np.array(
+                    sorted(t for r in ir.shells[idx].regions for t in ir.regions[r].triangles),
+                    dtype=np.int64,
+                )
+                if len(ids) and ids[-1] >= len(tris):
                     raise topology.BuildError("mesh has fewer triangles than the IR references")
-                raw[idx] = tris[ids]
-            closed = {idx: t for idx, t in raw.items() if ir.shells[idx].closed and len(t)}
-            expect = _nesting(closed)
-            shells = {}
-            for idx, t in _orient_closed(raw, expect).items():
-                shells[idx] = occ.build_triangle_shell(np.ascontiguousarray(t))
-            for idx in closed:
-                shells[idx] = occ.orient_like_mesh(shells[idx], expect[idx])
-            if g.kind == "solid":
-                cavities = [s for idx, s in shells.items() if idx != outer]
-                g.shape = occ.make_faceted_solid(shells[outer], cavities)
-            else:
-                g.shape = shells[outer]
-            _check(g, occ, options.max_shape_tolerance)
-            if g.kind == "solid" and g.valid:
-                merged = occ.unify_exact(g.shape)
-                trial = _Group(outer, "solid", merged)
-                _check(trial, occ, options.max_shape_tolerance)
-                if trial.valid and abs(trial.volume - g.volume) <= 1e-9 * abs(g.volume):
-                    g.shape, g.tolerance, g.volume = merged, trial.tolerance, trial.volume
+                w = welded[ids]
+                raw[idx] = faces[w[w >= 0]]
+                if not len(raw[idx]):
+                    raise topology.BuildError(f"shell {idx} has no non-degenerate triangles")
+            if g.kind == "shell":
+                g.shape = faceted.open_faces(vertices, raw[outer])
+                g.shells = 1
+                g.valid = True
+                continue
+            if any(not ir.shells[idx].closed for idx in raw):
+                raise topology.BuildError("a cavity shell is open")
+            expect = _nesting({idx: vertices[f] for idx, f in raw.items()})
+            oriented = _orient_closed(vertices, raw, expect)
+            g.shape = faceted.Body(
+                faceted.shell_faces(vertices, oriented[outer], outer=True),
+                [
+                    faceted.shell_faces(vertices, f, outer=False)
+                    for idx, f in oriented.items()
+                    if idx != outer
+                ],
+            )
+            g.shells = len(oriented)
+            g.expected = sum(_signed_volume(vertices[f]) for f in oriented.values())
+            g.area = sum(_area(vertices[f]) for f in oriented.values())
+            g.valid = True
         except topology.BuildError as e:
             g.issues.append(str(e))
         except Exception as e:
             g.issues.append(f"{type(e).__name__}: {e}")
-    return groups
+    return groups, vertices
+
+
+def _area(t: np.ndarray) -> float:
+    return float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
 
 
 def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float) -> ReadBack:
@@ -345,7 +369,7 @@ def write(
     ir.validate()
     options = options or WriteOptions()
     try:
-        from unmesh._writer import occ, topology
+        from unmesh._writer import faceted, occ, topology
     except ImportError as e:
         raise ImportError(
             "unmesh.step needs OCP; install it with `pip install unmesh[step]`"
@@ -355,11 +379,11 @@ def write(
     groups, seams = _analytic(ir, options, occ, topology)
     fallback = None
     reason = None
+    vertices = None
     if not all(g.valid for g in groups):
         reason = "; ".join(f"shell {g.outer}: {'; '.join(g.issues)}" for g in groups if not g.valid)
         if mesh is not None:
-            tris = _triangles(mesh)
-            groups = _faceted(ir, tris, options, occ, topology)
+            groups, vertices = _faceted(ir, _triangles(mesh), topology, faceted)
             fallback = "faceted"
         else:
             reason += "; no mesh given, so no faceted fallback"
@@ -368,8 +392,16 @@ def write(
     issues = []
     readback = None
     if written:
-        occ.write_step(occ.compound_of([g.shape for g in written]), path)
-        readback = _verify(path, written, occ, False, options.max_shape_tolerance)
+        if fallback == "faceted":
+            faceted.write(
+                path,
+                vertices,
+                [g.shape for g in written if g.kind == "solid"],
+                [g.shape for g in written if g.kind == "shell"],
+            )
+        else:
+            occ.write_step(occ.compound_of([g.shape for g in written]), path)
+        readback = _verify(path, written, occ, fallback == "faceted", options.max_shape_tolerance)
         if not readback.ok:
             mismatch = "; ".join(readback.issues)
             issues.append(f"read-back of the written file does not match: {mismatch}")
