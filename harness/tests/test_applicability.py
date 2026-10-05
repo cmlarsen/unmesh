@@ -217,6 +217,34 @@ def _sampled_ids(grid):
     return {cat: ids[:SAMPLED_PER_CATEGORY] for cat, ids in sorted(by_cat.items())}
 
 
+def _imported_sample_complete(by_id, ids) -> bool:
+    from unmesh_harness.imported import IMPORTED_DATASETS, cached_step_record, datasets_root
+
+    root = datasets_root()
+    if not all((root / ds / "manifest.json").is_file() for ds in IMPORTED_DATASETS):
+        return False
+    for pid in ids:
+        try:
+            path, rec = cached_step_record(by_id[pid]["source"])
+        except (FileNotFoundError, KeyError):
+            return False
+        if not path.is_file() or rec["sha256"] != by_id[pid]["source"]["sha256"]:
+            return False
+    return True
+
+
+def pytest_generate_tests(metafunc):
+    if "grid_name" in metafunc.fixturenames and "category" in metafunc.fixturenames:
+        from unmesh_harness.runner import load_grid
+
+        params = []
+        for name in ("standard", "full"):
+            grid = load_grid(name)
+            cats = sorted({e["strata"].get("category", "planar") for e in grid.entries})
+            params.extend(pytest.param(name, cat, id=f"{name}-{cat}") for cat in cats)
+        metafunc.parametrize("grid_name,category", params)
+
+
 @pytest.fixture(scope="module")
 def clean_meshes(tmp_path_factory):
     from unmesh_harness.runner import load_grid
@@ -228,6 +256,10 @@ def clean_meshes(tmp_path_factory):
         for ids in _sampled_ids(grid).values():
             for pid in ids:
                 want[pid] = next(e for e in grid.entries if e["id"] == pid)
+    imported_ids = [pid for pid, e in want.items() if e["strata"].get("category") == "imported"]
+    imported_ready = _imported_sample_complete(want, imported_ids)
+    if not imported_ready:
+        want = {pid: e for pid, e in want.items() if pid not in set(imported_ids)}
     cache = tmp_path_factory.mktemp("clean-meshes")
     grid = grids["standard"]
     for pid in sorted(want):
@@ -240,21 +272,27 @@ def clean_meshes(tmp_path_factory):
                 "truth_deflection": grid.truth_deflection,
             }
         )
-    return grids, {pid: LabeledMesh.load(cache / f"{pid}.labeled.npz") for pid in want}
+    meshes = {pid: LabeledMesh.load(cache / f"{pid}.labeled.npz") for pid in want}
+    return grids, meshes, imported_ready
 
 
-@pytest.mark.parametrize("grid_name", ["standard", "full"])
-def test_no_row_skipped_on_every_part_of_a_category(grid_name, clean_meshes):
+def test_no_row_skipped_on_every_part_of_a_category(grid_name, category, clean_meshes):
+    from unmesh_harness.datasets import IMPORTED_TIER_COMMAND
     from unmesh_harness.runner.grid import steps_for
     from unmesh_harness.runner.run import first_inapplicable_op
 
-    grids, meshes = clean_meshes
+    grids, meshes, imported_ready = clean_meshes
+    if category == "imported" and not imported_ready:
+        pytest.skip(
+            "dataset cache absent or partial for the sampled imported parts; "
+            f"run `{IMPORTED_TIER_COMMAND}` from the repo root, then retry"
+        )
     grid = grids[grid_name]
+    ids = _sampled_ids(grid)[category]
     dead = []
     for spec in grid.cells:
         steps = [(name, float(sev)) for name, sev in steps_for(spec)]
         label = f"{spec.get('operator', spec.get('preset'))}@{float(spec['severity']):g}"
-        for cat, ids in _sampled_ids(grid).items():
-            if all(first_inapplicable_op(steps, meshes[pid]) is not None for pid in ids):
-                dead.append(f"{label} skipped on all {len(ids)} sampled {cat} parts")
+        if all(first_inapplicable_op(steps, meshes[pid]) is not None for pid in ids):
+            dead.append(f"{label} skipped on all {len(ids)} sampled {category} parts")
     assert not dead, "dead grid rows:\n" + "\n".join(dead)
