@@ -567,3 +567,35 @@ def test_bore_meeting_a_cone_converts_and_writes_analytic(tmp_path):
     written = brep_counts(occ.read_step(tmp_path / "b.step"))
     assert written["faces"] == brep_counts(shape)["faces"]
     assert rep.max_deviation >= max(r.residual.max for r in ir.regions)
+
+
+def d_flat_boss(depth):
+    flat_x = 10.0 - depth
+    return Cylinder(10, 20) - Pos(flat_x + 10, 0, 0) * Box(20, 40, 40)
+
+
+def d_flat_bore(depth):
+    flat_x = 6.0 - depth
+    hole = Cylinder(6, 40) - Pos(flat_x + 10, 0, 0) * Box(20, 40, 50)
+    return Box(30, 30, 20) - hole
+
+
+@pytest.mark.parametrize("make", [d_flat_boss, d_flat_bore])
+@pytest.mark.parametrize("depth", [0.1, 0.5, 1.5])
+def test_a_d_flat_survives_as_a_plane(make, depth, tmp_path):
+    shape = make(depth)
+    tris = np.asarray(tessellate(shape, 0.01, 0.2).tris, dtype=np.float64)
+    ir, rep = unmesh.convert(tris)
+    radius = 10.0 if make is d_flat_boss else 6.0
+    flats = [
+        r
+        for r in ir.regions
+        if r.surface.type == "plane"
+        and abs(abs(r.surface.normal[0]) - 1.0) < 1e-9
+        and abs(r.surface.origin[0] - (radius - depth)) < 1e-6
+    ]
+    assert len(flats) == 1, sorted(r.surface.type for r in ir.regions)
+    assert rep.max_deviation < 0.02
+    report = step.write(ir, tmp_path / "d.step", mesh=tris)
+    assert report.fallback is None, report.fallback_reason
+    assert brep_counts(occ.read_step(tmp_path / "d.step"))["faces"] == brep_counts(shape)["faces"]

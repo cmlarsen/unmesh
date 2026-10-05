@@ -428,10 +428,12 @@ fn curved(s: &Surface) -> bool {
 
 /// Gives a remnant of at most `REMNANT_FACES` triangles that is not itself
 /// curved to an adjacent curved region whose surface passes within `tol` of
-/// every one of its vertices: the long sliver triangles a tessellator leaves
-/// where a curved face meets another, whose chord sagitta growth refused. The
-/// curved surface is kept; its residual takes the remnant's vertex distances
-/// and sagittas, so the reported deviation still bounds every triangle.
+/// every one of its vertices and whose largest chord sagitta already bounds
+/// the remnant's: the long sliver triangles a tessellator leaves where a
+/// curved face meets another, which growth refused. A flat cut into the
+/// surface (a D-flat) has its corners on it too, but its sagitta is the flat's
+/// depth, far beyond the tessellation's, so it stays a plane. The curved
+/// surface is kept; its residual takes the remnant's vertex distances.
 pub fn absorb_remnants(
     vc: &[V3],
     faces: &[[u32; 3]],
@@ -465,25 +467,28 @@ pub fn absorb_remnants(
             let best = cands
                 .into_iter()
                 .filter_map(|c| {
-                    let s = &regions[c as usize].surface;
+                    let target = &regions[c as usize];
+                    let s = &target.surface;
                     let worst = regions[r]
                         .faces
                         .iter()
                         .flat_map(|&f| faces[f as usize])
                         .map(|v| s.distance(vc[v as usize]).abs())
                         .fold(0.0, f64::max);
-                    (worst <= tol).then_some((worst, c))
+                    let sag = regions[r]
+                        .faces
+                        .iter()
+                        .map(|&f| {
+                            super::curved::sagitta(s, faces[f as usize].map(|v| vc[v as usize]))
+                        })
+                        .fold(0.0, f64::max);
+                    (worst <= tol && sag <= target.sag.max(tol)).then_some((worst, sag, c))
                 })
-                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            let Some((worst, c)) = best else {
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)));
+            let Some((worst, sag, c)) = best else {
                 continue;
             };
             let moved = std::mem::take(&mut regions[r].faces);
-            let surf = regions[c as usize].surface;
-            let sag = moved
-                .iter()
-                .map(|&f| super::curved::sagitta(&surf, faces[f as usize].map(|v| vc[v as usize])))
-                .fold(0.0, f64::max);
             let area: f64 = moved.iter().map(|&f| info[f as usize].area).sum();
             let target = &mut regions[c as usize];
             for &f in &moved {
@@ -726,6 +731,83 @@ pub fn label_faces(finals: &[Final], n_faces: usize) -> Vec<u32> {
 mod tests {
     use super::super::segment::tri_info;
     use super::*;
+
+    /// A strip of a radius-10 cylinder between z = 0 and z = 1, in steps of
+    /// `step` radians, then one more triangle (the remnant) spanning `span`
+    /// radians from the strip's last ring, every corner on the cylinder.
+    fn strip_with_remnant(step: f64, span: f64) -> (bool, f64) {
+        let ring = |a: f64, z: f64| [10.0 * a.cos(), 10.0 * a.sin(), z];
+        let n = 8;
+        let mut v = Vec::new();
+        for i in 0..=n {
+            let a = step * i as f64;
+            v.push(ring(a, 0.0));
+            v.push(ring(a, 1.0));
+        }
+        let mut f: Vec<[u32; 3]> = Vec::new();
+        for i in 0..n as u32 {
+            let (b0, t0, b1, t1) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
+            f.push([b0, b1, t1]);
+            f.push([b0, t1, t0]);
+        }
+        let last = 2 * n as u32;
+        v.push(ring(step * n as f64 + span, 0.5));
+        f.push([last, v.len() as u32 - 1, last + 1]);
+        let info = tri_info(&v, &f);
+        let mut nbr = vec![[NONE; 3]; f.len()];
+        let rem = f.len() - 1;
+        nbr[rem][2] = rem as u32 - 1;
+        nbr[rem - 1][1] = rem as u32;
+        let surface = Surface::Cylinder {
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 10.0,
+            reversed: false,
+        };
+        let sag = 10.0 * (1.0 - (step / 2.0).cos());
+        let tol = 1e-4;
+        let mut regions = vec![
+            Region {
+                faces: (0..rem as u32).collect(),
+                surface,
+                area: 1.0,
+                width: 1.0,
+                verts: Vec::new(),
+                rms: 0.0,
+                max: 0.0,
+                sag,
+            },
+            Region {
+                faces: vec![rem as u32],
+                surface: Surface::Plane {
+                    normal: info[rem].normal,
+                    offset: dot(info[rem].normal, v[last as usize]),
+                },
+                area: info[rem].area,
+                width: 0.1,
+                verts: Vec::new(),
+                rms: 0.0,
+                max: 0.0,
+                sag: 0.0,
+            },
+        ];
+        let mut label: Vec<u32> = (0..f.len()).map(|i| (i == rem) as u32).collect();
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, tol);
+        (label[rem] == 0, regions[0].sag)
+    }
+
+    #[test]
+    fn a_sliver_within_the_tessellation_sagitta_is_absorbed() {
+        let (absorbed, sag) = strip_with_remnant(0.1, 0.05);
+        assert!(absorbed);
+        assert!(sag >= 10.0 * (1.0 - 0.025f64.cos()) - 1e-12);
+    }
+
+    #[test]
+    fn a_d_flat_deeper_than_the_tessellation_sagitta_stays_a_plane() {
+        assert!(!strip_with_remnant(0.1, 0.6).0);
+        assert!(strip_with_remnant(0.1, 0.1).0);
+    }
 
     fn hinge(tilt_deg: f64, base: u32) -> (Vec<V3>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
         let t = tilt_deg.to_radians().tan();
