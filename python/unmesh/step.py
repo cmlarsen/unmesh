@@ -36,6 +36,13 @@ class SeamReport:
 
 
 @dataclass
+class EdgeFallback:
+    regions: tuple[int, int]
+    reason: str
+    max_deviation: float
+
+
+@dataclass
 class ShellReport:
     shell: int
     kind: Literal["solid", "shell"]
@@ -73,6 +80,7 @@ class WriteReport:
     issues: list[str] = field(default_factory=list)
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
+    edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
     open_shells: list[int] = field(default_factory=list)
     readback: ReadBack | None = None
     verified: bool = False
@@ -96,6 +104,8 @@ class _Group:
     expected: float = 0.0
     area: float = 0.0
     shells: int = 1
+    curved: bool = False
+    edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
 
 
 def _triangles(mesh) -> np.ndarray:
@@ -139,7 +149,12 @@ def _check(g: _Group, occ, max_tol: float) -> None:
 
 
 def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
-    if g.kind == "solid":
+    if g.kind == "solid" and g.curved:
+        g.shape = occ.make_oriented_solid(outer_shell, cavities)
+        if not occ.is_valid(g.shape):
+            g.shape, g.context = occ.fix_shape(g.shape)
+            occ.check_orientation(g.shape)
+    elif g.kind == "solid":
         solid = occ.make_solid(outer_shell, cavities)
         g.shape, g.context = occ.fix_shape(solid)
     else:
@@ -152,6 +167,7 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
     seams: list[SeamReport] = []
     limit = topology.deviation_limit(ir, options.max_deviation)
     vpos, vmoved, bad = topology.vertex_positions(ir, limit)
+    refined = None
     for outer, shell in enumerate(ir.shells):
         if shell.role != "outer":
             continue
@@ -161,7 +177,25 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
             built = []
             moved: dict[int, float] = {}
             dev: dict[int, float] = {}
-            for idx in _members(ir, outer):
+            members = _members(ir, outer)
+            if any(_is_curved(ir, idx) for idx in members):
+                from unmesh._writer import curved
+
+                g.curved = True
+                if refined is None:
+                    refined = curved.refine_vertices(ir, vpos, vmoved, bad, limit)
+                for idx in members:
+                    cs = curved.build_shell(ir, idx, *refined, limit, occ.new_pool())
+                    seams.extend(
+                        SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in cs.seams
+                    )
+                    moved.update(cs.vertex_displacement)
+                    dev.update(cs.boundary_deviation)
+                    g.edge_fallbacks.extend(
+                        EdgeFallback(p.regions, p.reason, p.max_deviation) for p in cs.projected
+                    )
+                    built.append((idx, cs.shell, cs.mapping))
+            for idx in members if not g.curved else ():
                 plan = topology.plan_shell(ir, idx, vpos, vmoved, bad, limit)
                 seams.extend(
                     SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in plan.seams
@@ -184,6 +218,13 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
         except Exception as e:
             g.issues.append(f"{type(e).__name__}: {e}")
     return groups, seams
+
+
+def _is_curved(ir: Ir, idx: int) -> bool:
+    return any(
+        ir.regions[r].surface.type in ("cylinder", "cone", "sphere", "torus")
+        for r in ir.shells[idx].regions
+    )
 
 
 def _signed_volume(t: np.ndarray) -> float:
@@ -398,6 +439,7 @@ def write(
         issues=issues,
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
+        edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
         open_shells=[g.outer for g in written if g.kind == "shell"],
         readback=readback,
         verified=readback is not None,

@@ -85,7 +85,7 @@ this); `mesh=None` is for callers that only have an IR. Without `mesh`, if any s
 writes nothing (no partial part, no file), returns `valid=False`, and says why in `issues` and
 `shells[*].issues`; it still does not raise.
 
-Building (v0, planes and `facets` only): a vertex with at least two incident plane regions is moved
+Building, planar shells (planes and `facets` only): a vertex with at least two incident plane regions is moved
 onto those planes (least-squares, pulled toward the IR position along any free direction, so two planes
 give the point on their line nearest the IR position and one plane plus facets is not snapped). Patch
 vertices of a `facets` region that coincide with a moved IR vertex move with it. Plane-plane edges are
@@ -94,8 +94,35 @@ against both planes) must lie within the deviation limit of the built edge. Loop
 from the boundaries in each region's direction, faces are built on the analytic planes, sewn, and
 passed through ShapeFix. Boundaries touching a `facets` region keep their polyline. An outer shell and
 the cavity shells that name it become one solid; an open shell becomes a sewn shell, never a solid;
-several outer shells become a compound. A region with a non-plane surface (cylinder, cone, sphere,
-torus) is not supported yet and triggers the fallback.
+several outer shells become a compound.
+
+Building, curved shells (any cylinder, cone, sphere or torus region in the outer shell or its cavities):
+the shell is assembled from shared edges, without sewing or ShapeFix.
+
+- **Vertices** touching a curved region are moved onto every analytic surface that meets there
+  (iterated least squares on the tangent planes, pulled toward the IR position).
+- **Transversal edges** are the OCCT intersection of the two surfaces (`GeomAPI_IntSS`). The branch
+  nearest the boundary polyline is kept and trimmed at the IR vertices in the polyline's direction;
+  every boundary point must lie within the deviation limit of the trimmed edge. When OCCT returns
+  the curve as several branches (cylinder-cylinder, for example) whose union covers the polyline,
+  or as a closed curve that is not periodic, the edge is the interpolation of the polyline points
+  (and their midpoints) moved onto both surfaces. When the intersection fails, strays further than
+  the limit from the polyline, or cannot be trimmed along it, the same projected polyline is used
+  and recorded in `edge_fallbacks`.
+- **Tangent boundaries** next to a curved region, and `facets` regions next to a curved region, are
+  not supported yet: the shell fails with the reason `tangent edges not supported yet (#33)` or
+  `facets regions next to curved surfaces are not supported yet (#34)`.
+- **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
+  surface and reversed), with explicit pcurves. On a periodic surface the seam is an isoparametric
+  line: through the vertex of a wrapping loop made of open edges when there is one, otherwise placed
+  away from the face's other boundaries; closed loops get their vertex where the seam crosses them,
+  and coaxial neighbours share the seam's half-plane. A face with one wrapping loop closes at a
+  sphere pole or cone apex with a degenerate edge; a sphere or torus region with no boundary is the
+  whole surface.
+- **Orientation check:** each face is probed just inside every boundary, on the side the IR's loop
+  direction puts it, and must classify that point as inside; the outer shell must enclose positive
+  volume and each cavity negative. Nothing flips a face to fix it: a mismatch fails the shell. ShapeFix
+  runs only on a solid that `BRepCheck_Analyzer` rejects, and the orientation is checked again after it.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
 `max_shape_tolerance`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
@@ -135,6 +162,7 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `faces` | `FaceReport(region, surface_type, max_shape_tolerance, max_vertex_displacement, max_boundary_deviation)` for each written region (empty after a fallback). Tolerances are measured on the final healed shape. |
 | `max_vertex_displacement` | Largest distance the writer moved a vertex from its IR position, over all shells. For the faceted fallback, the largest distance the weld moved a source vertex. |
 | `max_boundary_deviation` | Largest distance from an IR boundary point to the edge the writer built. |
+| `edge_fallbacks` | `EdgeFallback(regions, reason, max_deviation)` for each edge built from the projected boundary polyline instead of the surface intersection (empty after a faceted fallback). `max_deviation` is the larger of the curve's distance to both surfaces and the boundary points' distance to it. |
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
