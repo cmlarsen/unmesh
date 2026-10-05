@@ -846,7 +846,8 @@ class _Builder:
         n = len(pts)
         segments = n if e.closed else n - 1
         scale = max(float(np.linalg.norm(np.ptp(np.asarray(pts), axis=0))), 1e-3)
-        step = 1e-3 * scale + 2.0 * e.deviation
+        floor = 4.0 * e.deviation + 1e-6
+        steps = sorted({max(1e-4 * scale, floor), max(1e-5 * scale, floor)}, reverse=True)
         pair = [self.surface(e.a), self.surface(e.b)]
         if not all(geo.is_analytic(x) for x in pair):
             pair = None
@@ -857,14 +858,20 @@ class _Builder:
             if pair:
                 p = geo.refine(pair, p)
             p, _ = geo.closest(s, p)
-            q, _ = geo.closest(s, p + step * geo.unit(np.cross(geo.outward(s, p), t)))
-            state = BRepClass_FaceClassifier(face, _pnt(q), 1e-6).State()
-            if state == TopAbs_IN:
-                return
-            if state == TopAbs_OUT:
-                break
+            side = geo.unit(np.cross(geo.outward(s, p), t))
+            for k, step in enumerate(steps):
+                q, _ = geo.closest(s, p + step * side)
+                state = BRepClass_FaceClassifier(face, _pnt(q), 1e-7).State()
+                if state == TopAbs_IN:
+                    return
+                if state != TopAbs_OUT or k + 1 < len(steps):
+                    continue
+                raise BuildError(
+                    f"region {r}: the built face is not on the IR's side of its boundary with"
+                    f" region {e.b if r == e.a else e.a}"
+                )
         raise BuildError(
-            f"region {r}: the built face is not on the IR's side of its boundary with"
+            f"region {r}: could not confirm the built face's side of its boundary with"
             f" region {e.b if r == e.a else e.a}"
         )
 
