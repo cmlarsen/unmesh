@@ -218,6 +218,8 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
         calib = r.get("calibration")
         detail = "no usable reported max_deviation" if calib is None else f"{calib * 1000:.3f} um"
         bad(f"under-reports ({detail})")
+    if floors.get("compare_only"):
+        return out
     if r.get("valid") is not True:
         bad(f"invalid STEP: {'; '.join(r.get('step_problems') or ['not checked'])}")
     if "f1_cell" in floors and r["f1"] is not None and r["f1"] < floors["f1_cell"]:
