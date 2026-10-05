@@ -953,6 +953,36 @@ mod tests {
     }
 
     #[test]
+    fn spine_circle_start_lands_near_the_torus() {
+        let frame = Frame::tilted();
+        let c = [1.0, -2.0, 0.5];
+        let tau = std::f64::consts::TAU;
+        for (big, small, v0, v1, flip) in [
+            (30.0, 2.0, 0.0, 1.57, false),
+            (30.0, 2.0, 0.0, 1.57, true),
+            (12.0, 5.0, -0.8, 0.8, false),
+            (25.0, 3.0, 2.0, 3.6, true),
+        ] {
+            let f = |u: f64, v: f64| frame.map(torus_point(c, [0.0, 0.0, 1.0], big, small, u, v));
+            let (pts, mut tris) = sample(f, &span(0.0, tau, 96), &span(v0, v1, 12));
+            if flip {
+                for t in tris.iter_mut() {
+                    t.normal = scale(t.normal, -1.0);
+                }
+            }
+            let (axis, shape) = init_torus(&pts, &tris).unwrap();
+            let label = format!("R={big} r={small} flip={flip}");
+            assert!(dot(axis.a, frame.dir([0.0, 0.0, 1.0])).abs() > 1.0 - 1e-6, "{label}");
+            let center = add(axis.c, scale(axis.a, shape[0]));
+            assert!(norm(sub(center, frame.map(c))) < 1e-3 * big, "{label}");
+            assert!((shape[1] - big).abs() < 2e-3 * big, "{label}: {}", shape[1]);
+            assert!((shape[2] - small).abs() < 1e-2 * small, "{label}: {}", shape[2]);
+            let r = max_residual(Kind::Torus, &axis, &shape, &pts);
+            assert!(r < 1e-2 * small, "{label}: {r}");
+        }
+    }
+
+    #[test]
     fn torus_patches_fit_exactly() {
         let tau = std::f64::consts::TAU;
         torus_case(20.0, 4.0, (0.0, tau, 48), (0.0, tau, 16), 1e-7);

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
@@ -169,7 +170,7 @@ def run_oracle(
     ]
     if jobs <= 1:
         return [_cell(t) for t in tasks]
-    with ProcessPoolExecutor(jobs) as pool:
+    with ProcessPoolExecutor(jobs, mp_context=multiprocessing.get_context("spawn")) as pool:
         return list(pool.map(_cell, tasks))
 
 

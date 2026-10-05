@@ -223,8 +223,9 @@ the square of the triangle's span about the axis, so the triangle is split exact
 until the bound is within 2% of a value the true maximum reaches. The smallest `g` is the distance from
 the triangle to the arc of the spine over the triangle's azimuths, bounded below by covering the arc
 with pieces, each inside the triangle of its chord and end tangents, and taking the exact
-triangle-triangle distance. On random tori and triangles the bound is within 4% of a dense numeric
-maximum and never below it; a triangle spanning more than 90° about the axis falls back to its corners
+triangle-triangle distance. On random tori and triangles the bound is never below a dense numeric
+maximum; it is within 4% of it for minor/major radius ratios of 0.02 to 0.92, and up to about 1.5×
+on thin tori (smaller ratios); a triangle spanning more than 90° about the axis falls back to its corners
 plus its longest edge. `residual.rms`
 is the RMS over the region's vertices only, without the sagitta.
 
