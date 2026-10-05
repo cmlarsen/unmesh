@@ -148,10 +148,13 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   a fan triangle that folds over fails the shell. The curved face and the triangles use the same
   edges, so there is no gap and no T-junction; each edge's tolerance covers its distance from the
   curved surface (1.01 times the sampled distance, at least `1e-7`). Each seam is reported in `seams`.
-  Two alternatives were measured on the same parts and rejected (#34): keeping the mesh chords as
-  edges with their tolerance loosened to cover the sagitta, and trimming the curved face by the chord
-  polyline projected onto it, both need a tolerance of the mesh's own chord sagitta (up to the
-  tessellation deflection, 1e-2 mm on the corpus), ten times the `1e-3` cap.
+  Two alternatives were measured and rejected (#34), on the oracle IRs of five seeds of every
+  curved and chamfer_fillet family with one seeded non-planar region forced to `facets` (75 parts,
+  deflection (0.01, 0.2)): keeping the mesh chords as edges with their tolerance loosened to cover
+  the gap, and trimming the curved face by the chord polyline projected onto it (the triangles then
+  share the projected curves). Both need tolerances up to 5e-3, so 29 of the 75 parts exceed the
+  `1e-3` cap and fall back whole; subdividing needs at most 8.8e-5, writes all 75 mixed, and adds
+  13% more triangle faces.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
   surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
   on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
