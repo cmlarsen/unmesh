@@ -103,7 +103,9 @@ A region is a connected set of source triangles explained by one surface.
   (`unmesh.weld` returns it as an extra array). Triangles dropped as degenerate belong to no region. Every
   triangle id appears in at most one region.
 - `residual`: RMS and max distance from the region's source triangles to its surface, in the units of
-  the mesh. `null` for `facets` regions, which make no claim about a surface.
+  the mesh. `null` for `facets` regions, which make no claim about a surface. For curved regions `max`
+  includes the chord sagitta of the triangles (the bound on every point of every triangle), while `rms`
+  is taken over the region's vertices only, so it measures the fit and not the tessellation.
 
 ### Surfaces
 

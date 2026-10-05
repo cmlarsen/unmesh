@@ -168,20 +168,37 @@ region per piece. Each region gets the most parsimonious surface that fits its v
   cone passes through its apex), the half-angle the mean angle of the vertices about the axis; then the
   same refinement.
 - **Tessellation law**: when the rulings of a cylinder are cut into equal chords `c` with equal
-  turning angles, including a partial arc, the turning angle gives `N` (it must divide the full turn)
-  and the radius is `c / (2 sin(π/N))`. Chords and turning angles are measured between rulings, so the
-  estimate does not depend on the fitted centre. It replaces the fitted radius when the two agree within
-  `tolerances.linear` and the region still fits.
+  turning angles, including a partial arc, the turning angle gives `N` and the radius is
+  `c / (2 sin(π/N))`. Chords and turning angles are measured between rulings, so the estimate does not
+  depend on the fitted centre. It replaces the least-squares radius only when (a) chords and turning
+  angles are equal within what `tolerances.linear` allows, (b) the mean turning angle is `2π/N` within
+  its own measurement uncertainty and the chord count agrees with `N` (exactly `N` for a closed ring,
+  fewer for an arc), and (c) with the radius fixed at the law's value and the axis refitted, the
+  vertices fit within the tolerance and their RMS is no worse than the least-squares RMS beyond the
+  allowance for one fewer free parameter (`rms² ≤ rms_lsq² (1 + 4/(n - 5))`). Exact vertices therefore
+  keep their exact least-squares radius (an arc of 90.05° in 9 chords is refused), and the law matters
+  on short noisy arcs, where the least-squares radius is poorly conditioned. A law radius stays fixed
+  through the coaxial and world-axis refits below.
 - **Coaxial snapping**: cylinders and cones whose axes are parallel within `angular_snap_deg` and
   collinear within three times `tolerances.linear` are refitted with one shared axis, and cylinders among
   them with radii within the tolerance share one radius, so a bore split across several regions is one
   cylinder. A group's axis within `angular_snap_deg` of a world axis is snapped to it. Either is kept
-  only when every member still fits within the tolerance and its RMS within half of it.
+  only when every member still fits within the tolerance, its RMS within half of it, and every cone's
+  half-angle stays in (0, π/2).
 
 Vertices of a tessellated curved face lie on the surface, but the triangles between them do not:
-`residual.max` and `report.max_deviation` include each triangle's chord sagitta (exact for cylinders,
-sampled for cones), so a coarse cylinder reports a deviation near `r (1 - cos(π/N))` while its fitted
-radius is exact.
+`residual.max` and `report.max_deviation` include each triangle's chord sagitta, so a coarse cylinder
+reports a deviation near `r (1 - cos(π/N))` while its fitted radius is exact. The sagitta is computed
+exactly, never sampled: for a cylinder as the 2D distance from the axis to the projected triangle, for
+a cone as the minimum of the convex signed distance `ρ cos α - h sin α` over the triangle (corners,
+the stationary points along each edge, and the point where the axis pierces the triangle). `residual.rms`
+is the RMS over the region's vertices only, without the sagitta.
+
+**Ambiguity sets (n-gon prism versus coarse cylinder, chamfer versus one-segment fillet):** on this
+path the labels decide. A regular n-gon prism whose sides carry one label each stays n planes; the same
+sides under one label become one cylinder with the exact circumradius and an honest deviation equal to
+the polygon's sagitta. The policy for the automatic `convert`, which has to choose without labels, is
+not set yet (#16 part B).
 
 ### `unmesh.convert` internals
 
