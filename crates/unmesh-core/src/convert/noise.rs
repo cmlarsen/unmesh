@@ -17,6 +17,7 @@ const CHI2_LOW_Z: f64 = -2.33;
 const CHI2_HIGH_Z: f64 = 4.26;
 const PLANE_F_CRIT: f64 = 3.0;
 const REWEIGHT_STEPS: usize = 10;
+const CHOLESKY_FLOOR: f64 = 1e-6;
 
 struct Sample {
     var: f64,
@@ -340,7 +341,7 @@ fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
     res.sort_by(f64::total_cmp);
     let ss: f64 = res[..keep].iter().sum();
     let dof = keep.checked_sub(rank).filter(|&d| d >= MIN_DOF)?;
-    let var = ss / dof as f64 / trimmed_variance(keep as f64 / local.len() as f64);
+    let var = ss / dof as f64 / trimmed_variance(keep, local.len());
     Some(Sample {
         var,
         dof,
@@ -371,6 +372,9 @@ fn solve(local: &[(f64, f64, f64)], idx: &[usize], np: usize) -> Option<([f64; N
             }
         }
     }
+    if let Some(coef) = cholesky(&a, &rhs, np) {
+        return Some((coef, np));
+    }
     let (vals, vecs) = jacobi(a);
     let top = vals.iter().cloned().fold(0.0, f64::max);
     if top <= 0.0 {
@@ -389,6 +393,50 @@ fn solve(local: &[(f64, f64, f64)], idx: &[usize], np: usize) -> Option<([f64; N
         }
     }
     Some((coef, rank))
+}
+
+/// The full-rank solve, or `None` when a pivot falls under `CHOLESKY_FLOOR`
+/// of the largest diagonal entry (the eigen-decomposition then decides the
+/// rank).
+fn cholesky(a: &M6, rhs: &[f64; NP], np: usize) -> Option<[f64; NP]> {
+    let top = (0..np).map(|i| a[i][i]).fold(0.0, f64::max);
+    if top <= 0.0 {
+        return None;
+    }
+    let mut l = [[0.0; NP]; NP];
+    for i in 0..np {
+        for j in 0..=i {
+            let mut s = a[i][j];
+            for k in 0..j {
+                s -= l[i][k] * l[j][k];
+            }
+            if i == j {
+                if s <= CHOLESKY_FLOOR * top {
+                    return None;
+                }
+                l[i][i] = s.sqrt();
+            } else {
+                l[i][j] = s / l[j][j];
+            }
+        }
+    }
+    let mut y = [0.0; NP];
+    for i in 0..np {
+        let mut s = rhs[i];
+        for k in 0..i {
+            s -= l[i][k] * y[k];
+        }
+        y[i] = s / l[i][i];
+    }
+    let mut x = [0.0; NP];
+    for i in (0..np).rev() {
+        let mut s = y[i];
+        for k in i + 1..np {
+            s -= l[k][i] * x[k];
+        }
+        x[i] = s / l[i][i];
+    }
+    Some(x)
 }
 
 type M6 = [[f64; NP]; NP];
@@ -448,7 +496,19 @@ fn jacobi(mut a: M6) -> ([f64; NP], M6) {
     (vals, v)
 }
 
-fn trimmed_variance(kept: f64) -> f64 {
+fn trimmed_variance(keep: usize, points: usize) -> f64 {
+    thread_local! {
+        static CACHE: std::cell::RefCell<rustc_hash::FxHashMap<(usize, usize), f64>> =
+            Default::default();
+    }
+    CACHE.with(|c| {
+        *c.borrow_mut()
+            .entry((keep, points))
+            .or_insert_with(|| trimmed_variance_of(keep as f64 / points as f64))
+    })
+}
+
+fn trimmed_variance_of(kept: f64) -> f64 {
     if kept >= 1.0 {
         return 1.0;
     }
