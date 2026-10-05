@@ -66,3 +66,113 @@ def test_report_text_still_works_on_dir(tmp_path, capsys):
     rc = main(["report", str(tmp_path), "--grid", "smoke"])
     assert rc == 0
     assert "converter" in capsys.readouterr().out
+
+
+def _page_data(records, grid="t"):
+    from unmesh_harness.runner.report import build_html
+
+    text = build_html(records, grid)
+    return text, json.loads(text.split("const DATA = ", 1)[1].split(";\n", 1)[0])
+
+
+def test_heat_all_is_mean_over_all_matching_records():
+    records = []
+    specs = [
+        ("alpha", "0-10", "0-10", 0.2),
+        ("beta", "0-10", "0-10", 1.0),
+        ("beta", "11-50", "100+", 1.0),
+    ]
+    for family, face, feat, f1 in specs:
+        records.append(
+            {
+                "part": f"{family}-0",
+                "converter": "unmesh",
+                "family": family,
+                "strata": {"face_bucket": face, "feature_bucket": feat},
+                "operator": "coarsen",
+                "severity": 0.5,
+                "seed": 0,
+                "status": "ok",
+                "f1": f1,
+                "mean_triangle_iou": f1,
+                "dev_input_p99": 0.001,
+                "valid": True,
+                "under_report": False,
+            }
+        )
+    text, data = _page_data(records)
+    assert "heat_all" in data
+    (marginal,) = [r for r in data["heat_all"] if r["operator"] == "coarsen"]
+    assert marginal["n"] == 3
+    assert marginal["f1"] == (0.2 + 1.0 + 1.0) / 3
+    direct = sum(r["f1"] for r in records) / len(records)
+    assert marginal["f1"] == direct
+    weighted = (
+        sum(r["f1"] * r["n"] for r in data["heat"]) / sum(r["n"] for r in data["heat"])
+    )
+    assert weighted == direct
+    assert marginal["valid"] == 1.0
+    assert marginal["under_report"] == 0.0
+
+
+def test_curves_ignore_bucket_filters():
+    records = [
+        {
+            "part": "p-0",
+            "converter": "unmesh",
+            "family": "planar",
+            "strata": {"face_bucket": "1-10", "feature_bucket": "0-10"},
+            "operator": "coarsen",
+            "severity": sev,
+            "seed": 0,
+            "status": "ok",
+            "f1": 0.9,
+            "mean_triangle_iou": 0.9,
+            "dev_input_p99": 0.001,
+            "valid": True,
+            "under_report": False,
+        }
+        for sev in (0.25, 0.5, 1.0)
+    ]
+    text, data = _page_data(records)
+    assert data["curves"], "curve rows are empty"
+    body = text.split("function renderCurves()", 1)[1].split("function rotMatrix", 1)[0]
+    assert "f-face" not in body and "f-feat" not in body
+    assert "f-conv" in body and "f-fam" in body
+
+
+def test_worst_and_failed_lists():
+    records = [
+        {
+            "part": f"p-{i}",
+            "converter": "unmesh",
+            "family": "planar",
+            "strata": {},
+            "operator": "coarsen",
+            "severity": 0.5,
+            "seed": 0,
+            "status": "ok",
+            "f1": 0.5,
+            "valid": True,
+        }
+        for i in range(2)
+    ]
+    records.append(
+        {
+            "part": "p-9",
+            "converter": "unmesh",
+            "family": "planar",
+            "strata": {},
+            "operator": "coarsen",
+            "severity": 0.5,
+            "seed": 1,
+            "status": "timeout",
+            "error": "exceeded 60 s",
+        }
+    )
+    records[0]["f1"] = float("nan")
+    _, data = _page_data(records)
+    assert all(r["f1"] is None or 0.0 <= r["f1"] <= 1.0 for r in data["worst"])
+    assert data["failed_total"] == 1
+    assert data["failed"][0]["part"] == "p-9"
+    assert "Timeouts and errors" in _page_data(records)[0]

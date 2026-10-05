@@ -32,6 +32,19 @@ def _strata(record: dict[str, Any]) -> dict[str, Any]:
     return strata if isinstance(strata, dict) else {}
 
 
+def _average_metrics(rs: list[dict[str, Any]]) -> dict[str, Any]:
+    row: dict[str, Any] = {"n": len(rs)}
+    for name, _ in METRICS:
+        if name in RATE_METRICS:
+            row[name] = sum(1 for r in rs if r.get(name) is True) / len(rs)
+            continue
+        vals = [metric_value(r, name) for r in rs]
+        vals = [v for v in vals if v is not None]
+        if vals:
+            row[name] = sum(vals) / len(vals)
+    return row
+
+
 def heatmap_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple, list[dict]] = {}
     for r in records:
@@ -51,23 +64,32 @@ def heatmap_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for (converter, family, face_bucket, feature_bucket, operator, severity), rs in sorted(
         groups.items()
     ):
-        row: dict[str, Any] = {
-            "converter": converter,
-            "family": family,
-            "face_bucket": face_bucket,
-            "feature_bucket": feature_bucket,
-            "operator": operator,
-            "severity": severity,
-            "n": len(rs),
-        }
-        for name, _ in METRICS:
-            if name in RATE_METRICS:
-                row[name] = sum(1 for r in rs if r.get(name) is True) / len(rs)
-                continue
-            vals = [metric_value(r, name) for r in rs]
-            vals = [v for v in vals if v is not None]
-            if vals:
-                row[name] = sum(vals) / len(vals)
+        row = _average_metrics(rs)
+        row.update(
+            {
+                "converter": converter,
+                "family": family,
+                "face_bucket": face_bucket,
+                "feature_bucket": feature_bucket,
+                "operator": operator,
+                "severity": severity,
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def heatmap_overall(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple, list[dict]] = {}
+    for r in records:
+        if r.get("status") != "ok":
+            continue
+        key = (r.get("converter", "?"), r["operator"], float(r["severity"]))
+        groups.setdefault(key, []).append(r)
+    rows = []
+    for (converter, operator, severity), rs in sorted(groups.items()):
+        row = _average_metrics(rs)
+        row.update({"converter": converter, "operator": operator, "severity": severity})
         rows.append(row)
     return rows
 
@@ -121,6 +143,10 @@ def metric_value(record: dict[str, Any], name: str) -> float | None:
 def worst_parts(records: list[dict[str, Any]], n: int = WORST_N) -> list[dict[str, Any]]:
     ok = [r for r in records if r.get("status") == "ok" and _num(r.get("f1")) is not None]
     return sorted(ok, key=lambda r: float(r["f1"]))[:n]
+
+
+def failed_cells(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [r for r in records if r.get("status") != "ok"]
 
 
 def viewer_payload(
@@ -200,6 +226,7 @@ def build_html(
         "cells": len(records),
         "ok": len(ok),
         "heat": heat,
+        "heat_all": heatmap_overall(records),
         "curves": curves,
         "worst": [
             {
@@ -209,12 +236,26 @@ def build_html(
                 "severity": r["severity"],
                 "seed": r["seed"],
                 "converter": r.get("converter", "?"),
-                "f1": r.get("f1"),
-                "dev_input_p99": r.get("dev_input_p99"),
+                "f1": _num(r.get("f1")),
+                "dev_input_p99": _num(r.get("dev_input_p99")),
                 "valid": r.get("valid"),
             }
             for r in worst
         ],
+        "failed": [
+            {
+                "part": r["part"],
+                "family": str(r.get("family", "?")),
+                "operator": r.get("operator", "?"),
+                "severity": r.get("severity", "?"),
+                "seed": r.get("seed", "?"),
+                "converter": r.get("converter", "?"),
+                "status": r.get("status", "?"),
+                "error": str(r.get("error", ""))[:300],
+            }
+            for r in failed_cells(records)[:WORST_N]
+        ],
+        "failed_total": len(failed_cells(records)),
         "viewers": {
             viewer_key(r): viewers[viewer_key(r)] for r in worst if viewer_key(r) in viewers
         },
@@ -256,6 +297,8 @@ canvas.mesh{border:1px solid #999;background:#111;cursor:grab}
 <div id="curves"></div>
 <h2>Worst parts by F1</h2>
 <div id="worst"></div>
+<h2>Timeouts and errors</h2>
+<div id="failed"></div>
 <script>
 "use strict";
 const DATA = __DATA__;
@@ -297,6 +340,21 @@ function matchFilt(r, f) {
   }
   return true;
 }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+function weightedMean(rows, metric) {
+  let num = 0, den = 0;
+  for (const r of rows) {
+    if (r[metric] === undefined || r[metric] === null) continue;
+    const n = r.n || 1;
+    num += r[metric] * n;
+    den += n;
+  }
+  return den ? num / den : undefined;
+}
 function cellColor(metric, v, lo, hi) {
   let t = hi > lo ? (v - lo) / (hi - lo) : 0.5;
   if (!HIGHER_BETTER[metric]) t = 1 - t;
@@ -317,34 +375,57 @@ function renderHeats() {
   const f = curFilters();
   const div = document.getElementById("heats");
   div.innerHTML = "";
+  const unfiltered = Object.keys(f).length === 0 && DATA.heat_all;
   for (const metric of METRICS) {
-    const rows = DATA.heat.filter(
-      (r) => matchFilt(r, f) && r[metric] !== undefined
-    );
-    if (!rows.length) continue;
-    const ops = uniq(rows, "operator");
-    const sevs = [...new Set(rows.map((r) => r.severity))];
+    let table;
+    if (unfiltered) {
+      table = DATA.heat_all
+        .filter((r) => r[metric] !== undefined)
+        .map((r) => ({operator: r.operator, severity: r.severity, value: r[metric]}));
+    } else {
+      const rows = DATA.heat.filter(
+        (r) => matchFilt(r, f) && r[metric] !== undefined
+      );
+      if (!rows.length) continue;
+      const ops = uniq(rows, "operator");
+      const sevs = [...new Set(rows.map((r) => r.severity))];
+      sevs.sort((a, b) => a - b);
+      table = [];
+      for (const o of ops) {
+        for (const s of sevs) {
+          const v = weightedMean(
+            rows.filter((r) => r.operator === o && r.severity === s), metric
+          );
+          if (v !== undefined) table.push({operator: o, severity: s, value: v});
+        }
+      }
+    }
+    if (!table.length) continue;
+    const ops = [...new Set(table.map((c) => c.operator))].sort();
+    const sevs = [...new Set(table.map((c) => c.severity))];
     sevs.sort((a, b) => a - b);
-    const vals = rows.map((r) => r[metric]);
+    const vals = table.map((c) => c.value);
     const lo = Math.min(...vals), hi = Math.max(...vals);
     let h = "<table><tr><th class=op>operator / severity</th>";
-    for (const s of sevs) h += "<th>" + s + "</th>";
+    for (const s of sevs) h += "<th>" + esc(s) + "</th>";
     h += "</tr>";
     for (const o of ops) {
-      h += "<tr><td class=op>" + o + "</td>";
+      h += "<tr><td class=op>" + esc(o) + "</td>";
       for (const s of sevs) {
-        const hit = rows.find((r) => r.operator === o && r.severity === s);
+        const hit = table.find((c) => c.operator === o && c.severity === s);
         if (hit) {
-          const style = cellColor(metric, hit[metric], lo, hi);
+          const style = cellColor(metric, hit.value, lo, hi);
           h += '<td style="' + style + '">';
-          h += fmt(metric, hit[metric]) + "</td>";
+          h += esc(fmt(metric, hit.value)) + "</td>";
         } else {
           h += "<td>-</td>";
         }
       }
       h += "</tr>";
     }
-    div.innerHTML += "<h3>" + metric + "</h3>" + h + "</table>";
+    const d = document.createElement("div");
+    d.innerHTML = "<h3>" + esc(metric) + "</h3>" + h + "</table>";
+    div.appendChild(d);
   }
 }
 function curveSvg(o, m, famRows, fams, sevs) {
@@ -371,27 +452,38 @@ function curveSvg(o, m, famRows, fams, sevs) {
     for (const p of pts) {
       s += '<circle cx="' + X(p.severity).toFixed(1) + '" ';
       s += 'cy="' + Y(p.mean).toFixed(1) + '" r="3" ';
-      s += 'fill="hsl(' + hue + ',70%,40%)"><title>' + fam + " ";
+      s += 'fill="hsl(' + hue + ',70%,40%)"><title>' + esc(fam) + " ";
       s += p.severity + ": " + fmt(m, p.mean) + "</title></circle>";
     }
   });
   return s + "</svg>";
 }
 function renderCurves() {
-  const f = curFilters();
+  const conv = document.getElementById("f-conv").value;
+  const fam = document.getElementById("f-fam").value;
   const m = document.getElementById("c-metric").value;
   const div = document.getElementById("curves");
   div.innerHTML = "";
-  const rows = DATA.curves.filter((r) => r.metric === m && matchFilt(r, f));
+  const rows = DATA.curves.filter(
+    (r) => r.metric === m
+      && (conv === "(all)" || String(r.converter) === conv)
+      && (fam === "(all)" || String(r.family) === fam)
+  );
   for (const o of uniq(rows, "operator")) {
     const famRows = rows.filter((r) => r.operator === o);
     const fams = uniq(famRows, "family");
     const sevs = [...new Set(famRows.map((r) => r.severity))];
     sevs.sort((a, b) => a - b);
     const d = document.createElement("div");
-    d.innerHTML = "<h3>" + o + " (" + m + ")</h3>";
-    d.innerHTML += curveSvg(o, m, famRows, fams, sevs);
-    d.innerHTML += "<p>" + fams.join(", ") + "</p>";
+    const h3 = document.createElement("h3");
+    h3.textContent = o + " (" + m + ")";
+    d.appendChild(h3);
+    const wrap = document.createElement("div");
+    wrap.innerHTML = curveSvg(o, m, famRows, fams, sevs);
+    d.appendChild(wrap);
+    const p = document.createElement("p");
+    p.textContent = fams.join(", ");
+    d.appendChild(p);
     div.appendChild(d);
   }
 }
@@ -467,9 +559,15 @@ function renderWorst() {
     const d = document.createElement("div");
     d.className = "card";
     const f1 = w.f1 === null ? "-" : w.f1.toFixed(3);
-    d.innerHTML = "<b>" + (i + 1) + ". " + w.part + "</b> <span>" +
-      w.converter + " " + w.operator + "@" + w.severity +
-      " seed " + w.seed + " F1 " + f1 + "</span>";
+    const head = document.createElement("div");
+    const rank = document.createElement("b");
+    rank.textContent = (i + 1) + ". " + w.part;
+    const detail = document.createElement("span");
+    detail.textContent = " " + w.converter + " " + w.operator + "@" + w.severity +
+      " seed " + w.seed + " F1 " + f1;
+    head.appendChild(rank);
+    head.appendChild(detail);
+    d.appendChild(head);
     const mesh = DATA.viewers[key];
     if (mesh) {
       const cv = document.createElement("canvas");
@@ -511,7 +609,8 @@ function renderWorst() {
 }
 document.getElementById("grid").textContent = DATA.grid;
 document.getElementById("meta").textContent = DATA.cells + " cells, " +
-  DATA.ok + " ok, converters: " + DATA.converters.join(", ");
+  DATA.ok + " ok, " + (DATA.failed_total || 0) + " failed, converters: " +
+  DATA.converters.join(", ");
 fill("f-conv", uniq(DATA.heat, "converter"));
 fill("f-fam", uniq(DATA.heat, "family"));
 fill("f-face", uniq(DATA.heat, "face_bucket"));
@@ -533,5 +632,36 @@ cm.addEventListener("change", renderCurves);
 renderHeats();
 renderCurves();
 renderWorst();
+renderFailed();
+function renderFailed() {
+  const div = document.getElementById("failed");
+  div.innerHTML = "";
+  const rows = DATA.failed || [];
+  const note = document.createElement("p");
+  note.textContent = (DATA.failed_total || 0) + " failed cells" +
+    (rows.length < (DATA.failed_total || 0)
+      ? ", showing first " + rows.length : "") + ".";
+  div.appendChild(note);
+  if (!rows.length) return;
+  const t = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const c of ["part", "converter", "operator", "severity", "seed", "status", "error"]) {
+    const th = document.createElement("th");
+    th.textContent = c;
+    head.appendChild(th);
+  }
+  t.appendChild(head);
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    for (const c of ["part", "converter", "operator", "severity", "seed", "status", "error"]) {
+      const td = document.createElement("td");
+      td.textContent = String(r[c]);
+      if (c === "part" || c === "operator" || c === "status") td.className = "op";
+      tr.appendChild(td);
+    }
+    t.appendChild(tr);
+  }
+  div.appendChild(t);
+}
 </script>
 """
