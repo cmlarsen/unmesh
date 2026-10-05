@@ -79,3 +79,39 @@ measured two-sided max against the input. Negative means the converter under-rep
 
 `unmesh_harness.judge` imports only `unmesh._core` and `unmesh.ir.Ir`. The Rust module uses `ir` types
 and parry3d only.
+
+## The runner's STEP deviation check
+
+`runner.score.step_problems` checks the written STEP against the input mesh. It tessellates the
+re-imported solid at an absolute linear deflection `STEP_TESSELLATION_MM` (2 um, angle 0.1 rad),
+judges that tessellation as a facets IR against the input mesh, and fails the cell when the
+two-sided max exceeds
+
+```
+bound = min(judge input max, row floor dev_input_max) + STEP_TESSELLATION_MM + max_shape_tolerance
+```
+
+`max_shape_tolerance` is the writer's own limit on OCCT shape tolerance, `WriteOptions` (1 um), so
+`STEP_TOLERANCE_MM` is 3 um. The terms come from two triangle inequalities on Hausdorff distances:
+
+- STEP tessellation to input is at most STEP surface to input plus the tessellation's chord error
+  (at most the deflection).
+- STEP surface to input is at most STEP surface to IR (the writer's tolerance) plus IR to input,
+  which is what the judge measured.
+
+The input mesh's own chord sagitta (about 5 um on the curved smoke parts at deflection
+(0.01, 0.2), about 0 on planes) lives in the judge term: the IR's analytic surface sits on the
+input's vertices, so IR to input already reads it. It is not added twice. The floor only caps the
+judge term, so a cell whose judge deviation already breaks the floor cannot widen its STEP bound.
+
+Read the other way, the check fails any STEP whose surface is further than
+`bound + STEP_TESSELLATION_MM` from the input. On `through_bore-0000` (judge 4.99 um, bound 8.0 um),
+a bore re-cut 2, 5, 10 and 20 um wider in the STEP measures 7.0, 10.0, 15.0 and 25.0 um: every
+offset over 3 um fails.
+
+The tessellation must be absolute. build123d's `Shape.tessellate` meshes with a deflection relative
+to each edge's size, which on a 44.6 mm bore leaves the angular limit in charge and a 13.9 um chord
+error. That error, not the writer, made `through_bore`, `blind_bore` and `bore_chamfer` read 13.3,
+13.3 and 17.8 um against bounds of 11.0, 11.0 and 12.7 um (issue #117). The written cylinder's radius
+matches the IR's to 1e-11 mm. At an absolute deflection they read 4.99, 4.99 and 6.67 um, equal to
+their judge deviations.

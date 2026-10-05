@@ -7,14 +7,16 @@ from typing import Any
 import numpy as np
 
 from unmesh.ir import Ir
+from unmesh.step import WriteOptions
 
 from ..groundtruth import validity_problems
 from ..labels import LabeledMesh
 from ..metrics.recovery import score_recovery
 
 VOLUME_REL_TOL = 0.01
-STEP_TESSELLATION_MM = 0.005
+STEP_TESSELLATION_MM = 0.002
 STEP_TESSELLATION_ANGLE = 0.1
+STEP_TOLERANCE_MM = STEP_TESSELLATION_MM + WriteOptions().max_shape_tolerance
 
 
 def face_recovery(
@@ -41,6 +43,47 @@ def load_step_shape(path):
         return import_step(str(path)), None
     except Exception as e:
         return None, f"STEP check failed: {type(e).__name__}: {e}"
+
+
+def step_triangles(shape: Any, linear: float, angular: float) -> np.ndarray:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+
+    wrapped = BRepBuilderAPI_Copy(getattr(shape, "wrapped", shape)).Shape()
+    BRepMesh_IncrementalMesh(wrapped, linear, False, angular, True)
+    blocks = []
+    exp = TopExp_Explorer(wrapped, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face_s(exp.Current())
+        exp.Next()
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(face, loc)
+        if tri is None:
+            raise RuntimeError("STEP face has no triangulation")
+        trsf = loc.Transformation()
+        nodes = np.array(
+            [
+                (q.X(), q.Y(), q.Z())
+                for q in (tri.Node(i).Transformed(trsf) for i in range(1, tri.NbNodes() + 1))
+            ],
+            dtype=np.float64,
+        )
+        idx = np.array(
+            [
+                [tri.Triangle(j).Value(k) - 1 for k in (1, 2, 3)]
+                for j in range(1, tri.NbTriangles() + 1)
+            ],
+            dtype=np.int64,
+        ).reshape(-1, 3)
+        if face.Orientation() == TopAbs_REVERSED:
+            idx = idx[:, [0, 2, 1]]
+        blocks.append(nodes[idx])
+    return np.concatenate(blocks) if blocks else np.zeros((0, 3, 3))
 
 
 def step_problems(
@@ -74,9 +117,7 @@ def _step_problems(shape, truth_volume, input_tris, bound, samples_per_mm2):
     ):
         problems.append(f"volume {shape.volume:.4f} differs from truth {truth_volume:.4f}")
     if input_tris is not None and bound is not None and not problems:
-        verts, tri_idx = shape.tessellate(STEP_TESSELLATION_MM, STEP_TESSELLATION_ANGLE)
-        v = np.array([[p.X, p.Y, p.Z] for p in verts], dtype=np.float64)
-        tris = v[np.array(tri_idx, dtype=np.int64)]
+        tris = step_triangles(shape, STEP_TESSELLATION_MM, STEP_TESSELLATION_ANGLE)
         result = judge(faceted_ir(tris), tris, input_tris, None, samples_per_mm2=samples_per_mm2)
         if not result.truth.max <= bound:
             problems.append(
