@@ -365,10 +365,11 @@ fn grow_group(
 
 /// Joins adjacent groups whose union still fits one surface, starting from
 /// the larger group's: separate seeds can claim pieces of one face before
-/// either reaches the other.
+/// either reaches the other. Adjacency is any shared edge, since slivers
+/// near a cone's apex can turn by less than their own noise allows.
 fn merge_groups(
     pool: &mut Pool<'_>,
-    g: &Graph,
+    near: &[Vec<u32>],
     mut groups: Vec<Group>,
     owner: &[u32],
     tol: f64,
@@ -382,7 +383,7 @@ fn merge_groups(
                 continue;
             }
             for &r in &grp.members {
-                for &x in &g.adj[r as usize] {
+                for &x in &near[r as usize] {
                     let o = owner[x as usize];
                     if o == NONE {
                         continue;
@@ -510,7 +511,12 @@ pub fn run(
             }
         }
     }
-    let groups = merge_groups(&mut pool, &g, groups, &owner, tol);
+    let mut near: Vec<Vec<u32>> = vec![Vec::new(); n];
+    for &(a, b) in &pairs {
+        near[a as usize].push(b);
+        near[b as usize].push(a);
+    }
+    let groups = merge_groups(&mut pool, &near, groups, &owner, tol);
     let groups: Vec<Group> = groups
         .into_iter()
         .filter(|grp| grp.members.len() >= MIN_MEMBERS && grp.fit.4 <= tol)
