@@ -481,6 +481,96 @@ def test_gate_row_floors_and_truth():
     assert not gate(weak, grid, ["unmesh"], "s").passed
 
 
+def test_gate_compare_only_skips_absolute_floors_but_not_under_report():
+    grid = small_grid(parts=2, cells=("identity",))
+    cells = [{**c, "floors": {"compare_only": True}} for c in grid.cells]
+    grid = dataclasses.replace(grid, cells=cells)
+    ok = row_records(grid)
+    assert gate(ok, grid, ["unmesh"], "s").passed
+    collapsed = {
+        "f1": 0.1,
+        "matched": 1,
+        "regions": 20,
+        "faces": 10,
+        "fallback": True,
+        "valid": False,
+        "step_problems": ["STEP has 3012 faces for 16 IR regions"],
+        "dev_input_max": 0.5,
+        "dev_truth_max": 0.5,
+    }
+    assert gate(row_records(grid, **collapsed), grid, ["unmesh"], "s").passed
+    assert not gate(row_records(grid, under_report=True), grid, ["unmesh"], "s").passed
+    assert not gate(row_records(grid, under_report=None), grid, ["unmesh"], "s").passed
+    assert not gate(ok[:-1], grid, ["unmesh"], "s").passed
+
+
+def test_grid_row_parts_scope_expand():
+    grid = load_grid("smoke")
+    want = grid.entries[0]["id"]
+    cells = [{**c, "parts": [want]} for c in grid.cells if c["operator"] == "identity"]
+    scoped = dataclasses.replace(grid, cells=cells)
+    expanded = scoped.expand(["unmesh"], "s")
+    assert expanded
+    assert {cell.part for cell, _ in expanded} == {want}
+
+
+def _load_raw_grid(name, tmp_path):
+    from unmesh_harness.runner import grid as grid_module
+
+    raw = json.loads(grid_module.find_grid(name).read_text())
+    path = tmp_path / f"{name}.json"
+    return raw, path, grid_module
+
+
+def test_grid_row_parts_rejects_unknown_and_empty(tmp_path, monkeypatch):
+    from unmesh_harness.runner import load_grid
+
+    raw, path, grid_module = _load_raw_grid("smoke", tmp_path)
+    raw["cells"][0]["parts"] = ["no-such-part-0000"]
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    with pytest.raises(KeyError, match="unknown parts"):
+        load_grid("smoke")
+    raw["cells"][0]["parts"] = []
+    path.write_text(json.dumps(raw))
+    with pytest.raises(KeyError, match="selects no parts"):
+        load_grid("smoke")
+
+
+def test_grid_compare_only_rejects_mixed_absolute_floors(tmp_path, monkeypatch):
+    from unmesh_harness.runner import load_grid
+
+    raw, path, grid_module = _load_raw_grid("smoke", tmp_path)
+    raw["cells"][0]["floors"] = {"compare_only": True, "f1_cell": 0.9}
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    with pytest.raises(ValueError, match="compare_only"):
+        load_grid("smoke")
+
+
+def test_ambiguity_check_respects_row_parts(tmp_path, monkeypatch):
+    from unmesh_harness.runner import load_grid
+
+    raw, path, grid_module = _load_raw_grid("smoke_curved", tmp_path)
+    scoped = {
+        "operator": "refine",
+        "severity": 0.5,
+        "steps": [["refine", 0.5]],
+        "seeds": [0],
+        "parts": ["through_bore-0000"],
+        "floors": {"compare_only": True},
+    }
+    raw["cells"] = [*raw["cells"], scoped]
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(grid_module, "find_grid", lambda name: path)
+    loaded = load_grid("smoke_curved")
+    assert loaded.cells[-1]["parts"] == ["through_bore-0000"]
+    raw["cells"][-1]["parts"] = ["through_bore-0000", "chamfer_same_chord-0000"]
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="refine"):
+        load_grid("smoke_curved")
+
+
 def test_gate_topology_floors_are_optional():
     grid = small_grid(parts=2, cells=("identity",))
     assert gate(row_records(grid), grid, ["unmesh"], "s").passed
