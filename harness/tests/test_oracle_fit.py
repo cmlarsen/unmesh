@@ -1,10 +1,16 @@
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 
 pytest.importorskip("OCP")
 
+import unmesh  # noqa: E402
+from unmesh_harness import degrade  # noqa: E402
+from unmesh_harness.groundtruth import generate  # noqa: E402
+from unmesh_harness.labels import tessellate  # noqa: E402
+from unmesh_harness.metrics.recovery import score_recovery  # noqa: E402
 from unmesh_harness.oracle_fit import (  # noqa: E402
     COARSE_DEFLECTION,
     CURVED_FAMILIES,
@@ -147,3 +153,22 @@ def test_parallel_run_after_an_in_process_convert_does_not_hang():
     )
     done = subprocess.run([sys.executable, "-c", script], timeout=300, capture_output=True)
     assert done.returncode == 0, done.stderr.decode()[-2000:]
+
+
+@pytest.mark.parametrize(
+    ("part", "chain", "f1_floor", "max_regions"),
+    [
+        ("bore_chamfer-0009", [("refine", 0.15), ("noise_off_plane", 0.02)], 0.95, 6),
+        ("round_slot_blind-0005", [("noise_isotropic", 0.02)], 1.0, None),
+        ("round_slot_blind-0006", [("noise_isotropic", 0.02)], 1.0, None),
+        ("revolved_cone-0006", [("noise_isotropic", 0.02)], 1.0, None),
+    ],
+)
+def test_noisy_curved_parts_keep_their_faces(part, chain, f1_floor, max_regions):
+    family, seed = part.rsplit("-", 1)
+    mesh = degrade.chain(tessellate(generate(family, int(seed)).solid, 0.01, 0.2), chain, 0)
+    ir, _ = unmesh.convert(np.asarray(mesh.tris, dtype=np.float64))
+    result = score_recovery(mesh, mesh.face_id, ir, degrade.to_original(mesh))
+    assert result["f1"] >= f1_floor
+    if max_regions is not None:
+        assert len(ir.regions) <= max_regions
