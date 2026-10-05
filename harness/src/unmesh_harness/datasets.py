@@ -167,6 +167,34 @@ def git_blob_sha1(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
+_TMP_SUFFIX = ".unmesh-tmp"
+
+
+def _atomic_write_bytes(dest: Path, data: bytes) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + _TMP_SUFFIX)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _clean_stale_tmp_files(root: Path) -> None:
+    for tmp in root.rglob("*" + _TMP_SUFFIX):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def classify_thingi_license(name: str) -> tuple[str, str | None]:
     if name in THINGI_REDISTRIBUTABLE:
         return REDISTRIBUTABLE, THINGI_REDISTRIBUTABLE[name]
@@ -276,8 +304,8 @@ class Manifest:
 
     def write(self, root: Path) -> Path:
         path = root / MANIFEST_NAME
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_json(), indent=2, sort_keys=True) + "\n")
+        body = (json.dumps(self.to_json(), indent=2, sort_keys=True) + "\n").encode()
+        _atomic_write_bytes(path, body)
         return path
 
     @staticmethod
@@ -410,8 +438,7 @@ def fetch_nist_pmi(ds: Dataset, root: Path, limit: int, **_: Any) -> Manifest:
         names = sorted(n for n in z.namelist() if n.lower().endswith((".stp", ".step")))[:limit]
         for name in names:
             dest = root / "step" / Path(name).name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(z.read(name))
+            _atomic_write_bytes(dest, z.read(name))
             manifest.entries.append(_nist_entry(ds, root, dest))
     shutil.rmtree(root / "_archive")
     return manifest
@@ -421,7 +448,19 @@ def _prior_entries(root: Path) -> list[dict[str, Any]]:
     path = root / MANIFEST_NAME
     if not path.is_file():
         return []
-    return Manifest.read(root).get("entries", [])
+    try:
+        record = Manifest.read(root)
+    except ValueError as e:
+        print(
+            f"warning: ignoring unreadable cache manifest {path}: {e}; rebuilding",
+            file=sys.stderr,
+        )
+        return []
+    entries = record.get("entries", []) if isinstance(record, dict) else None
+    if not isinstance(entries, list):
+        print(f"warning: ignoring malformed cache manifest {path}; rebuilding", file=sys.stderr)
+        return []
+    return entries
 
 
 def _cached_step_ok(root: Path, entry: dict[str, Any] | None, sha: str) -> bool:
@@ -458,6 +497,7 @@ def _with_preserved_extras(
 
 def fetch_nist_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
     manifest = _manifest_for(ds, mode="manifest", refs=len(wanted))
+    _clean_stale_tmp_files(root)
     prior = _prior_entries(root)
     by_id = {e["id"]: e for e in prior if "id" in e}
     missing = sorted(
@@ -490,8 +530,7 @@ def fetch_nist_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -
                 dest = root / prior_entry["files"]["step"]["path"]
             else:
                 dest = root / "step" / names[fid]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(fetched[fid])
+            _atomic_write_bytes(dest, fetched[fid])
             if sha256_file(dest) != wanted[fid]:
                 raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
             base = prior_entry or _nist_entry(ds, root, dest)
@@ -531,8 +570,7 @@ def fetch_freecad_library(ds: Dataset, root: Path, limit: int, **_: Any) -> Mani
                 data = http_bytes(raw + urllib.parse.quote(node["path"]))
                 if git_blob_sha1(data) != node["sha"]:
                     raise RuntimeError(f"git blob checksum mismatch for {node['path']}")
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
+                _atomic_write_bytes(dest, data)
             files[kind] = file_record(root, dest, source_path=node["path"], git_blob=node["sha"])
         manifest.entries.append(
             {
@@ -564,6 +602,7 @@ def _fresh_freecad_dest(root: Path, node: dict[str, Any], taken: set[str]) -> Pa
 
 def fetch_freecad_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any) -> Manifest:
     manifest = _manifest_for(ds, mode="manifest", commit=FREECAD_COMMIT, refs=len(wanted))
+    _clean_stale_tmp_files(root)
     prior = _prior_entries(root)
     by_id = {e["id"]: e for e in prior if "id" in e}
     missing = sorted(
@@ -591,8 +630,7 @@ def fetch_freecad_refs(ds: Dataset, root: Path, wanted: dict[str, str], **_: Any
                 dest = root / prior_entry["files"]["step"]["path"]
             else:
                 dest = _fresh_freecad_dest(root, node, taken)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(fetched[fid])
+            _atomic_write_bytes(dest, fetched[fid])
             if sha256_file(dest) != wanted[fid]:
                 raise RuntimeError(f"{fid}: sha256 mismatch against corpus manifest")
             base: dict[str, Any] = (
@@ -658,8 +696,7 @@ def fetch_thingi10k(
             data = stl_bytes(z["vertices"], z["facets"])
         thing_url = f"https://www.thingiverse.com/thing:{item['thing_id']}"
         dest = root / "stl" / f"{item['file_id']}.stl"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        _atomic_write_bytes(dest, data)
         manifest.entries.append(
             {
                 "id": f"thingi10k/{item['file_id']}",
