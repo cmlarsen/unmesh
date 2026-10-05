@@ -228,7 +228,7 @@ def imported_candidates(cache_dir=None, have: Iterable[str] = ()) -> list[dict[s
     pinned = set(have)
     old = [c for c in out if c["file_id"] in pinned]
     fresh = [c for c in out if c["file_id"] not in pinned]
-    return (old + fresh)[:IMPORTED_TIER_CANDIDATE_CAP]
+    return old + fresh[: max(0, IMPORTED_TIER_CANDIDATE_CAP - len(pinned))]
 
 
 def rejected_reasons(manifest_path: Path | None = None) -> dict[str, str]:
