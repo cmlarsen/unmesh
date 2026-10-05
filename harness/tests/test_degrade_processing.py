@@ -20,8 +20,10 @@ from unmesh_harness.degrade.processing import (
     MASK_THRESHOLD,
     _exact_votes,
     _weld,
+    bbox_diagonal,
     sample_source,
     transfer_labels,
+    welds_away,
 )
 from unmesh_harness.groundtruth import generate
 from unmesh_harness.labels import DEFLECTION_SETTINGS, LabeledMesh, outward_normals, tessellate
@@ -225,7 +227,9 @@ def test_identity_relabel_through_path_a(smoke_parts):
         transfer_labels(out, mesh.tris, mesh.face_id)
         assert np.array_equal(out.face_id, mesh.face_id), pid
         conf = np.array(out.metadata[CONFIDENCE_KEY])
-        assert (conf >= MASK_THRESHOLD).mean() >= 0.99, pid
+        flat = welds_away(mesh.tris, bbox_diagonal(mesh.tris))
+        assert (conf[flat] == 0.0).all(), pid
+        assert (conf[~flat] >= MASK_THRESHOLD).mean() >= 0.99, pid
         total += len(mesh.tris)
         correct += int((out.face_id == mesh.face_id).sum())
         confident += int((conf >= MASK_THRESHOLD).sum())
@@ -536,8 +540,9 @@ def oracle_on_degraded(clean: LabeledMesh, degraded: LabeledMesh):
     base = build_oracle_ir(clean)
     surface = {r.id: r.surface for r in base.regions}
     regions = []
+    gone = welds_away(degraded.tris, bbox_diagonal(clean.tris))
     for face in clean.faces:
-        ids = np.nonzero(degraded.face_id == face.id)[0]
+        ids = np.nonzero((degraded.face_id == face.id) & ~gone)[0]
         if len(ids):
             regions.append(Region(len(regions), surface[face.id], ids.tolist(), None))
     return dataclasses.replace(base, regions=regions, adjacencies=[])
@@ -658,8 +663,9 @@ def test_processing_chains_keep_confidence_aligned(name, tail, smoke_pair):
 
 
 @pytest.mark.parametrize("name", PROC_OPS)
-def test_processing_after_processing_caps_confidence(name, cyl):
-    first = degrade.apply("isotropic_remesh", cyl, 1.0, SEED)
+def test_processing_after_processing_caps_confidence(name):
+    part = LabeledMesh.load(FIXTURES / "boss_plate-0000.npz")
+    first = degrade.apply("vertex_clustering", part, 0.5, SEED)
     assert min(first.metadata[CONFIDENCE_KEY]) < MASK_THRESHOLD
     fresh_input = copy.deepcopy(first)
     del fresh_input.metadata[CONFIDENCE_KEY]
@@ -702,12 +708,12 @@ def test_projection_stays_on_the_vertex_faces():
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "processing"
 PINNED = {
     ("round_boss-0000", "quadric_decimation"): "b2903b0f0ba77528",
-    ("round_boss-0000", "isotropic_remesh"): "2b73dc3ce9b67db8",
+    ("round_boss-0000", "isotropic_remesh"): "0752882120413894",
     ("round_boss-0000", "laplacian_smoothing"): "10b50fff713551a9",
     ("round_boss-0000", "taubin_smoothing"): "7319d108dddc5ec3",
     ("round_boss-0000", "vertex_clustering"): "293f63b680729c73",
     ("thin_walls-0001", "quadric_decimation"): "589af057120c6e30",
-    ("thin_walls-0001", "isotropic_remesh"): "121eab548dd9b365",
+    ("thin_walls-0001", "isotropic_remesh"): "b5330790f3ed5381",
     ("thin_walls-0001", "laplacian_smoothing"): "91248b810140338c",
     ("thin_walls-0001", "taubin_smoothing"): "19f01541fcf984ae",
     ("thin_walls-0001", "vertex_clustering"): "90171284528ebb7a",
@@ -742,3 +748,46 @@ def test_qem_refuses_a_collapse_that_folds_a_triangle(box):
     assert qem.collapse_ok(a, b, V[b].copy())[0]
     far = V[a] + 50.0 * (V[a] - V[b])
     assert not qem.collapse_ok(a, b, far)[0]
+
+
+COUNT_CHANGING = (
+    ("refine", 0.3),
+    ("slivers", 0.5),
+    ("t_junctions", 0.5),
+    ("duplicate_facets", 0.5),
+    ("hole_patch", 0.5),
+    ("stray_shells", 0.5),
+    ("nonmanifold_fin", 0.5),
+)
+CHAIN_PARTS = (
+    "boss_plate-0000",
+    "corner_fillet-0000",
+    "counterbore-0000",
+    "round_boss-0000",
+    "thin_walls-0001",
+)
+CHAIN_PINNED = {
+    "quadric_decimation": "f3f4c2ecc384335e",
+    "isotropic_remesh": "9e5b0aa7aaf10936",
+    "laplacian_smoothing": "b9c3126dd03d05e5",
+    "taubin_smoothing": "9a98c64ef932e8a5",
+    "vertex_clustering": "0b0f939cfa1714d8",
+}
+
+
+@pytest.fixture(scope="module")
+def chain_parts():
+    return {pid: LabeledMesh.load(FIXTURES / f"{pid}.npz") for pid in CHAIN_PARTS}
+
+
+@pytest.mark.parametrize("name", PROC_OPS)
+def test_chained_confidence_is_pinned_across_platforms(name, chain_parts):
+    digest = hashlib.sha256()
+    for pid in CHAIN_PARTS:
+        first = degrade.apply(name, chain_parts[pid], 0.5, SEED)
+        for tail, severity in COUNT_CHANGING:
+            out = degrade.apply(tail, first, severity, SEED + 1)
+            conf = np.asarray(out.metadata[CONFIDENCE_KEY])
+            assert len(conf) == len(out.tris), (pid, tail)
+            digest.update(out.face_id.astype(np.int64).tobytes() + conf.tobytes())
+    assert digest.hexdigest()[:16] == CHAIN_PINNED[name]
