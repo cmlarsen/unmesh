@@ -51,6 +51,20 @@ def _report(args) -> int:
     return _finish(records, args.gate, load_grid(args.grid), converters, sha)
 
 
+def _compare(args) -> int:
+    from .runner.compare import compare_files, format_comparison
+
+    comp = compare_files(args.run_a, args.run_b, args.converter)
+    print(format_comparison(comp, label_a=args.run_a.name, label_b=args.run_b.name))
+    if comp.error:
+        print(f"ERROR: {comp.error}")
+        return 2
+    if comp.regressions:
+        print(f"{len(comp.regressions)} regression(s) vs {args.run_a.name}")
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unmesh-harness")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -80,7 +94,14 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--grid", default="smoke")
     report.add_argument("--gate", action="store_true")
 
+    compare = sub.add_parser("compare", help="compare two results files with noise bands")
+    compare.add_argument("run_a", type=Path)
+    compare.add_argument("run_b", type=Path)
+    compare.add_argument("--converter", default="unmesh")
+
     args = parser.parse_args(argv)
+    if args.group == "compare":
+        return _compare(args)
     if args.group == "run":
         return _run(args)
     if args.group == "report":

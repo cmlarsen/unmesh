@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -34,6 +37,12 @@ jobs:
         with:
           path: ${{ runner.temp }}/smoke/cache
           key: smoke-prep-${{ matrix.os }}-${{ hashFiles('corpus/v0.json', 'harness/grids/smoke.json', 'harness/src/unmesh_harness/groundtruth/**', 'harness/src/unmesh_harness/labels.py', 'harness/src/unmesh_harness/corpus.py', 'harness/src/unmesh_harness/runner/execute.py', 'harness/src/unmesh_harness/degrade/__init__.py', 'harness/src/unmesh_harness/degrade/fillets.py', 'harness/src/unmesh_harness/degrade/retriangulate.py') }}
+      - name: Pin smoke grid to main for PR compare
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main --depth 1
+          git show FETCH_HEAD:harness/grids/smoke.json > harness/grids/smoke.json
+          git diff --stat
       - name: Smoke grid
         env:
           UV_LOCKED: "1"
@@ -48,6 +57,40 @@ jobs:
           name: smoke-results-${{ matrix.os }}
           path: ${{ runner.temp }}/smoke/smoke.jsonl
           if-no-files-found: ignore
+      - name: Compare against main baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          main_tree="$RUNNER_TEMP/unmesh-main"
+          base="$RUNNER_TEMP/baseline"
+          mkdir -p "$base"
+          git fetch origin main --depth 1
+          git worktree add --detach "$main_tree" FETCH_HEAD
+          uv run --locked scripts/ci-baseline-plan \
+            --repo "$GITHUB_REPOSITORY" \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
+            --artifact "smoke-results-${{ matrix.os }}" \
+            --out "$base/baseline.jsonl" \
+            --main-tree "$main_tree"
+          if [ ! -s "$base/baseline.jsonl" ]; then
+            exit 0
+          fi
+          if uv run --project "$main_tree" --locked unmesh-harness compare \
+            "$base/baseline.jsonl" "$RUNNER_TEMP/smoke/smoke.jsonl"; then
+            echo "compare: no regressions"
+            exit 0
+          fi
+          echo "compare: regressions found, checking for an approved waiver"
+          if uv run --project "$main_tree" --locked python "$main_tree/scripts/check-waiver" \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
+            --run-a "$base/baseline.jsonl" --run-b "$RUNNER_TEMP/smoke/smoke.jsonl"; then
+            echo "compare: regression waived"
+            exit 0
+          fi
+          echo "compare: regressions without an approved waiver"
+          exit 1
       - name: Wheel imports on Python 3.11 without OCP
         run: |
           uv build --wheel -o "$RUNNER_TEMP/wheels"

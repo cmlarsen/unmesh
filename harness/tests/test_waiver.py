@@ -1,0 +1,381 @@
+from __future__ import annotations
+
+import base64
+import importlib.util
+import json
+import os
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+from unmesh_harness.runner.waiver import parse_waived_cells, parse_waived_sha, waiver_approved
+
+LABEL = "waiver:approved"
+HEAD_SHA = "a" * 40
+OTHER_SHA = "b" * 40
+AFTER = "2026-10-02T13:00:00Z"
+
+CELL = ("box", "identity", 0.0)
+
+
+def issue(author="cmlarsen", author_type="User", labels=(LABEL,)):
+    return {
+        "user": {"login": author, "type": author_type},
+        "labels": [{"name": name} for name in labels],
+    }
+
+
+def labeled(actor, actor_type="User", created_at=AFTER, label=LABEL):
+    return {
+        "event": "labeled",
+        "label": {"name": label},
+        "actor": {"login": actor, "type": actor_type},
+        "created_at": created_at,
+    }
+
+
+def unlabeled(actor, actor_type="User", created_at=AFTER, label=LABEL):
+    return {
+        "event": "unlabeled",
+        "label": {"name": label},
+        "actor": {"login": actor, "type": actor_type},
+        "created_at": created_at,
+    }
+
+
+def comment(login, body, created_at=AFTER):
+    return {"user": {"login": login}, "body": body, "created_at": created_at}
+
+
+def waive_line(cell=CELL):
+    return f"waive: {cell[0]} {cell[1]} {cell[2]:g}"
+
+
+def approved_comment(login="cmlarsen", *cells, sha=HEAD_SHA, created_at=AFTER):
+    lines = [waive_line(c) for c in (cells or (CELL,))]
+    lines.append(f"sha: {sha}")
+    return comment(login, "\n".join(lines), created_at=created_at)
+
+
+def decide(events, comments, approvers=("cmlarsen",), head_sha=HEAD_SHA, regressed=(CELL,), **kw):
+    return waiver_approved(
+        kw.pop("issue", issue()),
+        events,
+        comments,
+        approvers=approvers,
+        head_sha=head_sha,
+        regressed=regressed,
+        **kw,
+    )
+
+
+def test_listed_approver_waives_named_cells():
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment()])
+    assert ok and "cmlarsen" in reason
+
+
+def test_actor_outside_allowlist_is_rejected():
+    ok, _ = decide([labeled("mallory")], [comment("mallory", waive_line())])
+    assert not ok
+
+
+def test_empty_allowlist_is_rejected():
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment()], approvers=())
+    assert not ok and "approvers" in reason
+
+
+def test_label_event_time_is_ignored_when_sha_matches():
+    ok, _ = decide([labeled("cmlarsen", created_at="2020-01-01T00:00:00Z")], [approved_comment()])
+    assert ok
+
+
+def test_removed_label_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], issue=issue(labels=()))
+    assert not ok
+
+
+def test_unlabeled_after_approval_is_not_a_waiver():
+    ok, reason = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("cmlarsen", created_at="2026-10-02T12:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok and "removed" in reason
+
+
+def test_relabel_by_non_approver_after_removal_is_not_a_waiver():
+    ok, _ = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("cmlarsen", created_at="2026-10-02T12:00:00Z"),
+            labeled("mallory", created_at="2026-10-02T13:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok
+
+
+def test_latest_labeled_by_non_approver_is_not_a_waiver():
+    ok, _ = decide(
+        [
+            labeled("cmlarsen", created_at="2026-10-02T11:00:00Z"),
+            labeled("mallory", created_at="2026-10-02T12:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert not ok
+
+
+def test_approver_relabel_after_removal_waives_again():
+    ok, _ = decide(
+        [
+            labeled("mallory", created_at="2026-10-02T11:00:00Z"),
+            unlabeled("mallory", created_at="2026-10-02T12:00:00Z"),
+            labeled("cmlarsen", created_at="2026-10-02T13:00:00Z"),
+        ],
+        [approved_comment()],
+    )
+    assert ok
+
+
+def test_missing_comment_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [])
+    assert not ok
+
+
+def test_comment_time_is_ignored_when_sha_matches():
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment(created_at="2020-01-01T00:00:00Z")],
+    )
+    assert ok
+
+
+def test_comment_by_another_actor_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment("mallory")])
+    assert not ok
+
+
+def test_unnamed_regressed_cell_is_not_waived():
+    other = ("cyl", "identity", 0.0)
+    ok, reason = decide([labeled("cmlarsen")], [approved_comment("cmlarsen", other)])
+    assert not ok and "box" in reason
+
+
+def test_extra_named_cells_are_allowed():
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment("cmlarsen", CELL, ("cyl", "identity", 0.0))],
+    )
+    assert ok
+
+
+def test_cells_across_comments_combine():
+    comments = [
+        approved_comment("cmlarsen", CELL),
+        approved_comment("cmlarsen", ("cyl", "x", 1.0)),
+    ]
+    ok, _ = decide([labeled("cmlarsen")], comments, regressed=(CELL, ("cyl", "x", 1.0)))
+    assert ok
+
+
+def test_cells_without_matching_sha_do_not_count():
+    comments = [
+        approved_comment("cmlarsen", CELL, sha=OTHER_SHA),
+        approved_comment("cmlarsen", ("cyl", "x", 1.0)),
+    ]
+    ok, _ = decide([labeled("cmlarsen")], comments, regressed=(CELL, ("cyl", "x", 1.0)))
+    assert not ok
+
+
+def test_approval_for_an_earlier_sha_does_not_waive_a_later_push():
+    ok, _ = decide(
+        [labeled("cmlarsen")],
+        [approved_comment(sha=OTHER_SHA)],
+        head_sha=HEAD_SHA,
+    )
+    assert not ok
+
+
+def test_comment_without_sha_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [comment("cmlarsen", waive_line())])
+    assert not ok
+
+
+def test_sha_must_match_exactly():
+    almost = HEAD_SHA[:-1] + ("0" if HEAD_SHA[-1] != "0" else "1")
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment(sha=almost)])
+    assert not ok
+
+
+def test_bot_actor_is_rejected_even_when_listed():
+    ok, _ = decide(
+        [labeled("cmlarsen[bot]", "Bot")],
+        [approved_comment("cmlarsen[bot]")],
+        approvers=("cmlarsen[bot]",),
+    )
+    assert not ok
+
+
+def test_bot_author_cannot_waive_its_own_pr():
+    bot_pr = issue(author="greptile[bot]", author_type="Bot")
+    ok, _ = decide(
+        [labeled("greptile[bot]", "User")],
+        [approved_comment("greptile[bot]")],
+        approvers=("greptile[bot]",),
+        issue=bot_pr,
+    )
+    assert not ok
+
+
+def test_human_can_waive_a_bot_pr():
+    bot_pr = issue(author="greptile[bot]", author_type="Bot")
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], issue=bot_pr)
+    assert ok
+
+
+def test_unknown_head_sha_is_not_a_waiver():
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], head_sha=None)
+    assert not ok
+    ok, _ = decide([labeled("cmlarsen")], [approved_comment()], head_sha="  ")
+    assert not ok
+
+
+def test_parse_waived_sha():
+    assert parse_waived_sha(f"waive: box identity 0\nsha: {HEAD_SHA}") == {HEAD_SHA}
+    assert parse_waived_sha("no sha here") == set()
+    assert parse_waived_sha(None) == set()
+
+
+def test_parse_waived_cells_ignores_garbage():
+    body = "looks good\nwaive: box identity 0\nwaive: broken line\nwaive: a b notanumber\n"
+    assert parse_waived_cells(body) == {CELL}
+    assert parse_waived_cells(None) == set()
+
+
+def load_script_module(name):
+    from importlib.machinery import SourceFileLoader
+
+    loader = SourceFileLoader(name, "scripts/check-waiver")
+    spec = importlib.util.spec_from_loader(name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def test_gh_api_list_paginates(monkeypatch):
+    module = load_script_module("check_waiver_pages")
+
+    def fake_run(cmd, **kwargs):
+        import re
+
+        assert cmd[:2] == ["gh", "api"]
+        page = int(re.search(r"[?&]page=(\d+)", cmd[2]).group(1))
+        payload = [{"n": i} for i in range(100 if page == 1 else 3)]
+        return types.SimpleNamespace(stdout=json.dumps(payload))
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert len(module.gh_api_list("repos/o/r/issues/1/events")) == 103
+
+
+def test_read_approvers_skips_blanks_and_comments(monkeypatch):
+    module = load_script_module("check_waiver_approvers")
+    body = "# humans who may waive\n\ncmlarsen\n  \n"
+    payload = {"content": base64.b64encode(body.encode()).decode(), "encoding": "base64"}
+    monkeypatch.setattr(module, "gh_api", lambda path: payload)
+    assert module.read_approvers("o/r", ".github/waiver-approvers", "main") == ["cmlarsen"]
+
+
+def test_check_waiver_script_needs_repo_and_pr(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("PR_NUMBER", raising=False)
+    monkeypatch.delenv("GITHUB_PR_NUMBER", raising=False)
+    monkeypatch.delenv("GITHUB_REF", raising=False)
+    monkeypatch.setattr(sys, "argv", ["check-waiver"])
+    module = load_script_module("check_waiver")
+    assert module.pr_number_from_env() is None
+    monkeypatch.setenv("GITHUB_REF", "refs/pull/32/merge")
+    assert module.pr_number_from_env() == 32
+    monkeypatch.setenv("PR_NUMBER", "77")
+    assert module.pr_number_from_env() == 77
+
+
+@pytest.mark.parametrize("ref", ["refs/pull/32/merge", "refs/heads/main", ""])
+def test_pr_ref_parsing_never_raises(ref, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["check-waiver"])
+    monkeypatch.setenv("GITHUB_REF", ref)
+    monkeypatch.delenv("PR_NUMBER", raising=False)
+    monkeypatch.delenv("GITHUB_PR_NUMBER", raising=False)
+    module = load_script_module("check_waiver_ref")
+    assert module.pr_number_from_env() == (32 if ref.startswith("refs/pull/") else None)
+
+
+def test_check_waiver_is_executable():
+    assert os.access("scripts/check-waiver", os.X_OK)
+    assert Path("scripts/check-waiver").read_text().startswith("#!")
+
+
+def test_check_waiver_end_to_end_with_stubbed_api(tmp_path, monkeypatch):
+    module = load_script_module("check_waiver_e2e")
+
+    def cell(seed, f1):
+        return {
+            "part": "box",
+            "operator": "identity",
+            "severity": 0.0,
+            "seed": seed,
+            "converter": "unmesh",
+            "git_sha": "s",
+            "grid_hash": "g",
+            "plugin_hash": "",
+            "status": "ok",
+            "f1": f1,
+            "valid": True,
+            "under_report": False,
+            "fallback": False,
+            "dev_input_max": 0.0,
+            "dev_truth_max": 0.0,
+        }
+
+    run_a = tmp_path / "a.jsonl"
+    run_b = tmp_path / "b.jsonl"
+    run_a.write_text("\n".join(json.dumps(cell(i, 1.0)) for i in range(3)) + "\n")
+    run_b.write_text("\n".join(json.dumps(cell(i, 0.9)) for i in range(3)) + "\n")
+    head = "d" * 40
+    state = {"body": f"{waive_line()}\nsha: {head}"}
+
+    def fake_gh_api(path):
+        if path.endswith("/events?per_page=100&page=1"):
+            return [labeled("cmlarsen")]
+        if path.endswith("/comments?per_page=100&page=1"):
+            return [comment("cmlarsen", state["body"])]
+        if "/pulls/" in path:
+            return {"head": {"sha": head}}
+        if "/contents/" in path:
+            content = base64.b64encode(b"cmlarsen\n").decode()
+            return {"content": content, "encoding": "base64"}
+        return issue()
+
+    monkeypatch.setattr(module, "gh_api", fake_gh_api)
+    argv = [
+        "check-waiver",
+        "--repo",
+        "o/r",
+        "--pr",
+        "7",
+        "--run-a",
+        str(run_a),
+        "--run-b",
+        str(run_b),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert module.main() == 0
+    state["body"] = f"{waive_line(('other', 'identity', 0.0))}\nsha: {head}"
+    assert module.main() == 1
+    state["body"] = f"{waive_line()}\nsha: {'e' * 40}"
+    assert module.main() == 1

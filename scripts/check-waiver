@@ -1,0 +1,108 @@
+#!/usr/bin/env -S uv run python
+"""Exit 0 only if a listed approver waived exactly the regressed cells."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from unmesh_harness.runner.compare import compare_files
+from unmesh_harness.runner.waiver import DEFAULT_APPROVERS_PATH, WAIVER_LABEL, waiver_approved
+
+
+def gh_api(path: str) -> object:
+    out = subprocess.run(["gh", "api", path], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def gh_api_list(path: str) -> list:
+    out: list = []
+    page = 1
+    while True:
+        sep = "&" if "?" in path else "?"
+        batch = gh_api(f"{path}{sep}per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise ValueError(f"expected a JSON list from {path}")
+        out.extend(batch)
+        if len(batch) < 100:
+            return out
+        page += 1
+
+
+def read_approvers(repo: str, path: str, ref: str) -> list[str]:
+    payload = gh_api(f"repos/{repo}/contents/{path}?ref={ref}")
+    if not isinstance(payload, dict) or "content" not in payload:
+        raise ValueError(f"{path}@{ref} is not a file")
+    text = base64.b64decode(payload["content"]).decode("utf-8", "replace")
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def pr_number_from_env() -> int | None:
+    for var in ("PR_NUMBER", "GITHUB_PR_NUMBER"):
+        if os.environ.get(var, "").strip().isdigit():
+            return int(os.environ[var])
+    ref = os.environ.get("GITHUB_REF", "")
+    head, sep, tail = ref.partition("refs/pull/")
+    if sep:
+        if tail.endswith("/merge"):
+            tail = tail[: -len("/merge")]
+        if tail.isdigit():
+            return int(tail)
+    return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    parser.add_argument("--pr", type=int, default=None)
+    parser.add_argument("--label", default=WAIVER_LABEL)
+    parser.add_argument("--run-a", type=Path, required=True)
+    parser.add_argument("--run-b", type=Path, required=True)
+    parser.add_argument("--converter", default="unmesh")
+    parser.add_argument("--approvers-path", default=DEFAULT_APPROVERS_PATH)
+    parser.add_argument("--ref", default="main")
+    args = parser.parse_args()
+    pr = args.pr or pr_number_from_env()
+    if not args.repo or not pr:
+        print("need --repo owner/name and --pr NUMBER", file=sys.stderr)
+        return 2
+    try:
+        issue = gh_api(f"repos/{args.repo}/issues/{pr}")
+        events = gh_api_list(f"repos/{args.repo}/issues/{pr}/events")
+        comments = gh_api_list(f"repos/{args.repo}/issues/{pr}/comments")
+        pull = gh_api(f"repos/{args.repo}/pulls/{pr}")
+        head_sha = pull["head"]["sha"]
+        approvers = read_approvers(args.repo, args.approvers_path, args.ref)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError, KeyError) as e:
+        print(f"GitHub API lookup failed: {e}", file=sys.stderr)
+        return 2
+    assert isinstance(issue, dict) and isinstance(events, list) and isinstance(comments, list)
+    comp = compare_files(args.run_a, args.run_b, args.converter)
+    if comp.error:
+        print(f"NO WAIVER: compare failed: {comp.error}")
+        return 1
+    regressed = {v.key for v in comp.verdicts if v.verdict == "REGRESSION"}
+    ok, reason = waiver_approved(
+        issue,
+        events,
+        comments,
+        label=args.label,
+        approvers=approvers,
+        head_sha=head_sha,
+        regressed=regressed,
+    )
+    print(("WAIVER: " if ok else "NO WAIVER: ") + reason)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
