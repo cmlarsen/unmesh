@@ -70,9 +70,9 @@ scripts/check.sh
   approver's credentials can label and comment a waiver. These are residual risks until the
   gate moves to a `workflow_run` workflow on main that never executes PR code and agents
   get their own identity.
-- Nightly slow tier: four jobs split by pytest-split on `harness/tests/.test_durations`. Refresh
+- Nightly slow tier: four jobs split by pytest-split (benchmarks run in a separate one-worker job) on `harness/tests/.test_durations`. Refresh
   that file after adding or slowing slow tests: `UNMESH_CACHE_DIR=$(mktemp -d) uv run pytest
-  harness/tests --slow -m "slow or benchmark" -n auto --store-durations --clean-durations
+  harness/tests --slow -m "slow and not benchmark" -n auto --store-durations --clean-durations
   --durations-path harness/tests/.test_durations` (an empty cache matches CI, which has no datasets).
 - Runner memory: the pool samples each worker's RSS. A worker over `--memory-cap-mb` (default
   `(total RAM - 3 GB) / jobs`) is killed and its cell recorded as a `memory cap` error; every record
