@@ -30,14 +30,14 @@ from OCP.GeomProjLib import GeomProjLib
 from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Vec2d
 from OCP.TColgp import TColgp_Array1OfPnt2d, TColgp_HArray1OfPnt, TColgp_HArray1OfPnt2d
 from OCP.TColStd import TColStd_Array1OfInteger, TColStd_Array1OfReal, TColStd_HArray1OfReal
-from OCP.TopAbs import TopAbs_FORWARD, TopAbs_IN, TopAbs_OUT, TopAbs_REVERSED
-from OCP.TopExp import TopExp
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FORWARD, TopAbs_IN, TopAbs_OUT, TopAbs_REVERSED
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shell, TopoDS_Wire
 
 from unmesh.ir import Cone, Cylinder, Facets, Ir, Plane, Sphere, Torus
 
 from . import geometry as geo
-from .topology import BuildError, SeamGap, _boundary_nodes, _signed_area
+from .topology import BuildError, SeamGap, _boundary_nodes, _key, _signed_area
 
 INTERSECTION_TOLERANCE = 1e-7
 EDGE_TOLERANCE = 1e-7
@@ -62,7 +62,10 @@ PCURVE_CHECKS = 512
 PCURVE_SPANS = 64
 PCURVE_EXACT = 1e-9
 LINE_PREFERENCE = 2.0
-FACETS_REASON = "facets regions next to curved surfaces are not supported yet (#34)"
+SEAM_GAP = 1e-4
+SEAM_SAMPLES = 9
+SEAM_DEPTH = 16
+SEAM_SLACK = 1.01
 
 
 @dataclass
@@ -172,7 +175,10 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
             continue
         analytic = [s for s in surfaces if geo.is_analytic(s)]
         p0 = np.asarray(v.position, dtype=float)
-        x = geo.refine(analytic, p0) if len(analytic) >= 2 else p0
+        if len(analytic) >= 2:
+            x = geo.refine(analytic, p0)
+        else:
+            x = geo.closest(analytic[0], p0)[0] if analytic else p0
         snapped = x
         if v.id in tangent:
             pairs = [(ir.regions[a].surface, ir.regions[b].surface) for a, b in tangent[v.id]]
@@ -624,6 +630,7 @@ class _Edge:
     fit: str | None = None
     snapped: list = field(default_factory=list)
     branches: list = field(default_factory=list)
+    seam: int | None = None
 
 
 @dataclass
@@ -690,9 +697,40 @@ def _loop_nodes(loop: list[_Segment]) -> list[np.ndarray]:
     return out
 
 
+def _segment_distance(x, p, q) -> float:
+    d = q - p
+    t = float(np.clip((x - p) @ d / max(float(d @ d), 1e-300), 0.0, 1.0))
+    return float(np.linalg.norm(x - (p + t * d)))
+
+
+def _chord_gap(surface, p, q) -> float:
+    return max(
+        geo.distance(surface, p + t * (q - p)) for t in np.linspace(0.0, 1.0, SEAM_SAMPLES)[1:-1]
+    )
+
+
+def _subdivide(surface, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
+    if _chord_gap(surface, p, q) <= gap:
+        return []
+    if depth >= SEAM_DEPTH:
+        raise BuildError(f"a facets seam on a {surface.type} needs over {2**SEAM_DEPTH} pieces")
+    m, _ = geo.closest(surface, 0.5 * (p + q))
+    return [
+        *_subdivide(surface, p, m, gap, depth + 1),
+        m,
+        *_subdivide(surface, m, q, gap, depth + 1),
+    ]
+
+
 class _Builder:
-    def __init__(self, ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool):
+    def __init__(
+        self, ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool, seam_gap=SEAM_GAP
+    ):
         self.ir = ir
+        self.seam_gap = seam_gap
+        self.patch: dict[tuple, np.ndarray] = {}
+        self.splits: dict[tuple, list[np.ndarray]] = {}
+        self.seam_records: list[tuple[SeamGap, list]] = []
         self.index = index
         self.shell = ir.shells[index]
         self.members = set(self.shell.regions)
@@ -737,10 +775,31 @@ class _Builder:
         for edge, tol in self.loose:
             BRepLib.SameParameter_s(edge, EDGE_TOLERANCE)
             self.builder.UpdateEdge(edge, tol)
+        for record, edges in self.seam_records:
+            record.tolerance = max(BRep_Tool.Tolerance_s(e) for e in edges)
         self.out.mapping = faces
         for r, f in faces:
             self.check_side(r, f)
+        if self.shell.closed:
+            self.check_windings(faces)
         return self.out
+
+    def check_windings(self, faces):
+        uses: dict[int, list] = {}
+        for r, f in faces:
+            ex = TopExp_Explorer(f, TopAbs_EDGE)
+            while ex.More():
+                uses.setdefault(hash(ex.Current()), []).append((r, ex.Current()))
+                ex.Next()
+        for got in uses.values():
+            patch = [r for r, _ in got if isinstance(self.surface(r), Facets)]
+            if not patch or len(got) != 2:
+                continue
+            (_, x), (_, y) = got
+            if x.IsSame(y) and x.Orientation() == y.Orientation():
+                raise BuildError(
+                    f"region {patch[0]}: facets triangles wind against their neighbours"
+                )
 
     def collect(self):
         for adj in self.ir.adjacencies:
@@ -750,15 +809,17 @@ class _Builder:
             sa, sb = self.surface(a), self.surface(b)
             curved = geo.is_curved(sa) or geo.is_curved(sb)
             facets = isinstance(sa, Facets) or isinstance(sb, Facets)
-            if curved and facets:
-                raise BuildError(f"regions {a}/{b}: {FACETS_REASON}")
+            seam = (b if isinstance(sa, Facets) else a) if curved and facets else None
             for bd in adj.boundaries:
                 pts = [np.asarray(p, dtype=float) for p in bd.points]
-                e = _Edge(a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved)
-                e.tangent = curved and bd.kind == "tangent"
-                if curved:
+                e = _Edge(
+                    a, b, bd.closed, bd.start_vertex, bd.end_vertex, pts, curved and seam is None
+                )
+                e.seam = seam
+                e.tangent = e.curved and bd.kind == "tangent"
+                if e.curved:
                     self.check_dihedral(sa, sb, a, b, pts, bd.dihedral_deg)
-                if facets:
+                if facets and seam is None:
                     analytic = sb if isinstance(sa, Facets) else sa
                     n = geo.unit(analytic.normal)
                     o = np.asarray(analytic.origin, dtype=float)
@@ -1022,6 +1083,8 @@ class _Builder:
         origin = geo.origin_of(self.surface(r))
         p = polyline_seam_point(e.points, origin, frame.axis, frame.xdir)
         half = Plane(tuple(origin), tuple(np.cross(frame.axis, frame.xdir)))
+        if e.seam is not None:
+            return geo.refine([self.surface(r), half], p)
         p = geo.refine([self.surface(e.a), self.surface(e.b), half], p)
         if e.curve is not None:
             t, _ = nearest(e.curve, p)
@@ -1099,7 +1162,9 @@ class _Builder:
 
     def make_edges(self):
         for e in self.edges:
-            if e.curved:
+            if e.seam is not None:
+                self.facets_seam(e)
+            elif e.curved:
                 self.curved_edge(e)
             else:
                 self.straight_edges(e)
@@ -1114,6 +1179,89 @@ class _Builder:
                 e.edges.append(edge)
         if not e.edges:
             raise BuildError(f"regions {e.a}/{e.b}: boundary collapsed to a point")
+
+    def facets_seam(self, e: _Edge):
+        s = self.surface(e.seam)
+        patch = e.b if e.seam == e.a else e.a
+        chain = self.chain_points(e)
+        moved = 0.0
+        nodes = []
+        for i, p in enumerate(chain):
+            if e.closed or 0 < i < len(chain) - 1:
+                q, _ = geo.closest(s, p)
+                self.patch[_key(e.points[i])] = q
+                moved = max(moved, float(np.linalg.norm(q - e.points[i])))
+                p = q
+            nodes.append(p)
+        if moved > self.limit:
+            raise BuildError(
+                f"regions {e.a}/{e.b}: a seam point is {moved:.3g} off the {s.type},"
+                f" over the {self.limit:.3g} limit"
+            )
+        chords = list(zip(nodes, nodes[1:] + nodes[:1] if e.closed else nodes[1:], strict=False))
+        cuts: dict[int, np.ndarray] = {}
+        if e.closed and e.seam_point is not None:
+            k = min(range(len(chords)), key=lambda i: _segment_distance(e.seam_point, *chords[i]))
+            p, q = chords[k]
+            if float(np.linalg.norm(e.seam_point - p)) <= KINK_JOIN:
+                e.seam_point = p
+            elif float(np.linalg.norm(e.seam_point - q)) <= KINK_JOIN:
+                k, e.seam_point = (k + 1) % len(chords), q
+            else:
+                cuts[k] = e.seam_point
+            chords = chords[k:] + chords[:k]
+            cuts = {(i - k) % len(chords): x for i, x in cuts.items()}
+        chord_gap = gap = tolerance = 0.0
+        inserted = 0
+        runs = []
+        for i, (p, q) in enumerate(chords):
+            chord_gap = max(chord_gap, _chord_gap(s, p, q))
+            inner = _subdivide(s, p, cuts[i], self.seam_gap) if i in cuts else []
+            at = len(inner)
+            inner += [cuts[i]] if i in cuts else []
+            inner += _subdivide(s, cuts.get(i, p), q, self.seam_gap)
+            if inner:
+                self.splits[(_key(p), _key(q))] = inner
+                inserted += len(inner)
+            runs.append((inner, at))
+        head, at = runs[0]
+        path = list(head[at:]) if 0 in cuts else [chords[0][0], *head]
+        path.append(chords[0][1])
+        for (inner, _), (_, q) in zip(runs[1:], chords[1:], strict=True):
+            path.extend([*inner, q])
+        if 0 in cuts:
+            path.extend(head[: at + 1])
+        edges = []
+        for x, y in zip(path, path[1:], strict=False):
+            edge = self.pool.edge(x, y)
+            if edge is None:
+                raise BuildError(f"regions {e.a}/{e.b}: seam boundary collapsed to a point")
+            off = _chord_gap(s, x, y)
+            gap = max(gap, off)
+            tol = max(EDGE_TOLERANCE, SEAM_SLACK * off)
+            tolerance = max(tolerance, tol)
+            self.builder.UpdateEdge(edge, tol)
+            self.builder.SameParameter(edge, False)
+            self.loose.append((edge, tol))
+            for v in (self.pool.vertex(x), self.pool.vertex(y)):
+                if tol > BRep_Tool.Tolerance_s(v):
+                    self.builder.UpdateVertex(v, tol)
+            edges.append(edge)
+        e.edges = edges
+        e.nodes = path
+        e.deviation = max(moved, gap)
+        self.out.vertex_displacement[patch] = max(self.out.vertex_displacement[patch], moved)
+        record = SeamGap((e.a, e.b), s.type, len(e.points), gap, chord_gap, inserted, tolerance)
+        self.out.seams.append(record)
+        self.seam_records.append((record, edges))
+
+    def inserted(self, p, q) -> list[np.ndarray]:
+        kp, kq = _key(p), _key(q)
+        got = self.splits.get((kp, kq))
+        if got is not None:
+            return got
+        got = self.splits.get((kq, kp))
+        return got[::-1] if got is not None else []
 
     def curved_edge(self, e: _Edge):
         surfaces = [self.surface(e.a), self.surface(e.b)]
@@ -1301,28 +1449,46 @@ class _Builder:
         snapped = {}
         for v, x in zip(self.ir.vertices, self.vpos, strict=True):
             for p in (v.position, *v.source_positions):
-                snapped[tuple(np.round(np.asarray(p, dtype=float) * 1e7))] = x
+                snapped[_key(p)] = x
         v = np.array(
             [
-                snapped.get(tuple(np.round(np.asarray(p, dtype=float) * 1e7)), np.asarray(p))
+                snapped.get(_key(p), self.patch.get(_key(p), np.asarray(p, dtype=float)))
                 for p in s.vertices
             ],
             dtype=float,
         )
         faces = []
         for f in s.faces:
-            a, b, c = v[list(f)]
-            n = np.cross(b - a, c - a)
+            corners = v[list(f)]
+            n = np.cross(corners[1] - corners[0], corners[2] - corners[0])
             if np.linalg.norm(n) < 1e-14:
                 raise BuildError(f"region {r}: degenerate facets triangle")
-            face = TopoDS_Face()
-            self.builder.MakeFace(face, Geom_Plane(gp_Ax3(_pnt(a), _dir(geo.unit(n)))), 1e-7)
-            edges = [self.pool.edge(p, q) for p, q in ((a, b), (b, c), (c, a))]
-            if any(e is None for e in edges):
-                raise BuildError(f"region {r}: degenerate facets triangle")
-            self.builder.Add(face, self.wire(edges))
-            faces.append(face)
+            for a, b, c in self.split_triangle(corners):
+                m = np.cross(b - a, c - a)
+                if np.linalg.norm(m) < 1e-14 or not m @ n > 0:
+                    raise BuildError(f"region {r}: a seam split folds a facets triangle")
+                face = TopoDS_Face()
+                self.builder.MakeFace(face, Geom_Plane(gp_Ax3(_pnt(a), _dir(geo.unit(m)))), 1e-7)
+                edges = [self.pool.edge(p, q) for p, q in ((a, b), (b, c), (c, a))]
+                if any(e is None for e in edges):
+                    raise BuildError(f"region {r}: degenerate facets triangle")
+                self.builder.Add(face, self.wire(edges))
+                faces.append(face)
         return faces
+
+    def split_triangle(self, corners) -> list:
+        sides = [self.inserted(corners[i], corners[(i + 1) % 3]) for i in range(3)]
+        split = [i for i in range(3) if sides[i]]
+        if not split:
+            return [corners]
+        if len(split) == 1:
+            i = split[0]
+            apex = corners[(i + 2) % 3]
+            chain = [corners[i], *sides[i], corners[(i + 1) % 3]]
+            return [(apex, p, q) for p, q in zip(chain, chain[1:], strict=False)]
+        ring = [x for i in range(3) for x in (corners[i], *sides[i])]
+        center = corners.mean(axis=0)
+        return [(center, ring[i], ring[(i + 1) % len(ring)]) for i in range(len(ring))]
 
     def curved_face(self, r, s, loops):
         surf = self.occ_surface(r)
@@ -1755,8 +1921,10 @@ class _UVLoop:
             builder.UpdateEdge(e, pc, face, EDGE_TOLERANCE)
 
 
-def build_shell(ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool) -> CurvedShell:
-    out = _Builder(ir, index, vpos, vmoved, bad, limit, pool).run()
+def build_shell(
+    ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool, seam_gap: float = SEAM_GAP
+) -> CurvedShell:
+    out = _Builder(ir, index, vpos, vmoved, bad, limit, pool, seam_gap).run()
     analyzer = BRepCheck_Analyzer(out.shell)
     if not analyzer.IsValid():
         raise BuildError(f"shell {index}: the assembled curved shell is invalid")

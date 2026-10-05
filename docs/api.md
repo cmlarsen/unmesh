@@ -76,6 +76,7 @@ it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 
 - `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
 - `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
+- `max_seam_gap` (default `1e-4`, absolute): the largest distance a straight seam edge between a `facets` patch and a curved face may keep from the curved surface. Patch boundary chords are subdivided until every piece is within it.
 
 `mesh` is the source mesh the IR was converted from, in any form `convert` accepts (path, `(n, 3, 3)`
 array, `(vertices, faces)` tuple). The IR does not embed the mesh, and analytic regions carry no
@@ -137,8 +138,20 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   face closes there with a degenerate edge, as OCCT's own fillets do. Tangent circles on a sphere
   are moved onto it (onto a great circle when within the deviation limit of one), the pole is the
   exact intersection of the two meridians, and tangent edges ending there are refitted to it.
-- **`facets` regions next to a curved region** are not supported yet: the shell fails with the
-  reason `facets regions next to curved surfaces are not supported yet (#34)`.
+- **`facets` regions next to a curved region** share straight seam edges with it. The interior
+  boundary points are moved onto the curved surface (the patch vertices with them; a vertex where
+  only one analytic surface meets is moved onto it), and every chord of the boundary is split at
+  the surface point nearest its midpoint, recursively, until each piece is within `max_seam_gap` of
+  the surface (sampled at seven interior points). A closed boundary that winds around the surface
+  also gets a point where the surface's seam crosses it. The patch triangle on a split chord is
+  fanned from its opposite corner (from its centroid when more than one of its sides is split), and
+  a fan triangle that folds over fails the shell. The curved face and the triangles use the same
+  edges, so there is no gap and no T-junction; each edge's tolerance covers its distance from the
+  curved surface (1.01 times the sampled distance, at least `1e-7`). Each seam is reported in `seams`.
+  Two alternatives were measured on the same parts and rejected (#34): keeping the mesh chords as
+  edges with their tolerance loosened to cover the sagitta, and trimming the curved face by the chord
+  polyline projected onto it, both need a tolerance of the mesh's own chord sagitta (up to the
+  tessellation deflection, 1e-2 mm on the corpus), ten times the `1e-3` cap.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
   surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
   on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
@@ -218,7 +231,9 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
-| `seams` | `SeamReport(regions, surface_type, points, max_gap)` for each facets/analytic boundary: the largest distance from the boundary points to the analytic surface. |
+| `seams` | `SeamReport(regions, surface_type, points, max_gap, chord_gap, inserted, tolerance)` for each facets/analytic boundary. Next to a plane, `max_gap` is the largest distance from the boundary points to the plane and the rest are 0. Next to a curved surface, `max_gap` is the largest distance from the written seam edges to the surface, `chord_gap` the same for the unsplit boundary chords (the gap the subdivision closed), `inserted` the number of points added, and `tolerance` the largest tolerance of the seam's edges. |
+| `faceted_regions` | Number of regions written as triangle faces: the `facets` regions of a mixed solid, or every region after a faceted fallback. |
+| `faceted_faces` | Number of triangle faces written for `facets` regions, after seam splits (0 after a faceted fallback). |
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
 | `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
 | `verified` | Whether the written file was re-imported and checked. |

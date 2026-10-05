@@ -39,6 +39,9 @@ class SeamGap:
     surface_type: str
     points: int
     max_gap: float
+    chord_gap: float = 0.0
+    inserted: int = 0
+    tolerance: float = 0.0
 
 
 @dataclass

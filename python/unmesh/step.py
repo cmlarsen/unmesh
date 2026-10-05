@@ -19,6 +19,7 @@ FLUX_RELATIVE = 1e-9
 class WriteOptions:
     max_shape_tolerance: float = 1e-3
     max_deviation: float = 5e-3
+    max_seam_gap: float = 1e-4
 
 
 @dataclass
@@ -36,6 +37,9 @@ class SeamReport:
     surface_type: str
     points: int
     max_gap: float
+    chord_gap: float = 0.0
+    inserted: int = 0
+    tolerance: float = 0.0
 
 
 @dataclass
@@ -91,6 +95,8 @@ class WriteReport:
     shells: list[ShellReport] = field(default_factory=list)
     seams: list[SeamReport] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    faceted_regions: int = 0
+    faceted_faces: int = 0
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
@@ -201,10 +207,10 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                 if refined is None:
                     refined = curved.refine_vertices(ir, vpos, vmoved, bad, limit)
                 for idx in members:
-                    cs = curved.build_shell(ir, idx, *refined, limit, occ.new_pool())
-                    seams.extend(
-                        SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in cs.seams
+                    cs = curved.build_shell(
+                        ir, idx, *refined, limit, occ.new_pool(), options.max_seam_gap
                     )
+                    seams.extend(SeamReport(**vars(s)) for s in cs.seams)
                     moved.update(cs.vertex_displacement)
                     dev.update(cs.boundary_deviation)
                     g.edge_fallbacks.extend(
@@ -220,9 +226,7 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                     built.append((idx, cs.shell, cs.mapping))
             for idx in members if not g.curved else ():
                 plan = topology.plan_shell(ir, idx, vpos, vmoved, bad, limit)
-                seams.extend(
-                    SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in plan.seams
-                )
+                seams.extend(SeamReport(**vars(s)) for s in plan.seams)
                 moved.update(plan.vertex_displacement)
                 dev.update(plan.boundary_deviation)
                 built.append((idx, *occ.build_plan_shell(plan)))
@@ -299,7 +303,8 @@ def _check_face_fluxes(ir: Ir, g: _Group, tris: np.ndarray, occ) -> None:
     ].reshape(-1, 3)
     floor = FLUX_DEFLECTION * float(np.ptp(every, axis=0).max())
     deflection = max(min(deviation.values()), floor)
-    written = occ.face_fluxes(g.shape, g.mapping, g.context, origins, deflection)
+    facets = frozenset(r for r in origins if _is_facets(ir, r))
+    written = occ.face_fluxes(g.shape, g.mapping, g.context, origins, deflection, facets)
     for idx in members:
         shell_ids = np.asarray(
             [t for r in ir.shells[idx].regions for t in ir.regions[r].triangles], dtype=np.int64
@@ -538,6 +543,10 @@ def write(
         ],
         seams=seams,
         issues=issues,
+        faceted_regions=_faceted_regions(ir, written, fallback),
+        faceted_faces=sum(
+            1 for g in written if fallback is None for r, _ in g.mapping if _is_facets(ir, r)
+        ),
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
         edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
@@ -554,3 +563,14 @@ def _solid_count(written: list[_Group], occ, fallback) -> int:
     if fallback == "faceted":
         return sum(1 for g in written if g.kind == "solid")
     return sum(occ.count_solids(g.shape) for g in written)
+
+
+def _is_facets(ir: Ir, region: int) -> bool:
+    return ir.regions[region].surface.type == "facets"
+
+
+def _faceted_regions(ir: Ir, written: list[_Group], fallback) -> int:
+    regions = [r for g in written for idx in _members(ir, g.outer) for r in ir.shells[idx].regions]
+    if fallback == "faceted":
+        return len(regions)
+    return sum(1 for r in regions if _is_facets(ir, r))

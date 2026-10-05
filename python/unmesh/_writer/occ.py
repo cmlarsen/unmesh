@@ -17,6 +17,8 @@ from OCP.BRepBuilderAPI import (
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRepTools import BRepTools, BRepTools_WireExplorer
+from OCP.Geom import Geom_Line, Geom_Plane
 from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
@@ -25,7 +27,7 @@ from OCP.Message import Message
 from OCP.ShapeAnalysis import ShapeAnalysis_ShapeTolerance
 from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Shell, ShapeFix_Solid
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
-from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SHELL, TopAbs_SOLID
+from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SHELL, TopAbs_SOLID, TopAbs_WIRE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shell, TopoDS_Solid
@@ -208,13 +210,24 @@ def build_sewn_shell(faces_with_regions, tolerance=SEW_TOLERANCE):
     return shells[0], mapping
 
 
+def _same_face(final: dict, g):
+    return next((h for h in final.get(hash(g), ()) if h.IsSame(g)), g)
+
+
+def _face_index(shape) -> dict:
+    out: dict = {}
+    for h in _faces_of(shape):
+        out.setdefault(hash(h), []).append(h)
+    return out
+
+
 def face_tolerances(shape, mapping, context=None) -> dict[int, float]:
-    final = _faces_of(shape)
+    final = _face_index(shape)
     out: dict[int, float] = {}
     for region, g in mapping:
         if context is not None:
             g = context.Apply(g)
-        match = next((h for h in final if h.IsSame(g)), g)
+        match = _same_face(final, g)
         out[region] = max(out.get(region, 0.0), tolerance_of(match))
     return out
 
@@ -227,8 +240,42 @@ class FaceFlux:
     reach: float = 0.0
 
 
-def face_fluxes(shape, mapping, context, origins, deflection: float) -> dict[int, FaceFlux]:
-    final = _faces_of(shape)
+def _polygon(face) -> np.ndarray | None:
+    surface = BRep_Tool.Surface_s(face)
+    if not isinstance(surface, Geom_Plane) or BRepTools.OuterWire_s(face).IsNull():
+        return None
+    wires = TopExp_Explorer(face, TopAbs_WIRE)
+    wire = TopoDS.Wire_s(wires.Current())
+    wires.Next()
+    if wires.More():
+        return None
+    pts = []
+    walk = BRepTools_WireExplorer(wire, face)
+    while walk.More():
+        edge = walk.Current()
+        curve = BRep_Tool.Curve_s(edge, 0.0, 0.0)
+        if curve is None or not isinstance(curve, Geom_Line):
+            return None
+        pts.append(BRep_Tool.Pnt_s(walk.CurrentVertex()).Coord())
+        walk.Next()
+    if len(pts) < 3:
+        return None
+    pts = np.array(pts)
+    return pts[::-1] if face.Orientation() == TopAbs_REVERSED else pts
+
+
+def _polygon_flux(f: FaceFlux, pts: np.ndarray) -> None:
+    a, b, c = pts[0], pts[1:-1], pts[2:]
+    f.flux += float(np.einsum("j,ij->", a, np.cross(b, c)) / 6.0)
+    f.area += float(np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / 2.0)
+    f.reach = max(f.reach, float(np.linalg.norm(pts, axis=1).max()))
+    f.perimeter += float(np.linalg.norm(pts - np.roll(pts, 1, axis=0), axis=1).sum())
+
+
+def face_fluxes(
+    shape, mapping, context, origins, deflection: float, polygons=frozenset()
+) -> dict[int, FaceFlux]:
+    final = _face_index(shape)
     out: dict[int, FaceFlux] = {}
     for region, g in mapping:
         if context is not None:
@@ -236,7 +283,12 @@ def face_fluxes(shape, mapping, context, origins, deflection: float) -> dict[int
         if region not in origins:
             continue
         o = np.asarray(origins[region], dtype=float)
-        face = next((h for h in final if h.IsSame(g)), g)
+        face = _same_face(final, g)
+        if region in polygons:
+            pts = _polygon(face)
+            if pts is not None:
+                _polygon_flux(out.setdefault(region, FaceFlux()), pts - o)
+                continue
         copy = TopoDS.Face_s(BRepBuilderAPI_Copy(face, True, False).Shape())
         BRepMesh_IncrementalMesh(copy, deflection, False, 0.1, True)
         loc = TopLoc_Location()
