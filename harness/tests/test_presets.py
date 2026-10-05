@@ -200,6 +200,21 @@ def test_slicer_repair_runs_float32_before_unwelded_corners():
     assert ops == ["float32", "unwelded_corners", "flipped_facets", "duplicate_facets"]
 
 
+def test_load_grid_rejects_preset_operator_mismatch(tmp_path, monkeypatch):
+    _grid_with_cells(
+        [{"operator": "float32", "severity": 1.0, "preset": "slicer-repair"}],
+        tmp_path,
+        monkeypatch,
+    )
+    with pytest.raises(ValueError, match="disagrees with operator"):
+        load_grid("bad")
+
+
+def test_load_grid_defaults_preset_operator_to_preset_name(tmp_path, monkeypatch):
+    _grid_with_cells([{"severity": 1.0, "preset": "fusion-export"}], tmp_path, monkeypatch)
+    assert load_grid("bad").cells[0]["operator"] == "fusion-export"
+
+
 def test_run_grid_resolves_preset_cell(tmp_path):
     grid = load_grid("smoke")
     grid = dataclasses.replace(
@@ -215,5 +230,10 @@ def test_run_grid_resolves_preset_cell(tmp_path):
     assert record["status"] == "ok", record
 
 
-def test_chain_matches_degrade_apply_pair():
+def test_degrade_reexports_chain():
     assert degrade.chain is chain
+
+
+def test_degrade_keeps_apply_pair_preprocess_export():
+    assert "apply_pair_preprocess" in degrade.__all__
+    assert callable(degrade.apply_pair_preprocess)

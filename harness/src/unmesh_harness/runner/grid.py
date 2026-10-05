@@ -138,6 +138,17 @@ def find_grid(name: str) -> Path:
 
 def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
     raw = json.loads(find_grid(name).read_text())
+    for spec in raw["cells"]:
+        steps_for(spec)
+        if "preset" in spec:
+            if "operator" not in spec:
+                spec["operator"] = spec["preset"]
+            elif spec["operator"] != spec["preset"]:
+                raise ValueError(
+                    f"grid cell preset {spec['preset']!r} disagrees with operator "
+                    f"{spec['operator']!r}: preset cells must be labeled with their "
+                    "preset name"
+                )
     if "ambiguity" in raw.get("categories", []):
         rejected = ambiguity_rejected_ops(raw["cells"])
         if rejected:
@@ -162,8 +173,6 @@ def load_grid(name: str, manifest_path: Path | None = None) -> Grid:
         ]
         if not entries:
             raise KeyError(f"grid {name} selects no indistinguishable parts")
-    for spec in raw["cells"]:
-        steps_for(spec)
     return Grid(
         raw["name"],
         raw["corpus_grid"],
