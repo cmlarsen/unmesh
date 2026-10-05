@@ -138,7 +138,7 @@ def break_analytic(ir):
             s.center = (s.center[0] + 1.0, s.center[1] + 1.0, s.center[2] + 1.0)
             return bad
         if isinstance(s, Sphere):
-            s.center = (s.center[0] + 1.0, s.center[1] + 1.0, s.center[2] + 1.0)
+            s.radius = s.radius + 1.0
             return bad
     r0 = bad.regions[0]
     r0.surface = Cylinder(

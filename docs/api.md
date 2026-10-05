@@ -158,7 +158,14 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   runs only on a solid that `BRepCheck_Analyzer` rejects, and the orientation is checked again after it.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
-`max_shape_tolerance`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
+`max_shape_tolerance`. When `mesh` is given, each analytic solid's volume is also compared with the
+mesh's: the outer shell's triangles (IR shell grouping) enclose `|V|`, each cavity's subtract theirs, and
+the two must agree within `1e-6 * |V| + area * d`, where `d` is the largest of the regions' residual
+max, the boundary deviation, the vertex displacement and the shape tolerance. A mismatch (an IR
+orientation that turns a pocket into a boss, say) fails the shell, named as `analytic volume X differs
+from mesh volume Y`, and the part falls back to faceted. Without `mesh` nothing ties the written volume
+to the input: the IR alone cannot tell a flipped pocket from a boss, and `volume_checked_against_input`
+is `False`. If any shell fails, and `mesh` is given, the whole part is written as a faceted
 solid. The mesh is welded at `ir.tolerances.vertex_merge`. The IR's shell roles decide orientation: each
 `outer` shell's winding is flipped to positive signed volume and each `cavity` shell's to negative. No
 OCCT healing or classification touches it. The fallback STEP is
@@ -206,6 +213,7 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
 | `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
 | `verified` | Whether the written file was re-imported and checked. |
+| `volume_checked_against_input` | Whether `mesh` was given, so each written solid's volume was compared with the input mesh's (or is the mesh, after a faceted fallback). |
 | `timings` | Seconds: `write_s` (everything up to the written file) and `readback_s` (the verification), when they ran. |
 
 ### `unmesh.ir`

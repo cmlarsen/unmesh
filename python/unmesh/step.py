@@ -10,6 +10,7 @@ import numpy as np
 from unmesh.ir import Ir
 
 READBACK_RELATIVE = 1e-9
+INPUT_VOLUME_RELATIVE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class WriteReport:
     open_shells: list[int] = field(default_factory=list)
     readback: ReadBack | None = None
     verified: bool = False
+    volume_checked_against_input: bool = False
     timings: dict[str, float] = field(default_factory=dict)
 
 
@@ -244,6 +246,30 @@ def _is_curved(ir: Ir, idx: int) -> bool:
         ir.regions[r].surface.type in ("cylinder", "cone", "sphere", "torus")
         for r in ir.shells[idx].regions
     )
+
+
+def _check_input_volume(ir: Ir, g: _Group, tris: np.ndarray) -> None:
+    total = 0.0
+    deviation = max(g.deviation, g.moved, g.tolerance)
+    for idx in _members(ir, g.outer):
+        ids = [t for r in ir.shells[idx].regions for t in ir.regions[r].triangles]
+        if ids and max(ids) >= len(tris):
+            g.valid = False
+            g.issues.append("mesh has fewer triangles than the IR references")
+            return
+        v = abs(_signed_volume(tris[np.asarray(ids, dtype=np.int64)])) if ids else 0.0
+        total += v if ir.shells[idx].role == "outer" else -v
+        for r in ir.shells[idx].regions:
+            res = ir.regions[r].residual
+            if res is not None:
+                deviation = max(deviation, res.max)
+    tolerance = INPUT_VOLUME_RELATIVE * abs(total) + g.area * deviation
+    if not abs(g.expected - total) <= tolerance:
+        g.valid = False
+        g.issues.append(
+            f"analytic volume {g.expected:.6g} differs from mesh volume {total:.6g}"
+            f" by more than {tolerance:.3g}"
+        )
 
 
 def _signed_volume(t: np.ndarray) -> float:
@@ -401,13 +427,18 @@ def write(
 
     n_outer = sum(1 for s in ir.shells if s.role == "outer")
     groups, seams = _analytic(ir, options, occ, topology)
+    tris = _triangles(mesh) if mesh is not None else None
+    if tris is not None:
+        for g in groups:
+            if g.valid and g.kind == "solid":
+                _check_input_volume(ir, g, tris)
     fallback = None
     reason = None
     vertices = None
     if not all(g.valid for g in groups):
         reason = "; ".join(f"shell {g.outer}: {'; '.join(g.issues)}" for g in groups if not g.valid)
         if mesh is not None:
-            groups, vertices = _faceted(ir, _triangles(mesh), topology, faceted)
+            groups, vertices = _faceted(ir, tris, topology, faceted)
             fallback = "faceted"
         else:
             reason += "; no mesh given, so no faceted fallback"
@@ -463,6 +494,7 @@ def write(
         open_shells=[g.outer for g in written if g.kind == "shell"],
         readback=readback,
         verified=readback is not None,
+        volume_checked_against_input=tris is not None,
         timings=timings,
     )
 

@@ -470,3 +470,27 @@ def test_seam_vertex_is_snapped_onto_the_seam_when_refine_leaves_it_off(monkeypa
     origin = geo.origin_of(ir.regions[r].surface)
     assert abs(geo.angle_about(p, origin, b.frames[r].axis, b.frames[r].xdir)) < 1e-12
     assert curved.nearest(e.curve, p)[1] < 1e-12
+
+
+def flipped_pocket():
+    shape = Box(20, 20, 10) - Pos(0, 0, 5) * Sphere(4)
+    mesh = tessellate(shape, 0.01, 0.2)
+    ir = build_oracle_ir(mesh)
+    next(r for r in ir.regions if r.surface.type == "sphere").surface.orientation = "same"
+    return shape, ir, np.asarray(mesh.tris).reshape(-1, 3, 3)
+
+
+def test_a_volume_the_mesh_contradicts_falls_back(tmp_path):
+    shape, ir, tris = flipped_pocket()
+    report = step.write(ir, tmp_path / "p.step", mesh=tris)
+    assert report.valid and report.fallback == "faceted"
+    assert report.volume_checked_against_input
+    assert "differs from mesh volume" in report.fallback_reason
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-3)
+
+
+def test_without_a_mesh_the_volume_is_reported_unchecked(tmp_path):
+    _, ir, _ = flipped_pocket()
+    report = step.write(ir, tmp_path / "p.step")
+    assert report.valid and report.fallback is None
+    assert not report.volume_checked_against_input
