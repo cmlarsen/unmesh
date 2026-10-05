@@ -10,6 +10,7 @@ PERIODIC = (Cylinder, Cone, Sphere, Torus)
 REFINE_ITERATIONS = 50
 REFINE_PULL = 1e-8
 REFINE_STEP = 1e-13
+REFINE_FLAT = 0.02
 
 
 def unit(v) -> np.ndarray:
@@ -107,7 +108,12 @@ def refine(surfaces: list[Surface], p0) -> np.ndarray:
             rhs.append(n @ q)
         n = np.array(rows)
         d = np.array(rhs)
-        y = np.linalg.solve(n.T @ n + REFINE_PULL * np.eye(3), n.T @ d + REFINE_PULL * p0)
+        _, sv, vt = np.linalg.svd(n)
+        strength = np.zeros(3)
+        strength[: len(sv)] = sv
+        flat = vt[strength < REFINE_FLAT]
+        pull = REFINE_PULL * np.eye(3) + flat.T @ flat
+        y = np.linalg.solve(n.T @ n + pull, n.T @ d + pull @ p0)
         step = float(np.linalg.norm(y - x))
         x = y
         if step <= REFINE_STEP * max(1.0, float(np.linalg.norm(x))):

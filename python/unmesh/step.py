@@ -49,6 +49,7 @@ class TangentEdge:
     regions: tuple[int, int]
     curve: Literal["line", "circle", "bspline"]
     max_deviation: float
+    boundary_distance: float
 
 
 @dataclass
@@ -209,7 +210,8 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                         for p in cs.projected
                     )
                     g.tangent_edges.extend(
-                        TangentEdge(t.regions, t.curve, t.max_deviation) for t in cs.tangent
+                        TangentEdge(t.regions, t.curve, t.max_deviation, t.boundary_distance)
+                        for t in cs.tangent
                     )
                     built.append((idx, cs.shell, cs.mapping))
             for idx in members if not g.curved else ():

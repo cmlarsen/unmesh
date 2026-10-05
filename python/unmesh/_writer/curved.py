@@ -41,6 +41,7 @@ BRANCH_SAMPLES = 24
 SEAM_ITERATIONS = 60
 TWO_PI = 2.0 * math.pi
 TANGENT_PROJECTIONS = 8
+SNAP_ITERATIONS = 40
 INTERSECTION_SAMPLES = 400
 LINE_PREFERENCE = 2.0
 FACETS_REASON = "facets regions next to curved surfaces are not supported yet (#34)"
@@ -60,6 +61,7 @@ class TangentEdge:
     regions: tuple[int, int]
     curve: str
     max_deviation: float
+    boundary_distance: float
 
 
 @dataclass
@@ -275,6 +277,61 @@ def onto_both(surfaces, p) -> np.ndarray:
     return q
 
 
+def _lateral_scale(surfaces, p) -> float:
+    sizes = []
+    for s in surfaces:
+        if isinstance(s, (Cylinder, Sphere)):
+            sizes.append(s.radius)
+        elif isinstance(s, Torus):
+            sizes.append(s.major_radius + s.minor_radius)
+        elif isinstance(s, Cone):
+            sizes.append(float(np.linalg.norm(np.asarray(p) - np.asarray(s.apex))))
+    return max(sizes, default=1.0)
+
+
+def onto_tangency(surfaces, p, along, limit: float) -> np.ndarray:
+    a, b = surfaces
+    q = onto_both(surfaces, p)
+    w = geo.unit(np.cross(geo.outward(a, q), along))
+    if not np.linalg.norm(w) > 0:
+        return q
+    reach = 4.0 * math.sqrt(2.0 * limit * _lateral_scale(surfaces, q)) + limit
+
+    def f(s):
+        x, _ = geo.closest(a, q + s * w)
+        return float((geo.outward(a, x) - geo.outward(b, x)) @ w), x
+
+    s0, s1 = 0.0, 1e-3 * reach
+    f0, x = f(s0)
+    if f0 == 0.0:
+        return q
+    f1, x = f(s1)
+    for _ in range(SNAP_ITERATIONS):
+        if f1 == f0:
+            return q
+        s2 = s1 - f1 * (s1 - s0) / (f1 - f0)
+        if abs(s2) > reach:
+            return q
+        s0, f0 = s1, f1
+        s1 = s2
+        f1, x = f(s1)
+        if abs(s1 - s0) <= 1e-13 * reach:
+            return onto_both(surfaces, x)
+    return q
+
+
+def snap_tangency(surfaces, points, closed: bool, limit: float) -> list[np.ndarray]:
+    n = len(points)
+    out = []
+    for i, p in enumerate(points):
+        if not closed and i in (0, n - 1):
+            out.append(np.asarray(p, dtype=float))
+            continue
+        along = points[(i + 1) % n] - points[(i - 1) % n]
+        out.append(onto_tangency(surfaces, p, along, limit))
+    return out
+
+
 def fit_line(points):
     pts = np.asarray(points, dtype=float)
     c = pts.mean(axis=0)
@@ -356,7 +413,7 @@ def curve_error(curve, surfaces, points, closed: bool) -> tuple[float, float]:
 
 
 def tangent_curve(surfaces, points, closed: bool, limit: float):
-    fitted = [onto_both(surfaces, p) for p in points]
+    fitted = points
     candidates = []
     if not closed:
         line = fit_line(fitted)
@@ -429,6 +486,7 @@ class _Edge:
     deviation: float = 0.0
     tangent: bool = False
     fit: str | None = None
+    snapped: list = field(default_factory=list)
     branches: list = field(default_factory=list)
 
 
@@ -536,8 +594,9 @@ class _Builder:
         for _, f in faces:
             self.builder.Add(self.out.shell, f)
         self.out.shell.Closed(self.shell.closed)
-        for edge in self.loose:
+        for edge, tol in self.loose:
             BRepLib.SameParameter_s(edge, EDGE_TOLERANCE)
+            self.builder.UpdateEdge(edge, tol)
         self.out.mapping = faces
         for r, f in faces:
             self.check_side(r, f)
@@ -613,7 +672,8 @@ class _Builder:
         pts = list(e.points)
         if not e.closed:
             pts = [self.vpos[e.start], *pts[1:-1], self.vpos[e.end]]
-        found = tangent_curve(surfaces, pts, e.closed, self.limit)
+        e.snapped = snap_tangency(surfaces, pts, e.closed, self.limit)
+        found = tangent_curve(surfaces, e.snapped, e.closed, self.limit)
         if found is None:
             e.fit = "bspline"
             return
@@ -802,10 +862,11 @@ class _Builder:
 
     def curved_edge(self, e: _Edge):
         surfaces = [self.surface(e.a), self.surface(e.b)]
+        ref = e.snapped if e.tangent else e.points
         if e.closed:
             start = e.seam_point
             if start is None:
-                start = (onto_both if e.tangent else geo.refine)(surfaces, e.points[0])
+                start = e.snapped[0] if e.tangent else geo.refine(surfaces, e.points[0])
                 if e.curve is not None:
                     t, _ = nearest(e.curve, start)
                     start = _xyz(e.curve.Value(t))
@@ -815,16 +876,16 @@ class _Builder:
             try:
                 if e.closed:
                     t0, _ = nearest(e.curve, start)
-                    k = int(np.argmin([np.linalg.norm(p - start) for p in e.points]))
-                    n = len(e.points)
-                    travel = e.points[(k + 1) % n] - e.points[(k - 1) % n]
+                    k = int(np.argmin([np.linalg.norm(p - start) for p in ref]))
+                    n = len(ref)
+                    travel = ref[(k + 1) % n] - ref[(k - 1) % n]
                     forward = float(_tangent(e.curve, t0) @ travel) > 0
                     t1 = t0 + e.curve.Period() if forward else t0 - e.curve.Period()
                     end = start
                 else:
-                    t0, t1, _ = trim_open(e.curve, start, end, e.points, e.start == e.end)
+                    t0, t1, _ = trim_open(e.curve, start, end, ref, e.start == e.end)
                 lo, hi = min(t0, t1), max(t0, t1)
-                dev = _range_deviation(e.curve, lo, hi, e.points)
+                dev = _range_deviation(e.curve, lo, hi, ref)
                 if dev > self.limit:
                     raise ValueError(
                         f"trimmed intersection is {dev:.3g} from the boundary,"
@@ -847,7 +908,7 @@ class _Builder:
                 if e.tangent:
                     self.tangent_tolerance(e, edge, surfaces, lo, hi)
                 e.edges = [TopoDS.Edge_s(edge.Reversed()) if reverse else edge]
-                e.nodes = [start, *e.points[1:-1], end] if not e.closed else [*e.points]
+                e.nodes = [start, *ref[1:-1], end] if not e.closed else [*ref]
                 return
             except ValueError as err:
                 e.fallback = str(err)
@@ -870,20 +931,26 @@ class _Builder:
                 f"fitted tangent {e.fit} is {off:.3g} off the surfaces,"
                 f" over the {self.limit:.3g} limit"
             )
-        if off > EDGE_TOLERANCE:
-            self.builder.UpdateEdge(edge, 1.01 * off)
-            self.builder.SameParameter(edge, False)
-            self.loose.append(edge)
+        tol = max(EDGE_TOLERANCE, 1.01 * off)
+        self.builder.UpdateEdge(edge, tol)
+        self.builder.SameParameter(edge, False)
+        self.loose.append((edge, tol))
         e.deviation = max(e.deviation, off)
-        self.out.tangent.append(TangentEdge((e.a, e.b), e.fit, float(e.deviation)))
+        self.record_tangent(e, lo, hi)
+
+    def record_tangent(self, e: _Edge, lo: float, hi: float):
+        curve = e.curve if e.curve is not None else BRep_Tool.Curve_s(e.edges[0], 0.0, 0.0)
+        lateral = _range_deviation(curve, lo, hi, e.points)
+        self.out.tangent.append(TangentEdge((e.a, e.b), e.fit, float(e.deviation), float(lateral)))
 
     def projected_edge(self, e: _Edge, start, end, surfaces):
+        ref = e.snapped if e.tangent else e.points
         if e.closed:
-            k = int(np.argmin([np.linalg.norm(p - start) for p in e.points]))
-            pts = e.points[k:] + e.points[:k]
+            k = int(np.argmin([np.linalg.norm(p - start) for p in ref]))
+            pts = ref[k:] + ref[:k]
             nodes = [start, *pts[1:]]
         else:
-            nodes = [start, *e.points[1:-1], end]
+            nodes = [start, *ref[1:-1], end]
         curve, dev = projected_curve(
             surfaces, nodes, e.closed, onto_both if e.tangent else geo.refine
         )
@@ -901,13 +968,13 @@ class _Builder:
         tol = max(EDGE_TOLERANCE, 1.01 * dev)
         self.builder.UpdateEdge(edge, tol)
         self.builder.SameParameter(edge, False)
-        self.loose.append(edge)
+        self.loose.append((edge, tol))
         for v in (v0, v1):
             self.builder.UpdateVertex(v, tol)
         e.edges = [edge]
         e.nodes = nodes + ([start] if e.closed else [])
         lo, hi = curve.FirstParameter(), curve.LastParameter()
-        e.deviation = max(dev, _range_deviation(curve, lo, hi, e.points))
+        e.deviation = max(dev, _range_deviation(curve, lo, hi, ref))
         if e.deviation > self.limit:
             raise BuildError(
                 f"regions {e.a}/{e.b}: boundary points are {e.deviation:.3g} from the built"
@@ -915,7 +982,8 @@ class _Builder:
             )
         if e.tangent:
             e.fit = "bspline"
-            self.out.tangent.append(TangentEdge((e.a, e.b), "bspline", float(e.deviation)))
+            e.curve = None
+            self.record_tangent(e, lo, hi)
         elif e.approximate:
             self.out.projected.append(
                 ProjectedEdge(
@@ -1100,10 +1168,9 @@ class _Builder:
             u0 = lp.uv[i][1][0] + lp.shifts[i][0]
             u1 = lp.uv[j][0][0] + lp.shifts[j][0]
             v = lp.uv[i][1][1] + lp.shifts[i][1]
-            if abs(u1 - u0) <= 1e-9:
+            pole = isinstance(lp.ir_surface, Sphere) and abs(abs(v) - math.pi / 2) <= 1e-6
+            if not pole or abs(u1 - u0) <= 1e-9:
                 continue
-            if not (isinstance(lp.ir_surface, Sphere) and abs(abs(v) - math.pi / 2) <= 1e-9):
-                raise BuildError(f"region {lp.region}: a boundary loop jumps in u off a pole")
             vertex = TopExp.LastVertex_s(lp.edges[i], True)
             out.append(self.pole_edge(face, vertex, v, u0, u1))
         return out
@@ -1140,7 +1207,7 @@ class _Builder:
                 self.probe(r, s, face, e)
 
     def probe(self, r, s, face, e: _Edge):
-        pts = e.points
+        pts = e.snapped if e.tangent else e.points
         n = len(pts)
         segments = n if e.closed else n - 1
         scale = max(float(np.linalg.norm(np.ptp(np.asarray(pts), axis=0))), 1e-3)
