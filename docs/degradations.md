@@ -63,8 +63,8 @@ Whether the converter is expected to REPAIR a defect (same analytic IR as the cl
 | `truncated_digits` | precision | identity | coordinates written with 3 significant digits (9 digits at severity 0+, 6 at 0.5) |
 | `inch_round_trip` | precision | identity | mm converted to inches, written with 3 decimals (25 um grid), converted back (7 decimals at severity 0+, 5 at 0.5) |
 | `far_translation` | precision | identity | part translated up to 1e6 mm (1 km) along a random direction, rounded to float32 there (ulp 62 um), translated back exactly |
-| `quadric_decimation` | processing | identity | keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), fast quadric-error decimation to the error-optimal position (fast-simplification, MIT) with a 4-triangle floor; no face-preservation guard, faces lost to the target show up as low-confidence or missing labels, and collapsing can crack the mesh, so watertightness is not guaranteed |
-| `isotropic_remesh` | processing | identity | uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, /25 at severity 1); split edges longer than 4/3 of target, collapse shorter than 4/5, flip toward valence 6, tangential relax and reproject to the source |
+| `quadric_decimation` | processing | identity | keep ratio 1 - 0.9 * severity of triangles (10% at severity 1, 4-triangle floor): the soup is welded into an indexed mesh and edges collapse in order of Garland-Heckbert quadric error (area-weighted plane quadrics, accumulated) to the error-optimal position; collapses that would break the link condition or fold a triangle are refused, so a closed manifold stays closed and the mesh may stop above the target; open-boundary vertices never move; faces narrower than the collapse scale vanish |
+| `isotropic_remesh` | processing | identity | uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, /25 at severity 1); split edges longer than 4/3 of target, collapse shorter than 4/5, flip toward valence 6 (never across a face boundary), tangential relax; every new or moved vertex is projected to the closest point on the source triangles of the faces around it; edges between faces meeting at more than 30 degrees are features: feature vertices never relax, collapse only along a feature into a feature vertex, and corners never move, so sharp edges survive and narrow faces become sliver strips |
 | `laplacian_smoothing` | processing | identity | max(1, round(20 * severity)) umbrella passes (lambda 0.5) capped to a max displacement of severity * 1% of the bounding-box diagonal (1% at severity 1); connectivity unchanged, labels kept exactly, shared vertices move once so the mesh stays watertight |
 | `taubin_smoothing` | processing | identity | max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53) capped to a max displacement of severity * 1% of the bounding-box diagonal; connectivity unchanged, labels kept exactly, shared vertices move once so the mesh stays watertight |
 | `vertex_clustering` | processing | identity | vertex clustering on cells of min(median edge * (1.0 + 1.5 * severity), diagonal / 8) (about one median edge at severity 0+, capped so minimal meshes survive): corners in the same cell merge at their mean, degenerate and duplicate triangles drop; clustering can join thin walls, so watertightness is not guaranteed |
@@ -77,10 +77,10 @@ Named toolchain presets compose the operators above into degradation chains appl
 
 | preset | steps | imitates |
 |---|---|---|
-| `fusion-export` | `retriangulate` at 1.0, `float32` at 1.0 | Approximation of a clean high-quality CAD export saved through STL. STL stores coordinates as single-precision floats, binary STL included, hence the float32 rounding. retriangulate keeps every face boundary bit-exact while replacing the interior triangulation, standing in for a different tessellator's planar triangulation of the same faces. Curvature-dependent mesh density is not modelled. |
+| `fusion-export` | `retriangulate` at 1.0, `float32` at 1.0 | Approximation of a clean high-quality CAD export saved through STL. Binary STL stores coordinates as single-precision floats by spec (ASCII precision depends on the writer), hence the float32 rounding. retriangulate keeps every face boundary bit-exact while replacing the interior triangulation, standing in for a different tessellator's planar triangulation of the same faces. Curvature-dependent mesh density is not modelled. |
 | `tinkercad-export` | `coarsen` at 0.5, `truncated_digits` at 0.5 | Approximation of a coarse, low-precision export: coarsen lowers curve resolution while keeping the mesh a closed manifold, and truncated_digits to 6 significant digits stands in for low-precision decimal text. Format (ASCII vs binary) unverified until #29. |
 | `meshmixer-edit` | `retriangulate` at 0.5, `noise_normal` at 0.2 | A loose approximation: retriangulated interior plus small normal displacement; does not model edge rounding or isotropic remeshing. Light normal noise (10 um bound) stands in for the small surface displacement smoothing leaves behind. |
-| `slicer-repair` | `float32` at 1.0, `unwelded_corners` at 0.5, `flipped_facets` at 0.2, `duplicate_facets` at 0.2 | Imitates input headed for slicer-style repair, exercising the converter REPAIR path. Single-precision coordinates plus defects the converter is documented to repair: split vertices within the weld, inconsistent winding fixed by flood fill, and duplicate facets dropped. |
+| `slicer-repair` | `float32` at 1.0, `unwelded_corners` at 0.5, `flipped_facets` at 0.2, `duplicate_facets` at 0.2 | Approximate model of a slicer repair pass over single-precision input: float32 rounding first, then split vertices, flipped winding, and duplicate facets to exercise the converter REPAIR path. Approximate only: flipped_facets REPAIR is planar-only, duplicate facets depress the area score even when dropped, and unwelded_corners is unrecoverable on its own — it only repairs after float32 snaps split vertices onto a shared grid, so float32 must run first. |
 | `inch-roundtrip` | `inch_round_trip` at 1.0, `float32` at 1.0 | Imitates a file passed through inch-unit software: coordinates quantized to a 0.001-inch (25.4 um) grid and converted back, then written as single-precision STL. |
 
 Quantitative comparison of each preset's mesh statistics against real exports from the tool it imitates waits for #29.
@@ -91,91 +91,91 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 
 | parts | operator | severity | rms (um) | max (um) | tris x | closed | IR valid |
 |---|---|---|---|---|---|---|---|
-| smoke (46) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `refine` | 0.5 | - | - | 167.7 | yes | yes |
-| smoke (46) | `refine` | 1.0 | - | - | 1973.8 | yes | yes |
-| smoke (46) | `nonuniform_chords` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `nonuniform_chords` | 0.5 | - | - | 1.0 | yes | yes |
-| smoke (46) | `nonuniform_chords` | 1.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `coarsen` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `coarsen` | 0.5 | - | - | 0.7 | yes | yes |
-| smoke (46) | `coarsen` | 1.0 | - | - | 0.6 | yes | yes |
-| smoke (46) | `slivers` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `slivers` | 0.5 | - | - | 1.3 | yes | yes |
-| smoke (46) | `slivers` | 1.0 | - | - | 1.8 | yes | yes |
-| smoke (46) | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
-| smoke (46) | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
-| smoke (46) | `unwelded_corners` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `unwelded_corners` | 0.5 | 0.000 | 0.000 | 1.0 | no | yes |
-| smoke (46) | `unwelded_corners` | 1.0 | 0.000 | 0.001 | 1.0 | no | yes |
-| smoke (46) | `unwelded_gap` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `unwelded_gap` | 0.5 | 0.647 | 1.000 | 1.0 | no | yes |
-| smoke (46) | `unwelded_gap` | 1.0 | 9.123 | 10.000 | 1.0 | no | yes |
-| smoke (46) | `crack_seam` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `crack_seam` | 0.5 | 5.069 | 100.000 | 1.0 | no | yes |
-| smoke (46) | `crack_seam` | 1.0 | 11.223 | 200.000 | 1.0 | no | yes |
-| smoke (46) | `flipped_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `flipped_facets` | 0.5 | 3439.963 | 117264.780 | 1.0 | no | yes |
-| smoke (46) | `flipped_facets` | 1.0 | 4701.381 | 159456.799 | 1.0 | no | yes |
-| smoke (46) | `duplicate_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `duplicate_facets` | 0.5 | - | - | 1.0 | no | yes |
-| smoke (46) | `duplicate_facets` | 1.0 | - | - | 1.0 | no | yes |
-| smoke (46) | `hole_patch` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `hole_patch` | 0.5 | - | - | 0.9 | no | no |
-| smoke (46) | `hole_patch` | 1.0 | - | - | 0.9 | no | no |
-| smoke (46) | `stray_shells` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `stray_shells` | 0.5 | - | - | 1.2 | no | yes |
-| smoke (46) | `stray_shells` | 1.0 | - | - | 1.2 | no | yes |
-| smoke (46) | `nonmanifold_fin` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `nonmanifold_fin` | 0.5 | - | - | 1.0 | no | yes |
-| smoke (46) | `nonmanifold_fin` | 1.0 | - | - | 1.1 | no | yes |
-| smoke (46) | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
-| smoke (46) | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `fillet_rows` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `fillet_rows` | 0.5 | - | - | 0.9 | yes | yes |
-| smoke (46) | `fillet_rows` | 1.0 | - | - | 0.9 | yes | yes |
-| smoke (46) | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `noise_isotropic` | 0.5 | 19.294 | 24.999 | 1.0 | yes | yes |
-| smoke (46) | `noise_isotropic` | 1.0 | 38.587 | 49.999 | 1.0 | yes | yes |
-| smoke (46) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `noise_normal` | 0.5 | 14.198 | 24.983 | 1.0 | yes | yes |
-| smoke (46) | `noise_normal` | 1.0 | 28.397 | 49.965 | 1.0 | yes | yes |
-| smoke (46) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 88.5 | yes | yes |
-| smoke (46) | `refine -> noise_off_plane` | 0.5 | 12.510 | 24.997 | 88.5 | yes | yes |
-| smoke (46) | `refine -> noise_off_plane` | 1.0 | 25.019 | 49.995 | 88.5 | yes | yes |
-| smoke (46) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `float32` | 1.0 | 0.001 | 0.004 | 1.0 | yes | yes |
-| smoke (46) | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `truncated_digits` | 0.5 | 0.037 | 0.077 | 1.0 | yes | yes |
-| smoke (46) | `truncated_digits` | 1.0 | 41.961 | 80.530 | 1.0 | yes | yes |
-| smoke (46) | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `inch_round_trip` | 0.5 | 0.123 | 0.211 | 1.0 | yes | yes |
-| smoke (46) | `inch_round_trip` | 1.0 | 12.390 | 21.333 | 1.0 | yes | yes |
-| smoke (46) | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `far_translation` | 0.5 | 12.867 | 22.141 | 1.0 | yes | yes |
-| smoke (46) | `far_translation` | 1.0 | 26.049 | 43.983 | 1.0 | yes | yes |
-| smoke (46) | `quadric_decimation` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `quadric_decimation` | 0.5 | - | - | 0.5 | no | no |
-| smoke (46) | `quadric_decimation` | 1.0 | - | - | 0.1 | no | no |
-| smoke (46) | `isotropic_remesh` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `isotropic_remesh` | 0.5 | - | - | 7.9 | yes | no |
-| smoke (46) | `isotropic_remesh` | 1.0 | - | - | 14.2 | yes | no |
-| smoke (46) | `laplacian_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `laplacian_smoothing` | 0.5 | 184.668 | 826.676 | 1.0 | yes | yes |
-| smoke (46) | `laplacian_smoothing` | 1.0 | 418.353 | 1653.351 | 1.0 | yes | yes |
-| smoke (46) | `taubin_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| smoke (46) | `taubin_smoothing` | 0.5 | 157.375 | 826.676 | 1.0 | yes | yes |
-| smoke (46) | `taubin_smoothing` | 1.0 | 318.738 | 1653.351 | 1.0 | yes | yes |
-| smoke (46) | `vertex_clustering` | 0.0 | - | - | 1.0 | yes | yes |
-| smoke (46) | `vertex_clustering` | 0.5 | - | - | 0.4 | no | no |
-| smoke (46) | `vertex_clustering` | 1.0 | - | - | 0.4 | no | no |
+| smoke (50) | `refine` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `refine` | 0.5 | - | - | 155.8 | yes | yes |
+| smoke (50) | `refine` | 1.0 | - | - | 1829.8 | yes | yes |
+| smoke (50) | `nonuniform_chords` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `nonuniform_chords` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (50) | `nonuniform_chords` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `coarsen` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `coarsen` | 0.5 | - | - | 0.7 | yes | yes |
+| smoke (50) | `coarsen` | 1.0 | - | - | 0.6 | yes | yes |
+| smoke (50) | `slivers` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `slivers` | 0.5 | - | - | 1.3 | yes | yes |
+| smoke (50) | `slivers` | 1.0 | - | - | 1.8 | yes | yes |
+| smoke (50) | `t_junctions` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `t_junctions` | 0.5 | - | - | 1.1 | no | yes |
+| smoke (50) | `t_junctions` | 1.0 | - | - | 1.1 | no | yes |
+| smoke (50) | `unwelded_corners` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `unwelded_corners` | 0.5 | 0.000 | 0.000 | 1.0 | no | yes |
+| smoke (50) | `unwelded_corners` | 1.0 | 0.000 | 0.001 | 1.0 | no | yes |
+| smoke (50) | `unwelded_gap` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `unwelded_gap` | 0.5 | 0.647 | 1.000 | 1.0 | no | yes |
+| smoke (50) | `unwelded_gap` | 1.0 | 9.128 | 10.000 | 1.0 | no | yes |
+| smoke (50) | `crack_seam` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `crack_seam` | 0.5 | 4.131 | 100.000 | 1.0 | no | yes |
+| smoke (50) | `crack_seam` | 1.0 | 9.088 | 200.000 | 1.0 | no | yes |
+| smoke (50) | `flipped_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `flipped_facets` | 0.5 | 3153.344 | 117264.780 | 1.0 | no | yes |
+| smoke (50) | `flipped_facets` | 1.0 | 4204.818 | 159456.799 | 1.0 | no | yes |
+| smoke (50) | `duplicate_facets` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `duplicate_facets` | 0.5 | - | - | 1.0 | no | yes |
+| smoke (50) | `duplicate_facets` | 1.0 | - | - | 1.0 | no | yes |
+| smoke (50) | `hole_patch` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `hole_patch` | 0.5 | - | - | 1.0 | no | no |
+| smoke (50) | `hole_patch` | 1.0 | - | - | 0.9 | no | no |
+| smoke (50) | `stray_shells` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `stray_shells` | 0.5 | - | - | 1.2 | no | yes |
+| smoke (50) | `stray_shells` | 1.0 | - | - | 1.2 | no | yes |
+| smoke (50) | `nonmanifold_fin` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `nonmanifold_fin` | 0.5 | - | - | 1.0 | no | yes |
+| smoke (50) | `nonmanifold_fin` | 1.0 | - | - | 1.1 | no | yes |
+| smoke (50) | `retriangulate` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `retriangulate` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (50) | `retriangulate` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `fillet_rows` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `fillet_rows` | 0.5 | - | - | 0.9 | yes | yes |
+| smoke (50) | `fillet_rows` | 1.0 | - | - | 0.9 | yes | yes |
+| smoke (50) | `noise_isotropic` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `noise_isotropic` | 0.5 | 19.274 | 24.999 | 1.0 | yes | yes |
+| smoke (50) | `noise_isotropic` | 1.0 | 38.548 | 49.999 | 1.0 | yes | yes |
+| smoke (50) | `noise_normal` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `noise_normal` | 0.5 | 14.252 | 24.997 | 1.0 | yes | yes |
+| smoke (50) | `noise_normal` | 1.0 | 28.505 | 49.994 | 1.0 | yes | yes |
+| smoke (50) | `refine -> noise_off_plane` | 0.0 | 0.000 | 0.000 | 82.1 | yes | yes |
+| smoke (50) | `refine -> noise_off_plane` | 0.5 | 12.387 | 24.999 | 82.1 | yes | yes |
+| smoke (50) | `refine -> noise_off_plane` | 1.0 | 24.774 | 49.997 | 82.1 | yes | yes |
+| smoke (50) | `rotation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `rotation` | 0.5 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `rotation` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `mirror` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `mirror` | 1.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `float32` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `float32` | 1.0 | 0.002 | 0.008 | 1.0 | yes | yes |
+| smoke (50) | `truncated_digits` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `truncated_digits` | 0.5 | 0.116 | 0.502 | 1.0 | yes | yes |
+| smoke (50) | `truncated_digits` | 1.0 | 110.081 | 502.386 | 1.0 | no | no |
+| smoke (50) | `inch_round_trip` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `inch_round_trip` | 0.5 | 0.125 | 0.215 | 1.0 | yes | yes |
+| smoke (50) | `inch_round_trip` | 1.0 | 12.528 | 21.333 | 1.0 | yes | yes |
+| smoke (50) | `far_translation` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
+| smoke (50) | `far_translation` | 0.5 | 12.793 | 22.141 | 1.0 | yes | yes |
+| smoke (50) | `far_translation` | 1.0 | 26.080 | 44.137 | 1.0 | yes | yes |
+| smoke (50) | `quadric_decimation` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `quadric_decimation` | 0.5 | - | - | 0.5 | yes | no |
+| smoke (50) | `quadric_decimation` | 1.0 | - | - | 0.1 | yes | no |
+| smoke (50) | `isotropic_remesh` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `isotropic_remesh` | 0.5 | - | - | 7.1 | yes | no |
+| smoke (50) | `isotropic_remesh` | 1.0 | - | - | 12.3 | yes | no |
+| smoke (50) | `laplacian_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `laplacian_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (50) | `laplacian_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `taubin_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `taubin_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
+| smoke (50) | `taubin_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `vertex_clustering` | 0.0 | - | - | 1.0 | yes | yes |
+| smoke (50) | `vertex_clustering` | 0.5 | - | - | 0.4 | no | no |
+| smoke (50) | `vertex_clustering` | 1.0 | - | - | 0.3 | no | no |
 | filleted box | `refine` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `refine` | 0.5 | - | - | 20.7 | yes | yes |
 | filleted box | `refine` | 1.0 | - | - | 224.8 | yes | yes |
@@ -247,17 +247,17 @@ Seed 20260101. Displacement is measured in the original frame, per triangle corn
 | filleted box | `far_translation` | 0.5 | 14.641 | 21.493 | 1.0 | yes | yes |
 | filleted box | `far_translation` | 1.0 | 27.426 | 42.182 | 1.0 | yes | yes |
 | filleted box | `quadric_decimation` | 0.0 | - | - | 1.0 | yes | yes |
-| filleted box | `quadric_decimation` | 0.5 | - | - | 0.5 | no | no |
-| filleted box | `quadric_decimation` | 1.0 | - | - | 0.1 | no | no |
+| filleted box | `quadric_decimation` | 0.5 | - | - | 0.5 | yes | yes |
+| filleted box | `quadric_decimation` | 1.0 | - | - | 0.1 | yes | yes |
 | filleted box | `isotropic_remesh` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `isotropic_remesh` | 0.5 | - | - | 0.9 | yes | yes |
 | filleted box | `isotropic_remesh` | 1.0 | - | - | 1.3 | yes | yes |
-| filleted box | `laplacian_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| filleted box | `laplacian_smoothing` | 0.5 | 70.300 | 173.205 | 1.0 | yes | yes |
-| filleted box | `laplacian_smoothing` | 1.0 | 160.267 | 346.410 | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 0.0 | 0.000 | 0.000 | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 0.5 | 62.203 | 173.205 | 1.0 | yes | yes |
-| filleted box | `taubin_smoothing` | 1.0 | 123.478 | 346.410 | 1.0 | yes | yes |
+| filleted box | `laplacian_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `laplacian_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
+| filleted box | `laplacian_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 0.0 | - | - | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 0.5 | - | - | 1.0 | yes | yes |
+| filleted box | `taubin_smoothing` | 1.0 | - | - | 1.0 | yes | yes |
 | filleted box | `vertex_clustering` | 0.0 | - | - | 1.0 | yes | yes |
 | filleted box | `vertex_clustering` | 0.5 | - | - | 0.2 | yes | yes |
 | filleted box | `vertex_clustering` | 1.0 | - | - | 0.2 | yes | yes |
@@ -315,10 +315,10 @@ Seed 20260101. Per-operator stats over the same meshes as above, plus one aggreg
 | mesh | operator | severity | tris | closed | IR valid | conf mean | conf<0.9 | faces lost |
 |---|---|---|---|---|---|---|---|---|
 | cylinder | `-` | - | 164 | yes | yes | 1.000 | 0.000 | 0 |
-| cylinder | `quadric_decimation` | 0.5 | 90 | no | yes | 1.000 | 0.000 | 0 |
-| cylinder | `quadric_decimation` | 1.0 | 16 | no | no | 1.000 | 0.000 | 2 |
-| cylinder | `isotropic_remesh` | 0.5 | 826 | yes | yes | 0.970 | 0.087 | 0 |
-| cylinder | `isotropic_remesh` | 1.0 | 940 | yes | yes | 0.983 | 0.048 | 0 |
+| cylinder | `quadric_decimation` | 0.5 | 90 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `quadric_decimation` | 1.0 | 16 | yes | yes | 0.922 | 0.312 | 0 |
+| cylinder | `isotropic_remesh` | 0.5 | 668 | yes | yes | 1.000 | 0.000 | 0 |
+| cylinder | `isotropic_remesh` | 1.0 | 804 | yes | yes | 0.986 | 0.057 | 0 |
 | cylinder | `laplacian_smoothing` | 0.5 | 164 | yes | yes | 1.000 | 0.000 | 0 |
 | cylinder | `laplacian_smoothing` | 1.0 | 164 | yes | yes | 1.000 | 0.000 | 0 |
 | cylinder | `taubin_smoothing` | 0.5 | 164 | yes | yes | 1.000 | 0.000 | 0 |
@@ -326,10 +326,10 @@ Seed 20260101. Per-operator stats over the same meshes as above, plus one aggreg
 | cylinder | `vertex_clustering` | 0.5 | 44 | yes | yes | 1.000 | 0.000 | 0 |
 | cylinder | `vertex_clustering` | 1.0 | 44 | yes | yes | 1.000 | 0.000 | 0 |
 | ngon | `-` | - | 104 | yes | yes | 1.000 | 0.000 | 0 |
-| ngon | `quadric_decimation` | 0.5 | 57 | no | no | 1.000 | 0.000 | 11 |
-| ngon | `quadric_decimation` | 1.0 | 10 | no | no | 1.000 | 0.000 | 19 |
-| ngon | `isotropic_remesh` | 0.5 | 1170 | yes | yes | 0.942 | 0.197 | 0 |
-| ngon | `isotropic_remesh` | 1.0 | 1388 | yes | yes | 0.936 | 0.207 | 0 |
+| ngon | `quadric_decimation` | 0.5 | 56 | yes | no | 0.888 | 0.393 | 19 |
+| ngon | `quadric_decimation` | 1.0 | 10 | yes | no | 0.475 | 0.700 | 27 |
+| ngon | `isotropic_remesh` | 0.5 | 912 | yes | yes | 0.968 | 0.110 | 0 |
+| ngon | `isotropic_remesh` | 1.0 | 1362 | yes | yes | 0.965 | 0.131 | 0 |
 | ngon | `laplacian_smoothing` | 0.5 | 104 | yes | yes | 1.000 | 0.000 | 0 |
 | ngon | `laplacian_smoothing` | 1.0 | 104 | yes | yes | 1.000 | 0.000 | 0 |
 | ngon | `taubin_smoothing` | 0.5 | 104 | yes | yes | 1.000 | 0.000 | 0 |
@@ -337,23 +337,23 @@ Seed 20260101. Per-operator stats over the same meshes as above, plus one aggreg
 | ngon | `vertex_clustering` | 0.5 | 76 | yes | no | 0.934 | 0.184 | 9 |
 | ngon | `vertex_clustering` | 1.0 | 76 | yes | no | 0.934 | 0.184 | 9 |
 | fillet | `-` | - | 40 | yes | yes | 1.000 | 0.000 | 0 |
-| fillet | `quadric_decimation` | 0.5 | 22 | no | no | 1.000 | 0.000 | 3 |
-| fillet | `quadric_decimation` | 1.0 | 4 | no | no | 1.000 | 0.000 | 6 |
-| fillet | `isotropic_remesh` | 0.5 | 230 | yes | yes | 0.926 | 0.209 | 0 |
-| fillet | `isotropic_remesh` | 1.0 | 618 | yes | no | 0.958 | 0.121 | 1 |
+| fillet | `quadric_decimation` | 0.5 | 22 | yes | yes | 1.000 | 0.000 | 0 |
+| fillet | `quadric_decimation` | 1.0 | 4 | yes | no | 0.500 | 1.000 | 7 |
+| fillet | `isotropic_remesh` | 0.5 | 200 | yes | no | 0.985 | 0.050 | 1 |
+| fillet | `isotropic_remesh` | 1.0 | 452 | yes | no | 0.992 | 0.027 | 1 |
 | fillet | `laplacian_smoothing` | 0.5 | 40 | yes | yes | 1.000 | 0.000 | 0 |
 | fillet | `laplacian_smoothing` | 1.0 | 40 | yes | yes | 1.000 | 0.000 | 0 |
 | fillet | `taubin_smoothing` | 0.5 | 40 | yes | yes | 1.000 | 0.000 | 0 |
 | fillet | `taubin_smoothing` | 1.0 | 40 | yes | yes | 1.000 | 0.000 | 0 |
-| fillet | `vertex_clustering` | 0.5 | 4 | no | no | 0.375 | 1.000 | 7 |
-| fillet | `vertex_clustering` | 1.0 | 4 | no | no | 0.375 | 1.000 | 7 |
-| smoke (46) | `quadric_decimation` | 0.5 | 7904 | no | no | 1.000 | 0.000 | 156 |
-| smoke (46) | `quadric_decimation` | 1.0 | 1614 | no | no | 1.000 | 0.000 | 401 |
-| smoke (46) | `isotropic_remesh` | 0.5 | 32980 | yes | no | 0.949 | 0.164 | 40 |
-| smoke (46) | `isotropic_remesh` | 1.0 | 38908 | yes | no | 0.950 | 0.156 | 84 |
-| smoke (46) | `laplacian_smoothing` | 0.5 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
-| smoke (46) | `laplacian_smoothing` | 1.0 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
-| smoke (46) | `taubin_smoothing` | 0.5 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
-| smoke (46) | `taubin_smoothing` | 1.0 | 14397 | yes | yes | 1.000 | 0.000 | 0 |
-| smoke (46) | `vertex_clustering` | 0.5 | 3906 | no | no | 0.919 | 0.264 | 361 |
-| smoke (46) | `vertex_clustering` | 1.0 | 2460 | no | no | 0.884 | 0.365 | 387 |
+| fillet | `vertex_clustering` | 0.5 | 4 | no | no | 0.438 | 1.000 | 7 |
+| fillet | `vertex_clustering` | 1.0 | 4 | no | no | 0.438 | 1.000 | 7 |
+| smoke (50) | `quadric_decimation` | 0.5 | 12759 | yes | no | 0.975 | 0.086 | 270 |
+| smoke (50) | `quadric_decimation` | 1.0 | 2445 | yes | no | 0.896 | 0.320 | 768 |
+| smoke (50) | `isotropic_remesh` | 0.5 | 38390 | yes | no | 0.987 | 0.046 | 41 |
+| smoke (50) | `isotropic_remesh` | 1.0 | 44530 | yes | no | 0.989 | 0.037 | 61 |
+| smoke (50) | `laplacian_smoothing` | 0.5 | 23247 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (50) | `laplacian_smoothing` | 1.0 | 23247 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (50) | `taubin_smoothing` | 0.5 | 23247 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (50) | `taubin_smoothing` | 1.0 | 23247 | yes | yes | 1.000 | 0.000 | 0 |
+| smoke (50) | `vertex_clustering` | 0.5 | 5344 | no | no | 0.924 | 0.249 | 563 |
+| smoke (50) | `vertex_clustering` | 1.0 | 3489 | no | no | 0.888 | 0.351 | 668 |
