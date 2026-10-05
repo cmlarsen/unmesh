@@ -135,7 +135,7 @@ def _plan_face(fid, faces, adjacency, polymap, k, face_tris):
     footk = origin + ((np.array(linek[0]) - origin) @ axis) * axis
     w = np.array(linek[0]) - footk
     theta = math.atan2(float(w @ e2), float(w @ e1))
-    if abs(theta) < 1e-9 or abs(theta) > math.pi + 1e-9:
+    if abs(theta) < 1e-9 or abs(theta) > math.pi + 1e-9 or abs(theta) / k >= math.pi - 1e-6:
         return None
     lo, hi = (0.0, theta) if theta > 0 else (theta, 0.0)
     for idx in spans:
