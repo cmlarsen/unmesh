@@ -3,43 +3,41 @@
 Each operator is a pure function ``(LabeledMesh, severity, rng) -> params``
 registered under the ``processing`` family in ``unmesh_harness.degrade.OPERATORS``.
 They model what mesh-processing pipelines do to CAD tessellations: quadric
-decimation, isotropic and voxel remeshing, and Laplacian / Taubin smoothing.
+decimation (via fast-simplification, MIT), isotropic remeshing (an in-house
+Botsch-Kobbelt loop: split, collapse, flip, tangential relax, reproject),
+Laplacian / Taubin smoothing, and vertex clustering.
 
-All five are implemented here in numpy with no third-party mesh dependency.
-trimesh and open3d are both MIT-licensed, so either would be allowed, but a
-small deterministic implementation keeps the harness dependency-free and
-bit-identical across processes. pymeshlab (GPL-3.0-or-later) is not used at
-all, so no operator ever skips and no test needs it.
-
-Label policy: every output triangle keeps the face table, adjacency, edge
-polylines, vertices and shells of the clean mesh as the ground truth it is
-judged against, and takes the ``face_id`` of its nearest source face, measured
-by triangle-centroid distance to each source face's analytic surface (centroid
-distance for non-analytic faces). Each triangle also gets a
-``label_confidence`` in [0, 1] (``mesh.metadata["label_confidence"]``),
-``d2 / (d1 + d2)`` where ``d1`` is the distance to the nearest source face and
-``d2`` to the second-nearest (1.0 when the mesh has a single face). Metrics
-that score per-triangle labels should mask triangles below 0.9 confidence.
-The smoothing operators move shared vertices, so their adjacency polylines move
-with the mesh; the remeshing operators leave the polylines on the clean mesh.
+Label policy: topology-changing operators relabel every output triangle from
+the clean labeled source mesh. Source triangles are densely sampled
+(barycentric lattice, spacing ``bbox diagonal / 400``, plus the centroid) with
+each sample carrying its source triangle; a ``scipy.spatial.cKDTree`` over the
+samples proposes candidate triangles for each output triangle's centroid and
+3 edge midpoints (midpoints pulled 10% toward the centroid so probes never sit
+exactly on a shared edge, where two faces tie at distance zero). A probe votes
+the face of its exactly containing source triangle when one is within
+1e-9 of the diagonal, else the majority face of its nearest samples; the
+triangle takes the majority over its 4 probes with ``label_confidence`` the
+agreeing fraction. Coplanar faces sharing one surface are told apart by
+trimmed-triangle proximity. Smoothing keeps connectivity, so it keeps the
+original labels exactly with confidence 1.0.
 """
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
+from scipy.spatial import cKDTree
 
-from ..labels import distance_to_surface
 from .core import displace_vertices, register, vertex_table
-from .refine import _split_triangle
 
 CONFIDENCE_KEY = "label_confidence"
 MASK_THRESHOLD = 0.9
 POLYLINES_COINCIDE = ("laplacian_smoothing", "taubin_smoothing")
 
-_TRANSFER_CHUNK = 512
-_FOLD_EPS = 1e-14
+_SAMPLE_DIVISOR = 400.0
+_LABEL_KNN = 32
+_LABEL_KNN_CAP = 512
+_PROBE_INSET = 0.1
+_EXACT_TOL_REL = 1e-9
 
 
 def bbox_diagonal(tris: np.ndarray) -> float:
@@ -47,35 +45,161 @@ def bbox_diagonal(tris: np.ndarray) -> float:
     return float(np.linalg.norm(flat.max(axis=0) - flat.min(axis=0)))
 
 
+def _lattice(n: int) -> np.ndarray:
+    return np.array(
+        [(i / n, j / n, (n - i - j) / n) for i in range(n + 1) for j in range(n + 1 - i)],
+        dtype=np.float64,
+    )
+
+
+def sample_source(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    tris = np.asarray(tris, dtype=np.float64).reshape(-1, 3, 3)
+    if len(tris) == 0:
+        return np.zeros((0, 3)), np.zeros(0, dtype=np.int64)
+    diagonal = bbox_diagonal(tris)
+    spacing = diagonal / _SAMPLE_DIVISOR if diagonal > 0 else 1.0
+    edges = np.linalg.norm(tris - np.roll(tris, -1, axis=1), axis=2).max(axis=1)
+    order = np.clip(np.ceil(edges / spacing).astype(np.int64), 4, 128)
+    parts: list[np.ndarray] = []
+    owners: list[np.ndarray] = []
+    for n in np.unique(order):
+        group = np.nonzero(order == n)[0]
+        pts = _lattice(int(n)) @ tris[group]
+        block = np.empty((len(group), pts.shape[1] + 1, 3))
+        block[:, :-1] = pts
+        block[:, -1] = tris[group].mean(axis=1)
+        parts.append(block.reshape(-1, 3))
+        owners.append(np.repeat(group, pts.shape[1] + 1))
+    return np.concatenate(parts), np.concatenate(owners)
+
+
+def _point_tri_dist2(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+    ab = b - a
+    ac = c - a
+    ap = p - a
+    d1 = (ab * ap).sum(axis=1)
+    d2 = (ac * ap).sum(axis=1)
+    bp = p - b
+    d3 = (ab * bp).sum(axis=1)
+    d4 = (ac * bp).sum(axis=1)
+    cp = p - c
+    d5 = (ab * cp).sum(axis=1)
+    d6 = (ac * cp).sum(axis=1)
+    vc = d1 * d4 - d3 * d2
+    vb = d5 * d2 - d1 * d6
+    va = d3 * d6 - d5 * d4
+    denom = va + vb + vc
+    inside = (denom > 1e-300) & (vc >= 0.0) & (vb >= 0.0) & (va >= 0.0)
+    out = np.full(len(p), np.inf)
+    if inside.any():
+        v = np.zeros(len(p))
+        w = np.zeros(len(p))
+        v[inside] = vb[inside] / denom[inside]
+        w[inside] = vc[inside] / denom[inside]
+        q = a + ab * v[:, None] + ac * w[:, None]
+        out[inside] = ((p[inside] - q[inside]) ** 2).sum(axis=1)
+    rest = ~inside
+    if rest.any():
+        pr, ar, br, cr = p[rest], a[rest], b[rest], c[rest]
+
+        def seg(q0: np.ndarray, q1: np.ndarray) -> np.ndarray:
+            d = q1 - q0
+            dd = (d**2).sum(axis=1)
+            t = np.zeros(len(pr))
+            ok = dd > 0
+            t[ok] = ((pr[ok] - q0[ok]) * d[ok]).sum(axis=1) / dd[ok]
+            t = np.clip(t, 0.0, 1.0)
+            return ((pr - (q0 + t[:, None] * d)) ** 2).sum(axis=1)
+
+        out[rest] = np.minimum.reduce([seg(ar, br), seg(br, cr), seg(cr, ar)])
+    return out
+
+
+def _exact_votes(
+    probes: np.ndarray,
+    src: np.ndarray,
+    owner: np.ndarray,
+    tree: cKDTree,
+    tol2: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    flat = np.asarray(probes, dtype=np.float64).reshape(-1, 3)
+    k = _LABEL_KNN
+    best_t = np.full(len(flat), -1, dtype=np.int64)
+    best_d = np.full(len(flat), np.inf)
+    for _ in range(4):
+        use = min(k, len(tree.data))
+        idx = tree.query(flat, k=use)[1]
+        idx = np.asarray(idx).reshape(len(flat), use)
+        cand = owner[idx.ravel()]
+        rows = np.repeat(np.arange(len(flat)), use)
+        d2 = _point_tri_dist2(flat[rows], src[cand, 0], src[cand, 1], src[cand, 2])
+        d2 = d2.reshape(len(flat), use)
+        pick = d2.argmin(axis=1)
+        row_best = d2[np.arange(len(flat)), pick]
+        row_tri = cand.reshape(len(flat), use)[np.arange(len(flat)), pick]
+        improved = row_best < best_d
+        best_d[improved] = row_best[improved]
+        best_t[improved] = row_tri[improved]
+        kth = d2[:, -1]
+        retry = (best_d > tol2) & (best_d > 4.0 * kth)
+        if not retry.any() or k >= _LABEL_KNN_CAP:
+            break
+        k = min(k * 8, _LABEL_KNN_CAP)
+    return best_t, best_d
+
+
 def transfer_labels(mesh, src_tris, src_ids) -> dict:
+    src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3)
+    out = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3)
     src_ids = np.asarray(src_ids)
-    src_cent = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 3).mean(axis=1)
-    new_cent = np.asarray(mesh.tris, dtype=np.float64).reshape(-1, 3, 3).mean(axis=1)
     faces = np.unique(src_ids)
-    analytic = [mesh.faces[int(f)].surface != "other" for f in faces]
-    fallback = [src_cent[src_ids == f] for f in faces]
-    fids = np.empty(len(new_cent), dtype=src_ids.dtype)
-    conf = np.ones(len(new_cent), dtype=np.float64)
-    for start in range(0, len(new_cent), _TRANSFER_CHUNK):
-        chunk = new_cent[start : start + _TRANSFER_CHUNK]
-        best = np.empty((len(chunk), len(faces)))
-        for j, f in enumerate(faces):
-            if analytic[j]:
-                d = distance_to_surface(mesh.faces[int(f)], chunk)
-            else:
-                d = np.linalg.norm(chunk[:, None, :] - fallback[j][None, :, :], axis=2).min(axis=1)
-            best[:, j] = np.where(np.isfinite(d), d, 1e300)
-        order = np.argsort(best, axis=1, kind="stable")
-        rows = np.arange(len(chunk))
-        d1 = best[rows, order[:, 0]]
-        fids[start : start + _TRANSFER_CHUNK] = faces[order[:, 0]]
-        if len(faces) > 1:
-            d2 = best[rows, order[:, 1]]
-            denom = d1 + d2
-            conf[start : start + _TRANSFER_CHUNK] = np.where(
-                denom > 0, d2 / np.maximum(denom, 1e-300), 1.0
-            )
-    mesh.face_id = np.array(fids, dtype=src_ids.dtype)
+    lut = np.zeros(int(src_ids.max()) + 1, dtype=np.int64)
+    lut[faces] = np.arange(len(faces))
+    if len(out) == 0:
+        mesh.face_id = np.zeros(0, dtype=src_ids.dtype)
+        mesh.metadata[CONFIDENCE_KEY] = []
+        return {"mean_confidence": 1.0, "fraction_below_0_9": 0.0}
+    diagonal = bbox_diagonal(src)
+    tol2 = (diagonal * _EXACT_TOL_REL) ** 2
+    pts, owner = sample_source(src)
+    tree = cKDTree(pts)
+    centroid = out.mean(axis=1)
+    mids = np.stack(
+        [
+            out[:, 0] * 0.5 + out[:, 1] * 0.5,
+            out[:, 1] * 0.5 + out[:, 2] * 0.5,
+            out[:, 2] * 0.5 + out[:, 0] * 0.5,
+        ],
+        axis=1,
+    )
+    probes = np.concatenate(
+        [centroid[:, None], mids * (1.0 - _PROBE_INSET) + centroid[:, None] * _PROBE_INSET],
+        axis=1,
+    )
+    best_t, best_d = _exact_votes(probes, src, owner, tree, tol2)
+    exact = best_d.reshape(len(out), 4) <= tol2
+    votes = np.empty((len(out), 4), dtype=src_ids.dtype)
+    votes[exact] = src_ids[best_t.reshape(len(out), 4)[exact]]
+    if not exact.all():
+        missing = np.nonzero(~exact.all(axis=1))[0]
+        idx = tree.query(probes[missing].reshape(-1, 3), k=_LABEL_KNN)[1]
+        knn = np.asarray(idx).reshape(len(missing), 4, _LABEL_KNN)
+        exm = exact[missing]
+        for j in range(4):
+            loc = np.nonzero(~exm[:, j])[0]
+            if len(loc) == 0:
+                continue
+            need = missing[loc]
+            sf = src_ids[owner[knn[loc, j]]]
+            counts = np.zeros((len(need), len(faces)), dtype=np.int32)
+            for f, face in enumerate(faces):
+                counts[:, f] = (sf == face).sum(axis=1)
+            votes[need, j] = faces[counts.argmax(axis=1)]
+    counts = np.zeros((len(out), len(faces)), dtype=np.int32)
+    np.add.at(counts, (np.arange(len(out))[:, None], lut[votes]), 1)
+    win = counts.argmax(axis=1)
+    conf = counts[np.arange(len(out)), win] / 4.0
+    mesh.face_id = np.array(faces[win], dtype=src_ids.dtype)
     mesh.metadata[CONFIDENCE_KEY] = [float(v) for v in conf]
     return {
         "mean_confidence": float(conf.mean()) if len(conf) else 1.0,
@@ -83,224 +207,63 @@ def transfer_labels(mesh, src_tris, src_ids) -> dict:
     }
 
 
-def _owners(ids: list[tuple[int, int, int]]) -> dict[tuple[int, int], list[int]]:
-    owners: dict[tuple[int, int], list[int]] = {}
-    for ti, (a, b, c) in enumerate(ids):
-        for u, v in ((a, b), (b, c), (c, a)):
-            owners.setdefault((min(u, v), max(u, v)), []).append(ti)
-    return owners
+def _weld(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    uniq, inverse = np.unique(
+        np.asarray(tris, dtype=np.float64).reshape(-1, 3), axis=0, return_inverse=True
+    )
+    return uniq, inverse.reshape(-1, 3).astype(np.int64)
 
 
-def _live_neighbors(ids: list[tuple[int, int, int]], live: list[bool], n: int) -> list[set[int]]:
-    nbrs: list[set[int]] = [set() for _ in range(n)]
-    for ti, (a, b, c) in enumerate(ids):
-        if not live[ti]:
-            continue
-        nbrs[a].update((b, c))
-        nbrs[b].update((a, c))
-        nbrs[c].update((a, b))
-    return nbrs
-
-
-def _link_ok(
-    a: int,
-    b: int,
-    ids: list[tuple[int, int, int]],
-    live: list[bool],
-    owners: dict[tuple[int, int], list[int]],
-    nbrs: list[set[int]],
-) -> bool:
-    opposite = set()
-    for ti in owners.get((min(a, b), max(a, b)), []):
-        if not live[ti]:
-            continue
-        rest = [v for v in ids[ti] if v != a and v != b]
-        if len(rest) != 1:
-            return False
-        opposite.add(rest[0])
-    return nbrs[a] & nbrs[b] == opposite
-
-
-def _fold_ok(
-    a: int,
-    b: int,
-    w: np.ndarray,
-    ids: list[tuple[int, int, int]],
-    live: list[bool],
-    coords: list[np.ndarray],
-) -> bool:
-    for ti, (x, y, z) in enumerate(ids):
-        if not live[ti]:
-            continue
-        hits = (x == a or x == b, y == a or y == b, z == a or z == b)
-        if sum(hits) != 1:
-            continue
-        old = [coords[x], coords[y], coords[z]]
-        new = [w if hit else coords[v] for hit, v in zip(hits, (x, y, z), strict=True)]
-        n_old = np.cross(old[1] - old[0], old[2] - old[0])
-        n_new = np.cross(new[1] - new[0], new[2] - new[0])
-        if float(np.linalg.norm(n_new)) <= _FOLD_EPS:
-            return False
-        if float(n_old @ n_new) <= 0.0:
-            return False
-    return True
-
-
-def _count_ok(
-    a: int,
-    b: int,
-    ids: list[tuple[int, int, int]],
-    live: list[bool],
-    owners: dict[tuple[int, int], list[int]],
-    fids: list[int],
-    counts: list[int],
-) -> bool:
-    dying: dict[int, int] = {}
-    for ti in owners.get((min(a, b), max(a, b)), []):
-        if live[ti]:
-            dying[fids[ti]] = dying.get(fids[ti], 0) + 1
-    return all(counts[f] > dying[f] for f in dying)
-
-
-def _collapse(
-    a: int,
-    b: int,
-    w: np.ndarray,
-    ids: list[tuple[int, int, int]],
-    live: list[bool],
-    fids: list[int],
-    counts: list[int],
-    coords: list[np.ndarray],
-) -> None:
-    nv = len(coords)
-    coords.append(np.asarray(w, dtype=np.float64))
-    for ti, (x, y, z) in enumerate(ids):
-        if not live[ti]:
-            continue
-        hits = (x == a or x == b, y == a or y == b, z == a or z == b)
-        if sum(hits) > 1:
-            live[ti] = False
-            counts[fids[ti]] -= 1
-        elif sum(hits) == 1:
-            sub = tuple(nv if hit else v for hit, v in zip(hits, (x, y, z), strict=True))
-            if len(set(sub)) < 3:
-                live[ti] = False
-                counts[fids[ti]] -= 1
-            else:
-                ids[ti] = sub
-
-
-def _indexed(
-    tris: list[tuple[tuple, tuple, tuple]],
-) -> tuple[list[tuple[int, int, int]], list[np.ndarray]]:
-    table = sorted({p for t in tris for p in t})
-    index = {p: i for i, p in enumerate(table)}
-    coords = [np.array(p, dtype=np.float64) for p in table]
-    return [tuple(index[p] for p in t) for t in tris], coords
-
-
-def _plane_quadrics(
-    ids: list[tuple[int, int, int]], live: list[bool], coords: list[np.ndarray]
-) -> dict[int, np.ndarray]:
-    out: dict[int, np.ndarray] = {}
-    for ti, (a, b, c) in enumerate(ids):
-        if not live[ti]:
-            continue
-        n = np.cross(coords[b] - coords[a], coords[c] - coords[a])
-        area = float(np.linalg.norm(n))
-        if area <= 0.0:
-            continue
-        un = n / area
-        plane = np.append(un, -float(un @ coords[a]))
-        q = np.outer(plane, plane) * (area / 2.0)
-        for v in (a, b, c):
-            out[v] = out.get(v, np.zeros((4, 4))) + q
-    return out
-
-
-def _edge_cost(a: int, b: int, quad: dict[int, np.ndarray], coords: list[np.ndarray]) -> float:
-    m = np.append((coords[a] + coords[b]) / 2.0, 1.0)
-    q = quad.get(a, np.zeros((4, 4))) + quad.get(b, np.zeros((4, 4)))
-    return float(m @ q @ m)
+def _drop_degenerate(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+    scale = (V.max(axis=0) - V.min(axis=0)) ** 2
+    area2 = np.linalg.norm(np.cross(V[F[:, 0]] - V[F[:, 1]], V[F[:, 2]] - V[F[:, 1]]), axis=1)
+    keep = area2 > 1e-30 * (float(np.median(scale)) + 1e-300)
+    return V, F[keep], int((~keep).sum())
 
 
 DECIMATE_KEEP_AT_ONE = 0.1
-DECIMATE_MAX_PASSES = 100
+DECIMATE_MIN_TRIANGLES = 4
 
 
 @register(
     "quadric_decimation",
     "processing",
     "identity",
-    "keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), quadric-error "
-    "ordered edge collapses to the edge midpoint with link-condition and fold guards, "
-    "best effort without removing any face's last triangle",
-    preserves_watertight=True,
+    "keep ratio 1 - 0.9 * severity of triangles (10% at severity 1), fast "
+    "quadric-error decimation to the error-optimal position (fast-simplification, "
+    "MIT) with a 4-triangle floor; no face-preservation guard, faces lost to the "
+    "target show up as low-confidence or missing labels, and collapsing can "
+    "crack the mesh, so watertightness is not guaranteed",
+    preserves_watertight=False,
 )
 def quadric_decimation(mesh, severity, rng):
+    import fast_simplification
+
     src_tris = mesh.tris.copy()
     src_ids = mesh.face_id.copy()
     before = len(src_tris)
     keep = 1.0 - 0.9 * severity
-    target = max(1, int(round(before * keep)))
-    corners = src_tris.reshape(-1, 3)
-    uniq, inverse = np.unique(corners, axis=0, return_inverse=True)
-    coords = [row for row in uniq]
-    ids = [tuple(int(v) for v in t) for t in inverse.reshape(-1, 3).tolist()]
-    fids = [int(v) for v in src_ids.tolist()]
-    live = [True] * len(ids)
-    counts = [0] * len(mesh.faces)
-    for f in fids:
-        counts[f] += 1
-    collapses = 0
-    for _ in range(DECIMATE_MAX_PASSES):
-        if sum(live) <= target:
+    target = max(DECIMATE_MIN_TRIANGLES, int(round(before * keep)))
+    soup = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3)
+    faces = np.arange(len(soup), dtype=np.int32).reshape(-1, 3)
+    attempts = 0
+    while True:
+        P, Q = fast_simplification.simplify(soup, faces, target_count=target)
+        V2, F2 = np.asarray(P, dtype=np.float64), np.asarray(Q, dtype=np.int64)
+        V2, F2, dropped = _drop_degenerate(V2, F2)
+        if len(F2) >= DECIMATE_MIN_TRIANGLES or target >= before or attempts >= 5:
             break
-        nbrs = _live_neighbors(ids, live, len(coords))
-        owners = _owners(ids)
-        quad = _plane_quadrics(ids, live, coords)
-        edges = sorted(
-            {e for e, members in owners.items() if any(live[t] for t in members)},
-            key=lambda e: (
-                _edge_cost(e[0], e[1], quad, coords),
-                tuple(coords[e[0]].tolist()),
-                tuple(coords[e[1]].tolist()),
-            ),
-        )
-        used: set[int] = set()
-        moved = False
-        for a, b in edges:
-            if sum(live) <= target:
-                break
-            if a in used or b in used:
-                continue
-            if not _link_ok(a, b, ids, live, owners, nbrs):
-                continue
-            w = (coords[a] + coords[b]) / 2.0
-            if not _fold_ok(a, b, w, ids, live, coords):
-                continue
-            if not _count_ok(a, b, ids, live, owners, fids, counts):
-                continue
-            _collapse(a, b, w, ids, live, fids, counts, coords)
-            nbrs = _live_neighbors(ids, live, len(coords))
-            owners = _owners(ids)
-            used.update((a, b))
-            collapses += 1
-            moved = True
-        if not moved:
-            break
-    kept = [i for i, v in enumerate(live) if v]
-    mesh.tris = np.array(
-        [[coords[v].tolist() for v in ids[i]] for i in kept], dtype=np.float64
-    ).reshape(-1, 3, 3)
+        target = min(before, target * 2 + 1)
+        attempts += 1
+    mesh.tris = V2[F2].reshape(-1, 3, 3)
     label = transfer_labels(mesh, src_tris, src_ids)
     return {
         "keep_ratio_target": keep,
-        "keep_ratio_achieved": len(kept) / before,
+        "keep_ratio_achieved": len(mesh.tris) / before,
         "target_triangles": target,
-        "collapses": collapses,
+        "degenerate_dropped": dropped,
         "triangles_before": before,
-        "triangles_after": len(kept),
+        "triangles_after": len(mesh.tris),
         **label,
     }
 
@@ -317,76 +280,289 @@ def remesh_passes(severity: float) -> int:
     return 1 + int(round(2.0 * severity))
 
 
-def _split_long(
-    tris: list[tuple[tuple, tuple, tuple]], fids: list[int], limit: float
-) -> tuple[list[tuple[tuple, tuple, tuple]], list[int], int]:
-    def key(p, q):
-        return (p, q) if p <= q else (q, p)
-
-    edges = set()
-    for t in tris:
-        for p, q in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
-            if math.dist(p, q) > limit:
-                edges.add(key(p, q))
-    if not edges:
-        return tris, fids, 0
-    mids = {}
-    for k in sorted(edges):
-        p, q = k
-        mids[k] = tuple(((np.array(p) + np.array(q)) / 2.0).tolist())
-    new_tris, new_ids = [], []
-    for t, f in zip(tris, fids, strict=True):
-        pieces = _split_triangle(t, mids, f)
-        new_tris += pieces
-        new_ids += [f] * len(pieces)
-    return new_tris, new_ids, len(mids)
+def _compact(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    used = np.unique(F)
+    remap = np.full(len(V), -1, dtype=np.int64)
+    remap[used] = np.arange(len(used))
+    return V[used], remap[F]
 
 
-def _collapse_short(
-    tris: list[tuple[tuple, tuple, tuple]], fids: list[int], limit: float, nfaces: int
-) -> tuple[list[tuple[tuple, tuple, tuple]], list[int], int]:
-    ids, coords = _indexed(tris)
-    live = [True] * len(ids)
-    counts = [0] * nfaces
-    for f in fids:
-        counts[f] += 1
-    nbrs = _live_neighbors(ids, live, len(coords))
-    owners = _owners(ids)
-    edges = sorted(
-        (
-            e
-            for e, members in owners.items()
-            if any(live[t] for t in members) and math.dist(coords[e[0]], coords[e[1]]) < limit
-        ),
-        key=lambda e: (
-            math.dist(coords[e[0]], coords[e[1]]),
-            tuple(coords[e[0]].tolist()),
-            tuple(coords[e[1]].tolist()),
-        ),
+def _unique_edges(F: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    raw = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    key = np.sort(raw, axis=1)
+    uniq, _, inverse, counts = np.unique(
+        key, axis=0, return_index=True, return_inverse=True, return_counts=True
     )
+    return uniq, inverse, counts
+
+
+def _manifold_owners(
+    n_tris: int, counts: np.ndarray, inverse: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    order = np.argsort(inverse, kind="stable")
+    starts = np.cumsum(counts) - counts
+    tri_of = np.tile(np.arange(n_tris), 3)[order]
+    t0 = np.full(len(counts), -1, dtype=np.int64)
+    t1 = np.full(len(counts), -1, dtype=np.int64)
+    pair = np.nonzero(counts == 2)[0]
+    t0[pair] = tri_of[starts[pair]]
+    t1[pair] = tri_of[starts[pair] + 1]
+    return t0, t1
+
+
+def _vertex_tri_map(F: np.ndarray, n_verts: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    flat = F.ravel()
+    order = np.argsort(flat, kind="stable")
+    counts = np.bincount(flat, minlength=n_verts)
+    starts = np.cumsum(counts) - counts
+    return starts, counts, np.repeat(np.arange(len(F)), 3)[order]
+
+
+def _split_pass(
+    V: np.ndarray, F: np.ndarray, limit: float, project
+) -> tuple[np.ndarray, np.ndarray, int]:
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    lengths = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
+    long_mask = lengths > limit
+    if not long_mask.any():
+        return V, F, 0
+    edges = np.unique(np.sort(E[long_mask], axis=1), axis=0)
+    mids = project((V[edges[:, 0]] + V[edges[:, 1]]) / 2.0)
+    base = len(V)
+    V = np.concatenate([V, mids])
+    n_all = base + len(edges)
+    ekey = np.sort(
+        np.minimum(edges[:, 0], edges[:, 1]) * n_all + np.maximum(edges[:, 0], edges[:, 1])
+    )
+    qkey = np.stack(
+        [
+            np.minimum(F[:, 0], F[:, 1]) * n_all + np.maximum(F[:, 0], F[:, 1]),
+            np.minimum(F[:, 1], F[:, 2]) * n_all + np.maximum(F[:, 1], F[:, 2]),
+            np.minimum(F[:, 2], F[:, 0]) * n_all + np.maximum(F[:, 2], F[:, 0]),
+        ],
+        axis=1,
+    )
+    pos = np.searchsorted(ekey, qkey)
+    pos = np.clip(pos, 0, len(ekey) - 1)
+    hit = ekey[pos] == qkey
+    mid_ids = np.where(hit, base + pos, -1)
+    ab, bc, ca = mid_ids[:, 0], mid_ids[:, 1], mid_ids[:, 2]
+    has = (ab >= 0).astype(np.int64) + (bc >= 0).astype(np.int64) + (ca >= 0).astype(np.int64)
+    blocks: list[np.ndarray] = []
+    plain = np.nonzero(has == 0)[0]
+    if len(plain):
+        blocks.append(F[plain])
+    full = np.nonzero(has == 3)[0]
+    if len(full):
+        a, b, c = F[full, 0], F[full, 1], F[full, 2]
+        blocks.append(np.stack([a, ab[full], ca[full]], axis=1))
+        blocks.append(np.stack([b, bc[full], ab[full]], axis=1))
+        blocks.append(np.stack([c, ca[full], bc[full]], axis=1))
+        blocks.append(np.stack([ab[full], bc[full], ca[full]], axis=1))
+    two = np.nonzero(has == 2)[0]
+    if len(two):
+        miss = np.where(ab[two] < 0, 0, np.where(bc[two] < 0, 1, 2))
+        mid = np.stack([ab[two], bc[two], ca[two]], axis=1)
+        for kk in range(3):
+            g = two[miss == kk]
+            if len(g) == 0:
+                continue
+            v0 = F[g, kk]
+            v1 = F[g, (kk + 1) % 3]
+            v2 = F[g, (kk + 2) % 3]
+            m0 = mid[miss == kk, (kk + 1) % 3]
+            m1 = mid[miss == kk, (kk + 2) % 3]
+            blocks.append(np.stack([v2, m1, m0], axis=1))
+            blocks.append(np.stack([v0, v1, m0], axis=1))
+            blocks.append(np.stack([v0, m0, m1], axis=1))
+    one = np.nonzero(has == 1)[0]
+    if len(one):
+        hit = np.where(ab[one] >= 0, 0, np.where(bc[one] >= 0, 1, 2))
+        mid = np.stack([ab[one], bc[one], ca[one]], axis=1)
+        for kk in range(3):
+            g = one[hit == kk]
+            if len(g) == 0:
+                continue
+            v0 = F[g, kk]
+            v1 = F[g, (kk + 1) % 3]
+            v2 = F[g, (kk + 2) % 3]
+            m = mid[hit == kk, kk]
+            blocks.append(np.stack([v0, m, v2], axis=1))
+            blocks.append(np.stack([m, v1, v2], axis=1))
+    return V, np.concatenate(blocks), len(edges)
+
+
+def _collapse_pass(
+    V: np.ndarray, F: np.ndarray, limit: float, project
+) -> tuple[np.ndarray, np.ndarray, int]:
     collapses = 0
-    used: set[int] = set()
-    for a, b in edges:
-        if a in used or b in used:
-            continue
-        if not _link_ok(a, b, ids, live, owners, nbrs):
-            continue
-        w = (coords[a] + coords[b]) / 2.0
-        if not _fold_ok(a, b, w, ids, live, coords):
-            continue
-        if not _count_ok(a, b, ids, live, owners, fids, counts):
-            continue
-        _collapse(a, b, w, ids, live, fids, counts, coords)
-        nbrs = _live_neighbors(ids, live, len(coords))
-        owners = _owners(ids)
-        used.update((a, b))
-        collapses += 1
-    table = [tuple(c.tolist()) for c in coords]
-    return (
-        [tuple(table[v] for v in ids[i]) for i, v in enumerate(live) if v],
-        [f for f, v in zip(fids, live, strict=True) if v],
-        collapses,
+    for _ in range(8):
+        uniq, inverse, counts = _unique_edges(F)
+        lengths = np.linalg.norm(V[uniq[:, 0]] - V[uniq[:, 1]], axis=1)
+        cand = np.nonzero((lengths < limit) & (counts == 2))[0]
+        if len(cand) == 0:
+            break
+        ordered = np.lexsort(
+            (
+                V[uniq[cand, 1], 2],
+                V[uniq[cand, 1], 1],
+                V[uniq[cand, 1], 0],
+                V[uniq[cand, 0], 2],
+                V[uniq[cand, 0], 1],
+                V[uniq[cand, 0], 0],
+                lengths[cand],
+            )
+        )
+        cand = cand[ordered]
+        t0, t1 = _manifold_owners(len(F), counts, inverse)
+        starts, vcounts, tri_of = _vertex_tri_map(F, len(V))
+        touch = np.zeros(len(F), dtype=bool)
+        remap = np.arange(len(V), dtype=np.int64)
+        new_pts: list[np.ndarray] = []
+        accepted = 0
+        for e in cand.tolist():
+            a, b = int(uniq[e, 0]), int(uniq[e, 1])
+            if remap[a] != a or remap[b] != b:
+                continue
+            r0, r1 = int(t0[e]), int(t1[e])
+            if r0 < 0 or touch[r0] or touch[r1]:
+                continue
+            opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
+            if len(opp) != 2:
+                continue
+            aff = np.unique(
+                np.concatenate(
+                    [
+                        tri_of[starts[a] : starts[a] + vcounts[a]],
+                        tri_of[starts[b] : starts[b] + vcounts[b]],
+                    ]
+                )
+            )
+            aff = aff[~((F[aff] == a).any(axis=1) & (F[aff] == b).any(axis=1))]
+            if touch[aff].any():
+                continue
+            w = project(((V[a] + V[b]) / 2.0)[None, :])[0]
+            old = V[F[aff]]
+            new = old.copy()
+            sel = F[aff] == a
+            new[sel] = w
+            sel = F[aff] == b
+            new[sel] = w
+            n_old = np.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0])
+            n_new = np.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0])
+            if (np.linalg.norm(n_new, axis=1) <= 1e-14).any():
+                continue
+            if ((n_old * n_new).sum(axis=1) <= 0.0).any():
+                continue
+            nv = len(V) + len(new_pts)
+            new_pts.append(w)
+            remap[a] = nv
+            remap[b] = nv
+            touch[aff] = True
+            accepted += 1
+        if accepted == 0:
+            break
+        V = np.concatenate([V] + [p[None, :] for p in new_pts])
+        F = remap[F]
+        dead = (F[:, 0] == F[:, 1]) | (F[:, 1] == F[:, 2]) | (F[:, 2] == F[:, 0])
+        F = F[~dead]
+        collapses += accepted
+    return V, F, collapses
+
+
+def _flip_pass(V: np.ndarray, F: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+    flips = 0
+    for _ in range(3):
+        uniq, inverse, counts = _unique_edges(F)
+        cand = np.nonzero(counts == 2)[0]
+        if len(cand) == 0:
+            break
+        ordered = np.lexsort(
+            (
+                V[uniq[cand, 1], 2],
+                V[uniq[cand, 1], 1],
+                V[uniq[cand, 1], 0],
+                V[uniq[cand, 0], 2],
+                V[uniq[cand, 0], 1],
+                V[uniq[cand, 0], 0],
+            )
+        )
+        cand = cand[ordered]
+        t0, t1 = _manifold_owners(len(F), counts, inverse)
+        val = np.bincount(F.ravel(), minlength=len(V))
+        touch = np.zeros(len(F), dtype=bool)
+        swap: list[tuple[int, tuple[int, int, int], tuple[int, int, int]]] = []
+        for e in cand.tolist():
+            a, b = int(uniq[e, 0]), int(uniq[e, 1])
+            r0, r1 = int(t0[e]), int(t1[e])
+            if r0 < 0 or touch[r0] or touch[r1]:
+                continue
+            opp = [v for v in F[r0].tolist() + F[r1].tolist() if v != a and v != b]
+            if len(opp) != 2:
+                continue
+            c, d = opp
+            before = (
+                abs(int(val[a]) - 6)
+                + abs(int(val[b]) - 6)
+                + abs(int(val[c]) - 6)
+                + abs(int(val[d]) - 6)
+            )
+            after = (
+                abs(int(val[a]) - 7)
+                + abs(int(val[b]) - 7)
+                + abs(int(val[c]) - 5)
+                + abs(int(val[d]) - 5)
+            )
+            if after >= before:
+                continue
+            n_old0 = np.cross(V[F[r0, 1]] - V[F[r0, 0]], V[F[r0, 2]] - V[F[r0, 0]])
+            n_old1 = np.cross(V[F[r1, 1]] - V[F[r1, 0]], V[F[r1, 2]] - V[F[r1, 0]])
+            row0 = np.where(F[r0] == b, d, F[r0])
+            row1 = np.where(F[r1] == a, c, F[r1])
+            n_new0 = np.cross(V[row0[1]] - V[row0[0]], V[row0[2]] - V[row0[0]])
+            n_new1 = np.cross(V[row1[1]] - V[row1[0]], V[row1[2]] - V[row1[0]])
+            if min(float(np.linalg.norm(n_new0)), float(np.linalg.norm(n_new1))) <= 1e-14:
+                continue
+            if float(n_new0 @ n_old0) <= 0.0 or float(n_new1 @ n_old1) <= 0.0:
+                continue
+            swap.append((r0, tuple(int(v) for v in row0), (r1, tuple(int(v) for v in row1))))
+            val[a] -= 1
+            val[b] -= 1
+            val[c] += 1
+            val[d] += 1
+            touch[r0] = True
+            touch[r1] = True
+            flips += 1
+        if not swap:
+            break
+        F = F.copy()
+        for r0, tri0, rest in swap:
+            r1, tri1 = rest
+            F[r0] = tri0
+            F[r1] = tri1
+    return V, F, flips
+
+
+def _relax_pass(V: np.ndarray, F: np.ndarray, project) -> np.ndarray:
+    E = np.concatenate(
+        [F[:, [0, 1]], F[:, [1, 0]], F[:, [1, 2]], F[:, [2, 1]], F[:, [2, 0]], F[:, [0, 2]]]
     )
+    sums = np.zeros_like(V)
+    np.add.at(sums, E[:, 0], V[E[:, 1]])
+    cnt = np.bincount(E[:, 0], minlength=len(V))
+    umbrella = sums / np.maximum(cnt, 1)[:, None] - V
+    e0 = V[F[:, 1]] - V[F[:, 0]]
+    e1 = V[F[:, 2]] - V[F[:, 0]]
+    fn = np.cross(e0, e1)
+    area = np.linalg.norm(fn, axis=1, keepdims=True)
+    fn = fn / np.maximum(area, 1e-300)
+    acc = np.zeros_like(V)
+    np.add.at(acc, F[:, 0], fn * area)
+    np.add.at(acc, F[:, 1], fn * area)
+    np.add.at(acc, F[:, 2], fn * area)
+    n = acc / np.maximum(np.linalg.norm(acc, axis=1, keepdims=True), 1e-300)
+    tangential = umbrella - (umbrella * n).sum(axis=1, keepdims=True) * n
+    return project(V + 0.5 * tangential)
 
 
 @register(
@@ -394,9 +570,8 @@ def _collapse_short(
     "processing",
     "identity",
     "uniform target edge diagonal * 0.02 * 2**severity (diagonal/50 at severity 0+, "
-    "/25 at severity 1); 1 + round(2*severity) passes splitting edges longer than 4/3 "
-    "of target conformingly at midpoints and collapsing edges shorter than 4/5 of "
-    "target to midpoints under manifold guards",
+    "/25 at severity 1); split edges longer than 4/3 of target, collapse shorter "
+    "than 4/5, flip toward valence 6, tangential relax and reproject to the source",
     preserves_watertight=True,
 )
 def isotropic_remesh(mesh, severity, rng):
@@ -405,18 +580,28 @@ def isotropic_remesh(mesh, severity, rng):
     before = len(src_tris)
     diagonal = bbox_diagonal(src_tris)
     h = target_edge_mm(severity, diagonal)
+    pts, _ = sample_source(np.asarray(src_tris, dtype=np.float64))
+    tree = cKDTree(pts)
+
+    def project(p: np.ndarray) -> np.ndarray:
+        idx = tree.query(np.asarray(p, dtype=np.float64).reshape(-1, 3), k=1)[1]
+        return pts[np.asarray(idx).reshape(-1)]
+
+    V, F = _weld(src_tris)
     passes = remesh_passes(severity)
-    tris = [tuple(tuple(v) for v in t) for t in mesh.tris.tolist()]
-    fids = mesh.face_id.tolist()
-    splits = collapses = 0
+    splits = collapses = flips = 0
     for _ in range(passes):
-        tris, fids, n_split = _split_long(tris, fids, 4.0 / 3.0 * h)
-        tris, fids, n_coll = _collapse_short(tris, fids, 4.0 / 5.0 * h, len(mesh.faces))
-        splits += n_split
-        collapses += n_coll
-        if not n_split and not n_coll:
-            break
-    mesh.tris = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+        V, F, n = _split_pass(V, F, 4.0 / 3.0 * h, project)
+        splits += n
+        V, F = _compact(V, F)
+        V, F, n = _collapse_pass(V, F, 4.0 / 5.0 * h, project)
+        collapses += n
+        V, F = _compact(V, F)
+        V, F, n = _flip_pass(V, F)
+        flips += n
+        V = _relax_pass(V, F, project)
+    V, F, dropped = _drop_degenerate(V, F)
+    mesh.tris = V[F].reshape(-1, 3, 3)
     label = transfer_labels(mesh, src_tris, src_ids)
     return {
         "target_edge_mm": h,
@@ -424,8 +609,10 @@ def isotropic_remesh(mesh, severity, rng):
         "passes": passes,
         "splits": splits,
         "collapses": collapses,
+        "flips": flips,
+        "degenerate_dropped": dropped,
         "triangles_before": before,
-        "triangles_after": len(tris),
+        "triangles_after": len(mesh.tris),
         **label,
     }
 
@@ -435,55 +622,66 @@ LAPLACIAN_LAMBDA = 0.5
 
 
 def smoothing_iterations(severity: float) -> int:
-    return int(round(SMOOTH_MAX_ITERS * severity))
+    return max(1, int(round(SMOOTH_MAX_ITERS * severity)))
 
 
-def _umbrella_neighbors(mesh) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+def _umbrella_field(V: np.ndarray, F: np.ndarray) -> np.ndarray:
+    E = np.concatenate(
+        [F[:, [0, 1]], F[:, [1, 0]], F[:, [1, 2]], F[:, [2, 1]], F[:, [2, 0]], F[:, [0, 2]]]
+    )
+    sums = np.zeros_like(V)
+    np.add.at(sums, E[:, 0], V[E[:, 1]])
+    cnt = np.bincount(E[:, 0], minlength=len(V))
+    return sums / np.maximum(cnt, 1)[:, None] - V
+
+
+def _budgeted_smooth(
+    mesh, severity: float, rate: float, mu: float | None, iters: int
+) -> tuple[float, bool, float]:
     uniq, inverse = vertex_table(mesh)
-    corners = inverse.reshape(-1, 3).tolist()
-    nbrs: list[set[int]] = [set() for _ in range(len(uniq))]
-    for a, b, c in corners:
-        nbrs[a].update((b, c))
-        nbrs[b].update((a, c))
-        nbrs[c].update((a, b))
-    return uniq, inverse, [np.array(sorted(s), dtype=np.int64) for s in nbrs]
-
-
-def _laplacian_step(pos: np.ndarray, nbrs: list[np.ndarray], rate: float) -> np.ndarray:
-    out = pos.copy()
-    for i, js in enumerate(nbrs):
-        if len(js):
-            out[i] = pos[i] + rate * (pos[js].mean(axis=0) - pos[i])
-    return out
+    V0 = uniq.copy()
+    diagonal = bbox_diagonal(mesh.tris)
+    budget = float(severity) * 0.01 * diagonal
+    pos = V0.copy()
+    F = inverse.reshape(-1, 3)
+    for _ in range(iters):
+        pos = pos + rate * _umbrella_field(pos, F)
+        if mu is not None:
+            pos = pos + mu * _umbrella_field(pos, F)
+    disp = pos - V0
+    peak = float(np.linalg.norm(disp, axis=1).max()) if len(disp) else 0.0
+    capped = peak > budget
+    if capped:
+        disp = disp * (budget / peak)
+    peak = displace_vertices(mesh, V0, inverse, disp)
+    mesh.metadata[CONFIDENCE_KEY] = [1.0] * len(mesh.tris)
+    return peak, capped, budget
 
 
 @register(
     "laplacian_smoothing",
     "processing",
     "identity",
-    "round(20 * severity) umbrella passes (lambda 0.5) moving each distinct vertex "
-    "toward its neighbour mean (20 at severity 1); displacement scales with the local "
-    "chord length, so coarse meshes move more; connectivity unchanged, shared "
-    "vertices move once so the mesh stays watertight",
+    "max(1, round(20 * severity)) umbrella passes (lambda 0.5) capped to a max "
+    "displacement of severity * 1% of the bounding-box diagonal (1% at severity 1); "
+    "connectivity unchanged, labels kept exactly, shared vertices move once so "
+    "the mesh stays watertight",
     preserves_watertight=True,
 )
 def laplacian_smoothing(mesh, severity, rng):
-    src_tris = mesh.tris.copy()
-    src_ids = mesh.face_id.copy()
-    uniq, inverse, nbrs = _umbrella_neighbors(mesh)
-    pos = uniq.copy()
+    before = len(mesh.tris)
     iters = smoothing_iterations(severity)
-    for _ in range(iters):
-        pos = _laplacian_step(pos, nbrs, LAPLACIAN_LAMBDA)
-    peak = displace_vertices(mesh, uniq, inverse, pos - uniq)
-    label = transfer_labels(mesh, src_tris, src_ids)
+    peak, capped, budget = _budgeted_smooth(mesh, severity, LAPLACIAN_LAMBDA, None, iters)
     return {
         "iterations": iters,
         "lambda": LAPLACIAN_LAMBDA,
         "max_displacement_mm": peak,
-        "triangles_before": len(src_tris),
+        "displacement_budget_mm": budget,
+        "capped_to_budget": capped,
+        "triangles_before": before,
         "triangles_after": len(mesh.tris),
-        **label,
+        "mean_confidence": 1.0,
+        "fraction_below_0_9": 0.0,
     }
 
 
@@ -500,57 +698,54 @@ def taubin_pairs(severity: float) -> int:
     "taubin_smoothing",
     "processing",
     "identity",
-    "max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53, "
-    "10 pairs at severity 1) shrinking less than Laplacian; displacement scales with "
-    "the local chord length; connectivity unchanged, shared vertices move once so "
+    "max(1, round(10 * severity)) Taubin lambda|mu pass pairs (lambda 0.5, mu -0.53) "
+    "capped to a max displacement of severity * 1% of the bounding-box diagonal; "
+    "connectivity unchanged, labels kept exactly, shared vertices move once so "
     "the mesh stays watertight",
     preserves_watertight=True,
 )
 def taubin_smoothing(mesh, severity, rng):
-    src_tris = mesh.tris.copy()
-    src_ids = mesh.face_id.copy()
-    uniq, inverse, nbrs = _umbrella_neighbors(mesh)
-    pos = uniq.copy()
+    before = len(mesh.tris)
     pairs = taubin_pairs(severity)
-    for _ in range(pairs):
-        pos = _laplacian_step(pos, nbrs, TAUBIN_LAMBDA)
-        pos = _laplacian_step(pos, nbrs, TAUBIN_MU)
-    peak = displace_vertices(mesh, uniq, inverse, pos - uniq)
-    label = transfer_labels(mesh, src_tris, src_ids)
+    peak, capped, budget = _budgeted_smooth(mesh, severity, TAUBIN_LAMBDA, TAUBIN_MU, pairs)
     return {
         "pairs": pairs,
         "lambda": TAUBIN_LAMBDA,
         "mu": TAUBIN_MU,
         "max_displacement_mm": peak,
-        "triangles_before": len(src_tris),
+        "displacement_budget_mm": budget,
+        "capped_to_budget": capped,
+        "triangles_before": before,
         "triangles_after": len(mesh.tris),
-        **label,
+        "mean_confidence": 1.0,
+        "fraction_below_0_9": 0.0,
     }
 
 
-VOXEL_AT_ZERO = 0.005
-
-
-def voxel_size_mm(severity: float, diagonal: float) -> float:
-    return diagonal * VOXEL_AT_ZERO * 10.0**severity
+def cluster_cell_mm(severity: float, median_edge: float, diagonal: float) -> float:
+    return min(median_edge * (1.0 + 1.5 * severity), diagonal / 8.0)
 
 
 @register(
-    "voxel_remesh",
+    "vertex_clustering",
     "processing",
     "identity",
-    "vertex clustering on voxels of diagonal * 0.005 * 10**severity (diagonal/200 at "
-    "severity 0+, /20 at severity 1): corners in the same voxel merge at their mean, "
-    "degenerate and duplicate triangles drop; clustering can join thin walls, so "
-    "watertightness is not guaranteed",
+    "vertex clustering on cells of min(median edge * (1.0 + 1.5 * severity), "
+    "diagonal / 8) (about one median edge at severity 0+, capped so minimal "
+    "meshes survive): corners in the same cell "
+    "merge at their mean, degenerate and duplicate triangles drop; clustering "
+    "can join thin walls, so watertightness is not guaranteed",
     preserves_watertight=False,
 )
-def voxel_remesh(mesh, severity, rng):
+def vertex_clustering(mesh, severity, rng):
     src_tris = mesh.tris.copy()
     src_ids = mesh.face_id.copy()
     before = len(src_tris)
+    V, F = _weld(src_tris)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    median_edge = float(np.median(np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)))
     diagonal = bbox_diagonal(src_tris)
-    size = voxel_size_mm(severity, diagonal)
+    size = cluster_cell_mm(severity, median_edge, diagonal)
     corners = src_tris.reshape(-1, 3)
     lo = corners.min(axis=0)
     keys = [tuple(row) for row in np.floor((corners - lo) / size).astype(np.int64).tolist()]
@@ -578,7 +773,8 @@ def voxel_remesh(mesh, severity, rng):
     mesh.tris = np.array(rows, dtype=np.float64).reshape(-1, 3, 3)
     label = transfer_labels(mesh, src_tris, src_ids)
     return {
-        "voxel_mm": size,
+        "cell_mm": size,
+        "median_edge_mm": median_edge,
         "bbox_diagonal_mm": diagonal,
         "occupied_cells": len(order),
         "degenerate_dropped": degenerate,
