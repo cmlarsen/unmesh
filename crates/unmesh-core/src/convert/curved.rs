@@ -5,6 +5,8 @@ use super::surface::{Surface, radial};
 
 const AXIS_STEP: f64 = 1e-7;
 const LM_ITERS: usize = 40;
+const QUICK_ITERS: usize = 10;
+const ROW_GAP: f64 = 0.05;
 const IRLS_ROUNDS: usize = 3;
 pub const MAX_GROUP: usize = 16;
 const LAW_GAP_SPREAD: f64 = 0.02;
@@ -164,7 +166,7 @@ fn cost(r: &[f64]) -> f64 {
     r.iter().map(|x| x * x).sum()
 }
 
-fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f64]) {
+fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f64], iters: usize) {
     let n = problem.n_params();
     let mut r0 = Vec::new();
     let mut rp = Vec::new();
@@ -172,7 +174,7 @@ fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f
     let mut lambda = 1e-6;
     problem.residuals(axis, shape, weights, &mut r0);
     let mut c0 = cost(&r0);
-    for _ in 0..LM_ITERS {
+    for _ in 0..iters {
         if c0 == 0.0 {
             break;
         }
@@ -239,11 +241,34 @@ fn lm(problem: &Problem<'_>, axis: &mut Axis, shape: &mut Vec<f64>, weights: &[f
 
 pub fn fit_joint(
     members: &[Member],
+    axis: Axis,
+    shape: Vec<f64>,
+    fixed: &[bool],
+    fix_dir: bool,
+    tol: f64,
+) -> Joint {
+    fit_joint_with(
+        members,
+        axis,
+        shape,
+        fixed,
+        fix_dir,
+        tol,
+        IRLS_ROUNDS,
+        LM_ITERS,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fit_joint_with(
+    members: &[Member],
     mut axis: Axis,
     mut shape: Vec<f64>,
     fixed: &[bool],
     fix_dir: bool,
     tol: f64,
+    rounds: usize,
+    iters: usize,
 ) -> Joint {
     let extent = members
         .iter()
@@ -264,7 +289,7 @@ pub fn fit_joint(
         .flat_map(|m| m.pts.iter().map(|&(_, w)| w.sqrt()))
         .collect();
     let mut weights = base.clone();
-    for round in 0..IRLS_ROUNDS {
+    for round in 0..rounds {
         if round > 0 {
             let mut i = 0;
             for m in members {
@@ -275,7 +300,7 @@ pub fn fit_joint(
                 }
             }
         }
-        lm(&problem, &mut axis, &mut shape, &weights);
+        lm(&problem, &mut axis, &mut shape, &weights, iters);
     }
     let fit = members
         .iter()
@@ -398,6 +423,187 @@ pub fn init_cone(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> {
         return None;
     }
     Some((Axis { a, c: apex }, alpha))
+}
+
+/// Cone axis from triangle normals that fall into two tilt populations (a
+/// staggered band, where triangles with two corners on the upper circle tilt
+/// differently from those with two on the lower): each population is
+/// centred on its own mean before the scatter, so the tilt gap does not
+/// masquerade as spread along the axis.
+fn split_axis(tris: &[Tri], a0: V3) -> Option<V3> {
+    let mut s: Vec<f64> = tris.iter().map(|t| dot(t.normal, a0)).collect();
+    s.sort_by(f64::total_cmp);
+    let (lo, hi) = (s[0], s[s.len() - 1]);
+    if hi - lo <= 0.0 {
+        return None;
+    }
+    let mut cut = 0.5 * (lo + hi);
+    for _ in 0..8 {
+        let (mut a, mut na, mut b, mut nb) = (0.0, 0.0, 0.0, 0.0);
+        for &x in &s {
+            if x < cut {
+                a += x;
+                na += 1.0;
+            } else {
+                b += x;
+                nb += 1.0;
+            }
+        }
+        if na == 0.0 || nb == 0.0 {
+            return None;
+        }
+        cut = 0.5 * (a / na + b / nb);
+    }
+    let mut means = [[0.0; 3]; 2];
+    let mut w = [0.0; 2];
+    for t in tris {
+        let k = usize::from(dot(t.normal, a0) >= cut);
+        means[k] = add(means[k], scale(t.normal, t.area));
+        w[k] += t.area;
+    }
+    if w[0] <= 0.0 || w[1] <= 0.0 {
+        return None;
+    }
+    let means = [scale(means[0], 1.0 / w[0]), scale(means[1], 1.0 / w[1])];
+    let mut m = [[0.0; 3]; 3];
+    for t in tris {
+        let k = usize::from(dot(t.normal, a0) >= cut);
+        let d = sub(t.normal, means[k]);
+        outer_add(&mut m, d, d, t.area);
+    }
+    let (_, vecs) = sym_eigen(m);
+    Some(vecs[0])
+}
+
+/// Apex and half-angle about a given axis direction from the vertices alone:
+/// `|q - c|² = t² (h - h0)²` (q the projection across the axis, h the height
+/// along it) is linear in `c`, `t²`, `-2 t² h0` and a constant, so a
+/// Kasa-style least squares is exact on exact vertices.
+fn cone_about(pts: &[(V3, f64)], a: V3) -> Option<(Axis, f64)> {
+    let (u, v) = basis(a);
+    let mut sw = 0.0;
+    let mut mean = [0.0; 3];
+    for &(p, w) in pts {
+        sw += w;
+        mean = add(mean, scale(p, w));
+    }
+    if sw <= 0.0 {
+        return None;
+    }
+    let mean = scale(mean, 1.0 / sw);
+    let mut m = vec![vec![0.0; 5]; 5];
+    let mut b = vec![0.0; 5];
+    for &(p, w) in pts {
+        let d = sub(p, mean);
+        let (x, y, h) = (dot(d, u), dot(d, v), dot(d, a));
+        let row = [2.0 * x, 2.0 * y, h * h, h, 1.0];
+        let rhs = x * x + y * y;
+        for i in 0..5 {
+            b[i] += w * row[i] * rhs;
+            for j in 0..5 {
+                m[i][j] += w * row[i] * row[j];
+            }
+        }
+    }
+    let sol = solve_dense(m, b)?;
+    let t2 = sol[2];
+    if t2.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        return None;
+    }
+    let h0 = -sol[3] / (2.0 * t2);
+    let mut axis = a;
+    let mut apex = add(
+        mean,
+        add(add(scale(u, sol[0]), scale(v, sol[1])), scale(a, h0)),
+    );
+    let mut hm = 0.0;
+    for &(p, w) in pts {
+        hm += w * dot(sub(p, apex), axis);
+    }
+    if hm < 0.0 {
+        axis = scale(axis, -1.0);
+    }
+    apex = add(apex, [0.0; 3]);
+    let alpha = t2.sqrt().atan();
+    (alpha > 0.0 && alpha < std::f64::consts::FRAC_PI_2)
+        .then_some((Axis { a: axis, c: apex }, alpha))
+}
+
+/// Axis from the rows of a band: vertices of a tessellated cone or cylinder
+/// sit on circles across the axis, so heights along a rough axis cluster by
+/// row, and each row's plane normal (its smallest scatter direction) is the
+/// axis, to the accuracy of the vertices rather than of the facet normals.
+fn row_axis(pts: &[(V3, f64)], rough: V3) -> Option<V3> {
+    let mut hs: Vec<(f64, usize)> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, &(p, _))| (dot(p, rough), i))
+        .collect();
+    hs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let range = hs[hs.len() - 1].0 - hs[0].0;
+    if range <= 0.0 {
+        return None;
+    }
+    let mut rows: Vec<Vec<usize>> = vec![vec![hs[0].1]];
+    for w in hs.windows(2) {
+        if w[1].0 - w[0].0 > ROW_GAP * range {
+            rows.push(Vec::new());
+        }
+        rows.last_mut()?.push(w[1].1);
+    }
+    let mut acc = [0.0; 3];
+    for row in rows.iter().filter(|r| r.len() >= 3) {
+        let n = row.len() as f64;
+        let c = scale(row.iter().fold([0.0; 3], |s, &i| add(s, pts[i].0)), 1.0 / n);
+        let mut m = [[0.0; 3]; 3];
+        for &i in row {
+            let d = sub(pts[i].0, c);
+            outer_add(&mut m, d, d, 1.0);
+        }
+        let (vals, vecs) = sym_eigen(m);
+        if vals[1] <= 1e-6 * vals[2] {
+            continue;
+        }
+        let mut a = vecs[0];
+        if dot(a, rough) < 0.0 {
+            a = scale(a, -1.0);
+        }
+        acc = add(acc, scale(a, vals[1]));
+    }
+    let len = norm(acc);
+    (len > 0.0).then(|| scale(acc, 1.0 / len))
+}
+
+/// Cone starts for `fit_quick`: the plane-intersection estimate of
+/// `init_cone`, and the vertex solve about the plain and the two-population
+/// normal axes, best first by largest vertex residual.
+fn cone_starts(pts: &[(V3, f64)], tris: &[Tri]) -> Vec<(Axis, f64, f64)> {
+    let mut out = Vec::new();
+    let mut push = |s: Option<(Axis, f64)>| {
+        if let Some((axis, alpha)) = s {
+            let r = max_residual(Kind::Cone { sign: 1.0 }, &axis, &[0.0, alpha], pts);
+            if r.is_finite() {
+                out.push((axis, alpha, r));
+            }
+        }
+    };
+    push(init_cone(pts, tris));
+    if let Some((vals, vecs, _)) = normal_scatter(tris, true)
+        && vals[1].is_finite()
+    {
+        push(cone_about(pts, vecs[0]));
+        if let Some(a) = split_axis(tris, vecs[0]) {
+            push(cone_about(pts, a));
+            if let Some(b) = row_axis(pts, a) {
+                push(cone_about(pts, b));
+            }
+        }
+        if let Some(b) = row_axis(pts, vecs[0]) {
+            push(cone_about(pts, b));
+        }
+    }
+    out.sort_by(|x, y| x.2.total_cmp(&y.2));
+    out
 }
 
 /// Radius from the tessellation law: a circle cut into `N` equal chords `c`
@@ -733,9 +939,12 @@ struct Fitted {
     max: f64,
 }
 
-fn region_tris(vc: &[V3], faces: &[[u32; 3]], info: &[TriInfo], r: &Region) -> Vec<Tri> {
-    r.faces
-        .iter()
+pub fn region_tris(vc: &[V3], faces: &[[u32; 3]], info: &[TriInfo], r: &Region) -> Vec<Tri> {
+    face_tris(vc, faces, info, &r.faces)
+}
+
+pub fn face_tris(vc: &[V3], faces: &[[u32; 3]], info: &[TriInfo], list: &[u32]) -> Vec<Tri> {
+    list.iter()
         .filter(|&&f| info[f as usize].area > 0.0)
         .map(|&f| {
             let t = faces[f as usize];
@@ -752,15 +961,75 @@ fn region_tris(vc: &[V3], faces: &[[u32; 3]], info: &[TriInfo], r: &Region) -> V
         .collect()
 }
 
-type Single = (Kind, Axis, Vec<f64>, f64, f64, bool);
+pub type Single = (Kind, Axis, Vec<f64>, f64, f64, bool);
 
 fn law_fits(law_rms: f64, lsq_rms: f64, n: usize, r: f64) -> bool {
     let dof = (n as f64 - 5.0).max(1.0);
     law_rms * law_rms <= lsq_rms * lsq_rms * (1.0 + 4.0 / dof) + (1e-12 * r).powi(2)
 }
 
-fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
+pub fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
+    fit_single_gated(pts, tris, tol, f64::INFINITY)
+}
+
+/// A cheap screen for seeds: the gated initial estimates refined by one
+/// short unweighted round, without the tessellation law. On failure, the
+/// smallest largest-residual of the initial estimates.
+pub fn fit_quick(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Result<Single, f64> {
+    let member = |kind| {
+        [Member {
+            pts: pts.to_vec(),
+            kind,
+            slot: 0,
+        }]
+    };
+    let mut best = f64::INFINITY;
     if let Some((axis, r)) = init_cylinder(pts, tris) {
+        let init = max_residual(Kind::Cylinder, &axis, &[r], pts);
+        best = init;
+        if init <= gate {
+            let m = member(Kind::Cylinder);
+            let j = fit_joint_with(&m, axis, vec![r], &[false], false, tol, 1, QUICK_ITERS);
+            let (rms, max) = j.fit[0];
+            if max <= tol && valid_shape(&j.shape, &m[0]) {
+                return Ok((Kind::Cylinder, j.axis, j.shape, rms, max, false));
+            }
+        }
+    }
+    let Some((axis, alpha, r)) = cone_starts(pts, tris).into_iter().next() else {
+        return Err(best);
+    };
+    let best = best.min(r);
+    if r > gate {
+        return Err(best);
+    }
+    let m = member(Kind::Cone { sign: 1.0 });
+    let j = fit_joint_with(
+        &m,
+        axis,
+        vec![0.0, alpha],
+        &[false, false],
+        false,
+        tol,
+        1,
+        QUICK_ITERS,
+    );
+    let (rms, max) = j.fit[0];
+    if max <= tol && valid_shape(&j.shape, &m[0]) {
+        Ok((Kind::Cone { sign: 1.0 }, j.axis, j.shape, rms, max, false))
+    } else {
+        Err(best)
+    }
+}
+
+/// `fit_single`, skipping the refinement of any initial estimate whose
+/// largest vertex residual exceeds `gate` (the estimates are exact on exact
+/// chord facets, so a large residual means the region is not that surface).
+pub fn fit_single_gated(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Option<Single> {
+    let cyl_init = init_cylinder(pts, tris).filter(|(axis, r)| {
+        gate.is_infinite() || max_residual(Kind::Cylinder, axis, &[*r], pts) <= gate
+    });
+    if let Some((axis, r)) = cyl_init {
         let m = [Member {
             pts: pts.to_vec(),
             kind: Kind::Cylinder,
@@ -779,7 +1048,10 @@ fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
             return Some((Kind::Cylinder, j.axis, j.shape, rms, max, false));
         }
     }
-    let (axis, alpha) = init_cone(pts, tris)?;
+    let (axis, alpha) = init_cone(pts, tris).filter(|(axis, alpha)| {
+        gate.is_infinite()
+            || max_residual(Kind::Cone { sign: 1.0 }, axis, &[0.0, *alpha], pts) <= gate
+    })?;
     let m = [Member {
         pts: pts.to_vec(),
         kind: Kind::Cone { sign: 1.0 },
@@ -795,6 +1067,60 @@ fn fit_single(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
         max,
         false,
     ))
+}
+
+pub fn max_residual(kind: Kind, axis: &Axis, shape: &[f64], pts: &[(V3, f64)]) -> f64 {
+    let m = Member {
+        pts: Vec::new(),
+        kind,
+        slot: 0,
+    };
+    pts.iter()
+        .map(|&(p, _)| point_residual(axis, shape, &m, p).abs())
+        .fold(0.0, f64::max)
+}
+
+pub fn refit(pts: &[(V3, f64)], kind: Kind, axis: Axis, shape: &[f64], tol: f64) -> Option<Single> {
+    refit_with(pts, kind, axis, shape, tol, IRLS_ROUNDS, LM_ITERS)
+}
+
+/// `refit` with one short unweighted round, for growth steps.
+pub fn refit_quick(
+    pts: &[(V3, f64)],
+    kind: Kind,
+    axis: Axis,
+    shape: &[f64],
+    tol: f64,
+) -> Option<Single> {
+    refit_with(pts, kind, axis, shape, tol, 1, QUICK_ITERS)
+}
+
+fn refit_with(
+    pts: &[(V3, f64)],
+    kind: Kind,
+    axis: Axis,
+    shape: &[f64],
+    tol: f64,
+    rounds: usize,
+    iters: usize,
+) -> Option<Single> {
+    let m = [Member {
+        pts: pts.to_vec(),
+        kind,
+        slot: 0,
+    }];
+    let j = fit_joint_with(
+        &m,
+        axis,
+        shape.to_vec(),
+        &vec![false; shape.len()],
+        false,
+        tol,
+        rounds,
+        iters,
+    );
+    let (rms, max) = j.fit[0];
+    (max <= tol && valid_shape(&j.shape, &m[0])).then_some((kind, j.axis, j.shape, rms, max, false))
 }
 
 fn valid_shape(shape: &[f64], m: &Member) -> bool {
@@ -912,16 +1238,44 @@ pub fn refine_regions(
     tol: f64,
     snap_deg: f64,
 ) {
+    refine_regions_with(vc, faces, info, regions, tol, snap_deg, Vec::new(), true);
+}
+
+/// As `refine_regions`, but the regions listed in `prefit` (region index and
+/// its fit, every vertex within `tol`) skip their own fit and join the
+/// coaxial snapping with it. Other regions that exceed `tol` as planes are
+/// fitted on their own only when `fit_loose` is set.
+#[allow(clippy::too_many_arguments)]
+pub fn refine_regions_with(
+    vc: &[V3],
+    faces: &[[u32; 3]],
+    info: &[TriInfo],
+    regions: &mut [Region],
+    tol: f64,
+    snap_deg: f64,
+    prefit: Vec<(usize, Single)>,
+    fit_loose: bool,
+) {
     let mut fits: Vec<Fitted> = Vec::new();
     let mut pts: Vec<Vec<(V3, f64)>> = vec![Vec::new(); regions.len()];
     let mut tris: Vec<Vec<Tri>> = (0..regions.len()).map(|_| Vec::new()).collect();
+    let mut given: Vec<Option<Single>> = vec![None; regions.len()];
+    for (ri, s) in prefit {
+        given[ri] = Some(s);
+    }
     for (ri, r) in regions.iter().enumerate() {
-        if r.area <= 0.0 || r.max <= tol {
+        if r.area <= 0.0
+            || (given[ri].is_none() && (!fit_loose || r.max <= tol || !r.surface.is_analytic()))
+        {
             continue;
         }
         let p: Vec<(V3, f64)> = r.verts.iter().map(|&(v, w)| (vc[v as usize], w)).collect();
         let t = region_tris(vc, faces, info, r);
-        if let Some((kind, axis, shape, rms, max, law)) = fit_single(&p, &t, tol) {
+        let fit = match given[ri].take() {
+            Some(s) => Some(s),
+            None => fit_single(&p, &t, tol),
+        };
+        if let Some((kind, axis, shape, rms, max, law)) = fit {
             fits.push(Fitted {
                 region: ri,
                 law,

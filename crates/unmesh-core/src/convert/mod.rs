@@ -5,6 +5,7 @@ mod curved;
 mod dsu;
 mod emit;
 mod fit;
+mod grow;
 mod linalg;
 mod noise;
 mod project;
