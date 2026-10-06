@@ -182,3 +182,17 @@ def test_automatic_fallback_rate_under_1um_noise(tmp_path):
 def test_noisy_junctions_write_analytic_under_5um_noise(family, seed, tmp_path):
     report = _noisy_write(family, seed, 0.1, tmp_path)
     assert report.fallback is None, report.fallback_reason
+
+
+@pytest.mark.slow
+def test_straight_fillet_fallback_rate_under_1um_noise(tmp_path):
+    seeds = corpus_seeds(["straight_fillet"])["straight_fillet"]
+    reasons = []
+    for seed in seeds:
+        report = _noisy_write("straight_fillet", seed, 0.02, tmp_path)
+        if report.fallback is not None:
+            reasons.append(f"straight_fillet-{seed}: {report.fallback_reason}")
+        else:
+            assert report.max_shape_tolerance <= MAX_SHAPE_TOLERANCE_MM
+            assert report.tangent_edges
+    assert len(reasons) < 0.05 * len(seeds), reasons

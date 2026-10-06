@@ -493,12 +493,37 @@ all meet it at smooth creases; a cylinder or cone group with two other cylinder 
 sharing 15% of its boundary is a slice of a sphere or torus that was not recovered (rings of a torus
 are cones) and becomes `facets` too. Last, a region of at most two triangles that is not curved
 joins an adjacent curved region when that surface passes within `tolerances.linear` of each of its
-vertices and the region's own largest chord sagitta (or the tolerance, if larger) bounds the remnant's:
+vertices and the region's own largest chord sagitta (or the tolerance, if larger), plus the remnant's
+largest vertex distance (noise lifts a chord's sagitta by up to that much), bounds the remnant's:
 the long slivers a tessellator leaves where a curved face meets another (a bore through a cone) have
 every corner on the surface and a sagitta like their neighbours', which growth refused. A flat cut into
 the surface (a D-flat on a boss or in a bore) also has its corners on it, but its sagitta is the flat's
 depth, so it stays a plane. The surface is not refitted; its `residual.max` takes their vertex
 distances.
+
+**Tangency.** Fitted independently, a fillet and its neighbours are tangent only to within the noise
+(a plane can stand off its fillet cylinder by a good part of `tolerances.linear`), and the writer's
+tangent edge then needs a shape tolerance of that size. So after fitting, every pair of adjacent
+analytic regions whose fitted surfaces meet at a median dihedral under `tangent_threshold_deg` over
+their shared mesh vertices (as boundary kinds are decided below), whose surfaces have the shape of a
+tangency (plane and cylinder: the axis in the plane's direction; plane and torus: the axis along the
+normal; cylinder and torus, cylinder and sphere: coaxial) and whose mismatch is at most five times
+the tolerance, is made exactly tangent. The pairs form clusters (a fillet with both its planes, a
+box's corner blends with all their edges and faces), and each cluster is refitted jointly: plane
+normals stay fixed; each axis is set to what its tangencies demand (perpendicular to the normals of
+the planes a cylinder touches along a line, the cross product when there are two, parallel to the
+normal of a plane a torus touches along a circle, shared by coaxial members), refused beyond
+`tangent_threshold_deg`; then the plane offsets, axis positions, centres and radii are the weighted
+least-squares fit of the members' vertices under the linear tangency conditions (plane offset =
+the axis' distance ± radius, tube top on the plane, cylinder radius = major ± minor radius, sphere
+centre on the axis with the cylinder's radius), solved by Gauss-Newton on the null space of those
+conditions so a redundant set (a corner sphere sits on three axes) holds exactly. The refit is kept
+only when every member's vertices stay within `tolerances.linear` of its new surface and the
+cluster's weighted squared residual grows by at most `(2k + 10)` times its per-vertex mean, `k`
+the number of conditions; otherwise the cluster keeps its independent fits. Each changed region's
+`residual` and chord sagitta are recomputed on the new surface before vertices are projected, so
+`report.max_deviation` covers the move. A cluster already tangent to within `1e-4` of the tolerance is
+left as fitted, so a clean tessellation keeps its surfaces bit for bit.
 
 **Vertices and boundary kinds.** A mesh vertex where three or more regions meet (a junction) is moved
 to the least-squares point of its incident analytic surfaces: Gauss-Newton to convergence, with the

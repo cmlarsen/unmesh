@@ -435,8 +435,9 @@ fn curved(s: &Surface) -> bool {
 
 /// Gives a remnant of at most `REMNANT_FACES` triangles that is not itself
 /// curved to an adjacent curved region whose surface passes within `tol` of
-/// every one of its vertices and whose largest chord sagitta already bounds
-/// the remnant's: the long sliver triangles a tessellator leaves where a
+/// every one of its vertices and whose largest chord sagitta, plus the
+/// remnant's largest vertex distance (noise lifts a chord's sagitta by up to
+/// that much), already bounds the remnant's: the long sliver triangles a tessellator leaves where a
 /// curved face meets another, which growth refused. A flat cut into the
 /// surface (a D-flat) has its corners on it too, but its sagitta is the flat's
 /// depth, far beyond the tessellation's, so it stays a plane. The curved
@@ -489,7 +490,7 @@ pub fn absorb_remnants(
                             super::curved::sagitta(s, faces[f as usize].map(|v| vc[v as usize]))
                         })
                         .fold(0.0, f64::max);
-                    (worst <= tol && sag <= target.sag.max(tol)).then_some((worst, sag, c))
+                    (worst <= tol && sag <= target.sag.max(tol) + worst).then_some((worst, sag, c))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)));
             let Some((worst, sag, c)) = best else {
