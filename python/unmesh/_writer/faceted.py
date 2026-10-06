@@ -212,15 +212,17 @@ def _string(s: str) -> str:
 
 
 class _Writer:
-    def __init__(self, vertices: np.ndarray):
+    def __init__(self, vertices: np.ndarray, out):
         self.vertices = vertices
-        self.lines: list[str] = []
+        self.out = out
+        self.count = 0
         self.shared: dict[str, int] = {}
         self.points: dict[int, int] = {}
 
     def add(self, text: str) -> int:
-        self.lines.append(text)
-        return len(self.lines)
+        self.count += 1
+        self.out.write(f"#{self.count} = {text};\n")
+        return self.count
 
     def once(self, text: str) -> int:
         ref = self.shared.get(text)
@@ -290,7 +292,30 @@ def write(
     open_shells: list[ShellFaces],
     name: str = "unmesh",
 ) -> None:
-    w = _Writer(np.asarray(vertices, dtype=float))
+    if not bodies and not open_shells:
+        raise BuildError("nothing to write")
+    try:
+        _write_file(path, vertices, bodies, open_shells, name)
+    except BaseException:
+        if os.path.exists(path):
+            os.remove(path)
+        raise
+
+
+def _write_file(path, vertices, bodies, open_shells, name) -> None:
+    with open(path, "w", encoding="ascii", newline="\n", buffering=1 << 20) as out:
+        out.write(
+            "ISO-10303-21;\nHEADER;\n"
+            "FILE_DESCRIPTION(('unmesh faceted solid'),'2;1');\n"
+            f"FILE_NAME({_string(name)},'{TIMESTAMP}',(''),(''),'unmesh','unmesh','');\n"
+            "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n"
+            "ENDSEC;\nDATA;\n"
+        )
+        _write_data(_Writer(np.asarray(vertices, dtype=float), out), bodies, open_shells, name)
+        out.write("ENDSEC;\nEND-ISO-10303-21;\n")
+
+
+def _write_data(w: _Writer, bodies: list[Body], open_shells: list[ShellFaces], name: str) -> None:
     apc = w.add("APPLICATION_CONTEXT('core data for automotive mechanical design processes')")
     w.add(
         f"APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{apc})"
@@ -346,18 +371,6 @@ def write(
         shells = [w.shell(s, "OPEN_SHELL") for s in open_shells]
         model = w.add("SHELL_BASED_SURFACE_MODEL('',(" + ",".join(f"#{s}" for s in shells) + "))")
         reps.append(w.add(f"MANIFOLD_SURFACE_SHAPE_REPRESENTATION('',(#{origin},#{model}),#{ctx})"))
-    if not reps:
-        raise BuildError("nothing to write")
     w.add(f"SHAPE_DEFINITION_REPRESENTATION(#{pds},#{reps[0]})")
     for rep in reps[1:]:
         w.add(f"SHAPE_REPRESENTATION_RELATIONSHIP('','',#{rep},#{reps[0]})")
-    header = (
-        "ISO-10303-21;\nHEADER;\n"
-        "FILE_DESCRIPTION(('unmesh faceted solid'),'2;1');\n"
-        f"FILE_NAME({_string(name)},'{TIMESTAMP}',(''),(''),'unmesh','unmesh','');\n"
-        "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n"
-        "ENDSEC;\nDATA;\n"
-    )
-    body_text = "".join(f"#{i} = {line};\n" for i, line in enumerate(w.lines, start=1))
-    with open(path, "w", encoding="ascii", newline="\n") as fh:
-        fh.write(header + body_text + "ENDSEC;\nEND-ISO-10303-21;\n")

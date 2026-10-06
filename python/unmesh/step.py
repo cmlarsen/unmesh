@@ -14,6 +14,7 @@ INPUT_VOLUME_RELATIVE = 1e-6
 FACETED_SHARE = 0.5
 FLUX_DEFLECTION = 1e-4
 FLUX_RELATIVE = 1e-9
+INPROCESS_READBACK_BYTES = 4 << 20
 
 
 INSTALL_HINT = "unmesh.step needs OCP; install it with `pip install unmesh[step]`"
@@ -31,6 +32,8 @@ class WriteOptions:
     max_shape_tolerance: float = 1e-3
     max_deviation: float = 5e-3
     max_seam_gap: float = 1e-4
+    readback_memory_mb: float = 2048.0
+    readback_timeout_s: float = 120.0
 
 
 @dataclass
@@ -93,6 +96,8 @@ class ReadBack:
     expected_volume: float
     volume_tolerance: float
     issues: list[str] = field(default_factory=list)
+    reader: Literal["occt", "occt_no_face_orientation", "text"] = "occt"
+    peak_rss_mb: float | None = None
 
 
 @dataclass
@@ -115,6 +120,9 @@ class WriteReport:
     open_shells: list[int] = field(default_factory=list)
     readback: ReadBack | None = None
     verified: bool = False
+    verified_by: Literal["occt", "text", "occt+text"] | None = None
+    text_check: ReadBack | None = None
+    readback_skipped: str | None = None
     volume_checked_against_input: bool = False
     timings: dict[str, float] = field(default_factory=dict)
 
@@ -484,9 +492,85 @@ def _area(t: np.ndarray) -> float:
     return float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
 
 
-def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float) -> ReadBack:
+@dataclass
+class _Verification:
+    readback: ReadBack | None = None
+    text: ReadBack | None = None
+    skipped: str | None = None
+
+    @property
+    def by(self) -> str | None:
+        names = [n for n, r in (("occt", self.readback), ("text", self.text)) if r is not None]
+        return "+".join(names) or None
+
+    @property
+    def ok(self) -> bool:
+        checks = [r for r in (self.readback, self.text) if r is not None]
+        return bool(checks) and all(r.ok for r in checks)
+
+    def issues(self) -> list[str]:
+        out = [
+            f"{name} of the written file does not match: {'; '.join(r.issues)}"
+            for name, r in (("read-back", self.readback), ("text check", self.text))
+            if r is not None and not r.ok
+        ]
+        if not self.by:
+            out.append(f"the written file was not verified: {self.skipped}")
+        return out
+
+
+def _verify(path, written: list[_Group], occ, faceted_path: bool, options) -> _Verification:
+    result = _Verification()
+    curved = any(g.curved for g in written)
+    if faceted_path:
+        from unmesh._writer import textcheck
+
+        read = textcheck.read(path)
+        result.text = _compare(
+            "text", read.solids, read.shells, written, faceted_path, options, read.issues
+        )
+    size = os.path.getsize(path)
+    if size <= INPROCESS_READBACK_BYTES:
+        try:
+            solids, shells = occ.read_back(path, curved)
+        except Exception as e:
+            result.readback = _expected(written, "occt")
+            result.readback.issues.append(f"could not re-import the file: {type(e).__name__}: {e}")
+            return result
+        result.readback = _compare("occt", solids, shells, written, faceted_path, options)
+        return result
+    from unmesh._writer import readback
+
+    need = readback.estimate_mb(size)
+    if faceted_path and need > options.readback_memory_mb:
+        result.skipped = (
+            f"OCCT read-back skipped: the {size / 2**20:.0f} MB file would need about"
+            f" {need:.0f} MB to re-import, over the {options.readback_memory_mb:.0f} MB cap"
+        )
+        return result
+    reader = "occt_no_face_orientation" if faceted_path else "occt"
+    out = readback.run(
+        path,
+        curved,
+        not faceted_path,
+        options.readback_memory_mb,
+        options.readback_timeout_s,
+    )
+    if out.limit is not None:
+        result.skipped = f"OCCT read-back stopped: {out.limit}"
+        return result
+    if out.error is not None:
+        result.readback = _expected(written, reader)
+        result.readback.issues.append(out.error)
+    else:
+        result.readback = _compare(reader, out.solids, out.shells, written, faceted_path, options)
+    result.readback.peak_rss_mb = out.peak_rss_mb
+    return result
+
+
+def _expected(written: list[_Group], reader: str) -> ReadBack:
     solids_expected = [g for g in written if g.kind == "solid"]
-    rb = ReadBack(
+    return ReadBack(
         ok=False,
         solids=0,
         shells=0,
@@ -495,43 +579,52 @@ def _verify(path, written: list[_Group], occ, faceted_path: bool, max_tol: float
         expected_shells=sum(g.shells for g in written),
         expected_volume=sum(g.expected for g in solids_expected),
         volume_tolerance=sum(_volume_tolerance(g) for g in solids_expected),
+        reader=reader,
     )
-    try:
-        solids, rb.shells = occ.read_back(path, any(g.curved for g in written))
-    except Exception as e:
-        rb.issues.append(f"could not re-import the file: {type(e).__name__}: {e}")
-        return rb
+
+
+def _compare(
+    reader: str, solids, shells: int, written: list[_Group], faceted_path: bool, options, issues=()
+) -> ReadBack:
+    max_tol = options.max_shape_tolerance
+    label = "text check" if reader == "text" else "read-back"
+    rb = _expected(written, reader)
+    rb.issues.extend(issues)
+    solids_expected = [g for g in written if g.kind == "solid"]
     rb.solids = len(solids)
+    rb.shells = shells
     rb.volume = sum(s.volume for s in solids)
+    verb = "parsed" if reader == "text" else "re-imported"
     if rb.solids != rb.expected_solids:
-        rb.issues.append(f"re-imported {rb.solids} solids, wrote {rb.expected_solids}")
+        rb.issues.append(f"{verb} {rb.solids} solids, wrote {rb.expected_solids}")
     if rb.shells != rb.expected_shells:
-        rb.issues.append(f"re-imported {rb.shells} shells, wrote {rb.expected_shells}")
+        rb.issues.append(f"{verb} {rb.shells} shells, wrote {rb.expected_shells}")
     if not abs(rb.volume - rb.expected_volume) <= rb.volume_tolerance:
         rb.issues.append(
-            f"re-imported volume {rb.volume:.12g} differs from the written "
+            f"{verb} volume {rb.volume:.12g} differs from the written "
             f"{rb.expected_volume:.12g} by more than {rb.volume_tolerance:.3g}"
         )
     if rb.solids == rb.expected_solids:
         for g, s in zip(solids_expected, solids, strict=True):
-            bad = []
-            if not s.valid:
-                bad.append("the re-imported solid is invalid")
+            bad = list(getattr(s, "issues", ()))
+            if not s.valid and not bad:
+                bad.append(f"the {verb} solid is invalid")
             if s.tolerance > max_tol:
-                bad.append(f"re-imported shape tolerance {s.tolerance:.3g} exceeds {max_tol:.3g}")
+                bad.append(f"{verb} shape tolerance {s.tolerance:.3g} exceeds {max_tol:.3g}")
             if s.shells != g.shells:
-                bad.append(f"the re-imported solid has {s.shells} shells, wrote {g.shells}")
+                bad.append(f"the {verb} solid has {s.shells} shells, wrote {g.shells}")
             if not abs(s.volume - g.expected) <= _volume_tolerance(g):
                 bad.append(
-                    f"re-imported volume {s.volume:.12g}, wrote {g.expected:.12g} "
+                    f"{verb} volume {s.volume:.12g}, wrote {g.expected:.12g} "
                     f"(tolerance {_volume_tolerance(g):.3g})"
                 )
             if faceted_path:
                 g.volume = s.volume
-                g.tolerance = s.tolerance
+                if reader != "text":
+                    g.tolerance = s.tolerance
             if bad:
                 g.valid = False
-                g.issues.extend(f"read-back: {b}" for b in bad)
+                g.issues.extend(f"{label}: {b}" for b in bad)
                 rb.issues.extend(f"shell {g.outer}: {b}" for b in bad)
     rb.ok = not rb.issues
     return rb
@@ -591,7 +684,7 @@ def write(
     complete = all(g.valid for g in groups)
     written = groups if complete else []
     issues = []
-    readback = None
+    checked = _Verification()
     timings: dict[str, float] = {}
     if written:
         if fallback == "faceted":
@@ -606,21 +699,17 @@ def write(
         timings["write_s"] = time.perf_counter() - started
         if verify:
             mark = time.perf_counter()
-            readback = _verify(
-                path, written, occ, fallback == "faceted", options.max_shape_tolerance
-            )
+            checked = _verify(path, written, occ, fallback == "faceted", options)
             timings["readback_s"] = time.perf_counter() - mark
-            if not readback.ok:
-                mismatch = "; ".join(readback.issues)
-                issues.append(f"read-back of the written file does not match: {mismatch}")
+            issues.extend(checked.issues())
     else:
         issues.append("nothing was written")
     faces = [f for g in written for f in g.faces] if fallback is None else []
     if fallback is None and not complete and reason is not None:
         issues.append(reason)
     return WriteReport(
-        valid=complete and len(written) == n_outer and (readback is None or readback.ok),
-        solids=readback.solids if readback is not None else _solid_count(written, occ, fallback),
+        valid=complete and len(written) == n_outer and (not verify or checked.ok),
+        solids=_solid_count(written, occ, fallback, checked),
         max_shape_tolerance=max((g.tolerance for g in written), default=0.0),
         faces=faces,
         fallback=fallback,
@@ -642,14 +731,20 @@ def write(
         edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
         tangent_edges=[e for g in written for e in g.tangent_edges] if fallback is None else [],
         open_shells=[g.outer for g in written if g.kind == "shell"],
-        readback=readback,
-        verified=readback is not None,
+        readback=checked.readback,
+        verified=checked.by is not None,
+        verified_by=checked.by,
+        text_check=checked.text,
+        readback_skipped=checked.skipped,
         volume_checked_against_input=tris is not None,
         timings=timings,
     )
 
 
-def _solid_count(written: list[_Group], occ, fallback) -> int:
+def _solid_count(written: list[_Group], occ, fallback, checked: _Verification) -> int:
+    for rb in (checked.readback, checked.text):
+        if rb is not None:
+            return rb.solids
     if fallback == "faceted":
         return sum(1 for g in written if g.kind == "solid")
     return sum(occ.count_solids(g.shape) for g in written)

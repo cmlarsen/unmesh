@@ -244,9 +244,14 @@ def build_report(
         "validity": {
             "valid": wr.valid,
             "verified": wr.verified,
+            "verified_by": wr.verified_by,
             "readback": None
             if wr.readback is None
             else {"ok": wr.readback.ok, "issues": list(wr.readback.issues)},
+            "text_check": None
+            if wr.text_check is None
+            else {"ok": wr.text_check.ok, "issues": list(wr.text_check.issues)},
+            "readback_skipped": wr.readback_skipped,
             "volume_checked_against_input": wr.volume_checked_against_input,
             "fallback": wr.fallback,
             "fallback_reason": wr.fallback_reason,
