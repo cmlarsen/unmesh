@@ -47,12 +47,21 @@ def _valid(r: dict[str, Any]) -> bool:
     return r.get("status") == "ok" and (r.get("validity") or {}).get("valid") is True
 
 
-def _pooled_f1(records: list[dict[str, Any]]) -> float | None:
-    faces = sum(int(r.get("faces") or 0) for r in records)
-    regions = sum(int(r.get("regions") or 0) for r in records)
-    matched = sum(int(r.get("matched") or 0) for r in records)
+def family(r: dict[str, Any]) -> str:
+    return str(r["part"]).rsplit("-", 1)[0]
+
+
+def _pooled_f1(records: list[dict[str, Any]], truth_faces: dict[str, int]) -> float | None:
     if not records:
         return None
+    faces = regions = matched = 0
+    for r in records:
+        if r.get("status") == "ok":
+            faces += int(r.get("faces") or 0)
+            regions += int(r.get("regions") or 0)
+            matched += int(r.get("matched") or 0)
+        else:
+            faces += truth_faces.get(r["part"], truth_faces.get(family(r), 1))
     return _prf(matched, faces, regions)[2]
 
 
@@ -60,14 +69,23 @@ def table(records: list[dict[str, Any]], deflection: float) -> dict[str, Any]:
     ours = [r for r in records if r.get("converter") == CONVERTER]
     faceted = {_cell(r): r for r in records if r.get("converter") == FACETED}
     rows = sorted({_row(r) for r in ours})
+    truth_faces: dict[str, int] = {}
+    for r in ours:
+        if r.get("status") == "ok":
+            for key in (r["part"], family(r)):
+                truth_faces[key] = max(truth_faces.get(key, 0), int(r.get("faces") or 0))
     lines = []
     for name, families, floor in F1_LINES:
-        cells = [r for r in ours if r.get("family") in families]
+        cells = [r for r in ours if family(r) in families]
         per_row = {}
         for row in rows:
             rs = [r for r in cells if _row(r) == row]
             ok = [r for r in rs if r.get("status") == "ok"]
-            per_row[row] = {"f1": _pooled_f1(ok), "cells": len(rs), "failed": len(rs) - len(ok)}
+            per_row[row] = {
+                "f1": _pooled_f1(rs, truth_faces),
+                "cells": len(rs),
+                "failed": len(rs) - len(ok),
+            }
         values = [v["f1"] for v in per_row.values() if v["f1"] is not None]
         failed = sum(v["failed"] for v in per_row.values())
         worst = min(values) if values else None

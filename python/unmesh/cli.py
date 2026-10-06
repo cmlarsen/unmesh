@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
+import tempfile
 import time
 
 USAGE_ERROR = 3
@@ -83,30 +85,58 @@ def _summary(conversion) -> str:
     return "\n".join(lines)
 
 
+def _partial(output: str) -> str:
+    folder = os.path.dirname(os.path.abspath(output))
+    fd, path = tempfile.mkstemp(prefix=".unmesh-", suffix=".step", dir=folder)
+    os.close(fd)
+    os.unlink(path)
+    return path
+
+
+def _remove(path: str | None) -> None:
+    if path is not None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+
+
 def _convert(args) -> int:
     from unmesh import ConvertOptions
     from unmesh.pipeline import EXIT_CODES, UNITS, convert_to_step, error_report
 
     started = time.perf_counter()
     source = {"path": args.input, "unit": args.unit, "scale_to_mm": UNITS[args.unit]}
+    partial = None
     try:
         if args.tolerance is not None and not args.tolerance > 0:
             raise ValueError(f"--tolerance must be positive, got {args.tolerance}")
         if not os.path.isfile(args.input):
             raise FileNotFoundError(f"no such input file: {args.input}")
+        partial = _partial(args.output)
         conversion = convert_to_step(
             args.input,
-            args.output,
+            partial,
             ConvertOptions(linear_tolerance=args.tolerance),
             unit=args.unit,
             measure=not args.no_measure,
         )
-    except (ImportError, OSError, ValueError) as e:
-        print(f"unmesh: error: {e}", file=sys.stderr)
+        output = conversion.fidelity["output"]
+        output["path"] = args.output
+        if conversion.outcome == "error":
+            _remove(partial)
+            output["written"] = False
+        _write_report(args.report, conversion.fidelity)
+        if conversion.outcome != "error":
+            os.replace(partial, args.output)
+    except Exception as e:
+        _remove(partial)
+        print(f"unmesh: error: {type(e).__name__}: {e}", file=sys.stderr)
         runtime = {"total": time.perf_counter() - started}
-        _write_report(args.report, error_report(e, source=source, runtime=runtime))
+        report = error_report(e, source=source, output=args.output, runtime=runtime)
+        try:
+            _write_report(args.report, report)
+        except Exception as w:
+            print(f"unmesh: error: could not write the report: {w}", file=sys.stderr)
         return EXIT_CODES["error"]
-    _write_report(args.report, conversion.fidelity)
     stream = sys.stderr if conversion.outcome == "error" else sys.stdout
     print(_summary(conversion), file=stream)
     return conversion.exit_code

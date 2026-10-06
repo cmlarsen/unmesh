@@ -1,3 +1,5 @@
+import pytest
+
 from unmesh_harness.acceptance import CONVERTER, FACETED, failures, render, table
 
 
@@ -27,8 +29,8 @@ def line(result, prefix):
 
 def test_all_good_passes():
     records = [
-        record("a", "stepped_block"),
-        record("a", "stepped_block", FACETED, dev_truth_max=0.004),
+        record("stepped_block-a", "stepped_block"),
+        record("stepped_block-a", "stepped_block", FACETED, dev_truth_max=0.004),
     ]
     result = table(records, 0.01)
     assert line(result, "F1 planes")["pass"]
@@ -41,11 +43,11 @@ def test_all_good_passes():
 
 def test_failures_are_counted_not_hidden():
     records = [
-        record("a", "stepped_block", matched=5),
-        record("b", "stepped_block", status="timeout", error="exceeded 60 s"),
-        record("c", "round_boss", validity={"valid": False, "problems": ["no STEP"]}),
-        record("d", "round_boss", under_report=True, dev_truth_max=0.03),
-        record("d", "round_boss", FACETED, dev_truth_max=0.01),
+        record("stepped_block-a", "stepped_block", matched=5),
+        record("stepped_block-b", "stepped_block", status="timeout", error="exceeded 60 s"),
+        record("round_boss-c", "round_boss", validity={"valid": False, "problems": ["no STEP"]}),
+        record("round_boss-d", "round_boss", under_report=True, dev_truth_max=0.03),
+        record("round_boss-d", "round_boss", FACETED, dev_truth_max=0.01),
     ]
     result = table(records, 0.01)
     planes = line(result, "F1 planes")
@@ -55,7 +57,31 @@ def test_failures_are_counted_not_hidden():
     truth = line(result, "deviation to truth")
     assert not truth["pass"]
     listed = "\n".join(failures(records, 0.01))
-    assert "b identity 0 seed 0: timeout" in listed
-    assert "c identity 0 seed 0: invalid: no STEP" in listed
-    assert "d identity 0 seed 0: under-reports" in listed
-    assert "d identity 0 seed 0: deviation to truth 30.0 um, faceted 10.0 um" in listed
+    assert "stepped_block-b identity 0 seed 0: timeout" in listed
+    assert "round_boss-c identity 0 seed 0: invalid: no STEP" in listed
+    assert "round_boss-d identity 0 seed 0: under-reports" in listed
+    assert "round_boss-d identity 0 seed 0: deviation to truth 30.0 um, faceted 10.0 um" in listed
+
+
+def test_timed_out_cell_without_family_fails_its_line():
+    good = record("stepped_block-0000", "stepped_block")
+    timed_out = {
+        "part": "stepped_block-0001",
+        "operator": "identity",
+        "severity": 0.0,
+        "seed": 0,
+        "converter": CONVERTER,
+        "status": "timeout",
+        "error": "exceeded 60 s",
+    }
+    result = table([good, timed_out], 0.01)
+    planes = line(result, "F1 planes")
+    assert planes["rows"][("identity", 0.0)] == {
+        "f1": pytest.approx(2 / 3),
+        "cells": 2,
+        "failed": 1,
+    }
+    assert not planes["pass"]
+    assert line(result, "validity")["value"] == 0.5
+    assert not line(result, "calibration")["pass"]
+    assert not line(result, "deviation to truth")["pass"]

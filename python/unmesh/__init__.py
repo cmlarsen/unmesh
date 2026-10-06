@@ -1,7 +1,6 @@
 from unmesh._core import core_version, read_stl, weld, write_stl
 from unmesh.api import (
     ConvertOptions,
-    Decision,
     Report,
     Result,
     convert,
@@ -14,7 +13,6 @@ __version__ = core_version()
 
 __all__ = [
     "ConvertOptions",
-    "Decision",
     "Ir",
     "Report",
     "Result",

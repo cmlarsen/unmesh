@@ -7,7 +7,6 @@ from typing import NamedTuple
 import numpy as np
 
 from unmesh import _core
-from unmesh._decisions import Decision, decisions
 from unmesh.ir import Ir, Tolerances
 
 MeshLike = str | os.PathLike | np.ndarray | tuple[np.ndarray, np.ndarray]
@@ -34,7 +33,6 @@ class Report:
     analytic_area_fraction: float
     region_counts: dict[str, int] = field(default_factory=dict)
     warnings: list[ConvertWarning] = field(default_factory=list)
-    decisions: list[Decision] = field(default_factory=list)
 
 
 class Result(NamedTuple):
@@ -130,10 +128,7 @@ def convert(mesh_or_path: MeshLike, options: ConvertOptions | None = None) -> Re
         else:
             tris = mesh_or_path
         text, raw = _core.convert_soup(tris, *args)
-    ir = Ir.loads(text)
-    report = _report(raw)
-    report.decisions = decisions(ir)
-    return Result(ir, report)
+    return Result(Ir.loads(text), _report(raw))
 
 
 def convert_from_labels(

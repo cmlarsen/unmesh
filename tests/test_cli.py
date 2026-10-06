@@ -267,3 +267,35 @@ def test_convert_to_step_api(tmp_path):
     jsonschema.validate(conversion.fidelity, SCHEMA)
     with pytest.raises(ValueError):
         unmesh.convert_to_step(box(), tmp_path / "x.step", unit="ft")
+
+
+def test_unexpected_exception_exits_3_and_leaves_no_step(tmp_path, monkeypatch):
+    import unmesh.step
+
+    real = unmesh.step.write
+
+    def write_then_fail(ir, path, *args, **kwargs):
+        real(ir, path, *args, **kwargs)
+        assert Path(path).is_file()
+        raise RuntimeError("injected")
+
+    monkeypatch.setattr(unmesh.step, "write", write_then_fail)
+    stl = tmp_path / "b.stl"
+    unmesh.write_stl(stl, box())
+    out = tmp_path / "o.step"
+    report = tmp_path / "r.json"
+    assert main(["convert", str(stl), str(out), "--report", str(report)]) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["b.stl", "r.json"]
+    data = json.loads(report.read_text())
+    jsonschema.validate(data, SCHEMA)
+    assert data["error"] == {"type": "RuntimeError", "message": "injected"}
+    assert data["output"] == {"path": str(out), "written": False}
+
+
+def test_existing_output_survives_a_failed_run(tmp_path):
+    out = tmp_path / "o.step"
+    out.write_text("previous")
+    stl = tmp_path / "bad.stl"
+    stl.write_bytes(b"\x00" * 10)
+    assert main(["convert", str(stl), str(out)]) == 3
+    assert out.read_text() == "previous"

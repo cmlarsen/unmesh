@@ -24,7 +24,7 @@ written:
 | 3 | error: nothing usable written |
 
 The JSON report records the measured deviation to the input mesh overall and per face, the faces left
-faceted and why, the ambiguity decisions taken, validity and verification, and runtime per stage. Its
+faceted and why, validity and verification, and runtime per stage. Its
 schema is in [docs/api.md](docs/api.md#fidelity-report) and
 [docs/fidelity.schema.json](docs/fidelity.schema.json). From Python, `unmesh.convert_to_step(mesh,
 path)` does the same.

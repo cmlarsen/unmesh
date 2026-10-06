@@ -58,7 +58,6 @@ It returns `Result`, a named tuple `(ir, report)`, so `ir, report = unmesh.conve
 | `analytic_area_fraction` | Share of mesh area in analytic (non-`facets`) regions. A report only, not a quality measure. |
 | `region_counts` | Count of regions per surface type, e.g. `{"plane": 6, "cylinder": 1}`. |
 | `warnings` | List of `ConvertWarning(code, message)`. Codes: `degenerate_triangles`, `flipped_winding`, `repaired_winding`, `open_edges`, `non_manifold_edges`. See [IR § Non-manifold and open input](ir.md#non-manifold-and-open-input). |
-| `decisions` | List of `Decision`: the places where the automatic converter kept planes that also read as a cylinder. See [Ambiguity decisions](#ambiguity-decisions). Always empty for `convert_from_labels`. |
 
 A clean mesh therefore gets the floor (1e-6 of the bounding-box diagonal, so the tolerance scales
 with the part's units), curved or not, and a noisy one a tolerance that follows its noise, so snapping
@@ -74,31 +73,6 @@ the neighbouring surface's far facet ends out of the fit.
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
 come back as `facets`.
-
-### Ambiguity decisions
-
-Some meshes have two honest readings, and the converter's policy (the ambiguity sets under
-`convert_from_labels` below) picks one. `Report.decisions` records every such pick on the converted IR, so a caller can see what was
-decided rather than infer it. Each `Decision` is about plane regions the converter kept as planes
-whose corners, seen along a common axis, also lie on one circle:
-
-| `kind` | what was found | `reason` |
-|---|---|---|
-| `prism_or_cylinder` | a closed ring of at least 5 planes whose sections lie on one circle (an n-gon prism, or a cylinder exported with fewer than 25 segments), or a chain of 3 or more strips tangent at both ends to two support planes (a coarse fillet) | `crease_at_least_15deg` when every crease between the strips is 15 degrees or more (the planes are never candidates for a curved group), else `not_grouped` |
-| `chamfer_or_fillet` | one strip meeting two support planes at equal creases: a symmetric chamfer, or a one-segment fillet | `one_facet` |
-| `two_planes_or_fillet` | two strips whose creases run `x, 2x, x`: two planes, or a two-segment fillet | `two_facets` |
-
-Fields: `regions` (the strips or ring sides), `supports` (the two planes a chain is tangent to; empty
-for a ring), `chosen` (`"planes"`), `alternative` (`"cylinder"`), `reason`, `segments`, `radius`,
-`axis` and `axis_point` of the alternative cylinder, `alternative_deviation` (the chord sagitta
-`radius (1 - cos(segment angle / 2))`: how far the planes are from that cylinder), and
-`min_crease_deg`/`max_crease_deg` over the creases involved. A chain's tangency is checked in the
-section across the axis: the centre is where the inward normals of the two supports from their
-tangent lines meet, the two distances must agree, and every corner of the chain must lie on the
-circle, all within four times `tolerances.linear`. Creases above 72.5 degrees (rings) or 60 degrees
-(chains), turns above 175 degrees, and asymmetric chamfers are never recorded. The detection reads
-only the IR (plane normals and origins, transversal adjacencies), runs in Python after the Rust
-converter, and changes nothing in the IR.
 
 ### `unmesh.convert_to_step(mesh_or_path, step_path, options=None, *, unit="mm", write_options=None, measure=True) -> Conversion`
 
@@ -410,8 +384,7 @@ between neighbouring facets: planes meeting at 15° or more stay planes, so a re
 cone) when they fit one. A coarse cylinder exported with fewer than 25 segments around therefore comes
 back as a prism. A one-segment fillet stays one plane (the chamfer reading) and a two-segment fillet
 stays two planes: any two planes meeting at a crease fit a cylinder, so curved recovery needs at least
-three facets. The automatic `convert` records each of these choices in `Report.decisions` (see
-[Ambiguity decisions](#ambiguity-decisions)).
+three facets.
 
 ### `unmesh.convert` internals
 
@@ -505,7 +478,10 @@ unmesh --version
 `--tolerance` sets `ConvertOptions.linear_tolerance` in the input's unit (default: derived from the
 mesh's noise). `--report` writes the [fidelity report](#fidelity-report) as JSON, also on error.
 `--no-measure` skips sampling the written STEP. A one-line outcome and the key numbers go to stdout
-(stderr on error).
+(stderr on error). The STEP is written to a temporary file next to the output and renamed into place
+only when the outcome is not `error`, after the report is written: on exit code 3 nothing is left at the
+output path (an existing file there is untouched). Any exception, expected or not, exits 3, and with
+`--report` still writes a report whose `error` names the exception's type and message.
 
 Exit codes:
 
@@ -520,8 +496,9 @@ Exit codes:
 
 `unmesh convert --report` and `Conversion.fidelity` produce the same JSON object, described by
 [`fidelity.schema.json`](fidelity.schema.json). It is versioned: `schema` is `"unmesh.fidelity"` and
-`version` is `1`. A new field may be added within a version; removing or renaming a field, or
-changing a field's meaning or unit, bumps the version. All lengths are in millimetres (`units`), after
+`version` is `1`. A new field may be added within a version, so readers must ignore fields they do
+not know (the schema allows extra properties); removing or renaming a field, or changing a field's
+meaning or unit, bumps the version. All lengths are in millimetres (`units`), after
 the `--unit` scaling. Every number is either measured or a bound computed from measured
 quantities, and says which; a quantity that was not measured is `null`, never a guess.
 
@@ -539,7 +516,6 @@ quantities, and says which; a quantity that was not measured is `null`, never a 
 | `deviation.measured` | `null` with `--no-measure` or when nothing valid was written. Otherwise the written STEP sampled against the input: it is re-imported and tessellated at `tessellation_deflection` (2e-5 of the input's bounding-box diagonal, 0.1 rad). `step_to_input` is the distance from each tessellation node (a point exactly on a written face) to the input triangles: a sampled lower bound on the true maximum. `input_to_step` is the distance from each input vertex to the tessellated faces, exact to within the deflection. Each has `max`, `mean`, `p99` and `samples`; `max` is the larger of the two maxima. |
 | `faces` | One entry per IR region: `region`, `surface`, `shell`, `triangles`, `written_as` (the surface type, or `triangles` for a `facets` region or after a fallback), `converter` (`max`, `rms` of the region's residual; `null` for `facets`) and `writer` (the region's `FaceReport`: `max_shape_tolerance`, `max_vertex_displacement`, `max_boundary_deviation`; `null` after a fallback). |
 | `faceted` | One entry per region written as triangles, with a `reason`: `no_surface_fit` (the converter fitted no plane, cylinder, cone, sphere or torus within tolerance), `open_shell` (an open component is kept as one `facets` region), `non_manifold` (the same, on a mesh with non-manifold edges), `assembly_failed` (the converter's analytic assembly failed validation and every shell was kept as facets), `facets_share` (the writer wrote the whole part faceted because `facets` regions held most of the triangles), `shell_failed` (the analytic solid failed construction or verification and the writer fell back; `validity.fallback_reason` says why). |
-| `decisions` | The `Report.decisions`, as objects (see [Ambiguity decisions](#ambiguity-decisions)). |
 | `validity` | `valid`, `verified`, `readback` (`ok`, `issues`, or `null`), `volume_checked_against_input`, `fallback`, `fallback_reason`, `solids`, `open_shells`, `issues`, and `edge_fallbacks` (`regions`, `kind`, `max_deviation`), from the `WriteReport`. |
 | `runtime_s` | Seconds per stage: `read`, `convert`, `write`, `readback`, `measure` (`null` when skipped) and `total`. |
 | `error` | `null`, or `type` and `message` when `outcome` is `error`. An error report raised before conversion has only the identity fields, `input`, `output`, `runtime_s` and `error`. |

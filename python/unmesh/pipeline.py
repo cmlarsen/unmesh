@@ -241,7 +241,6 @@ def build_report(
         },
         "faces": faces,
         "faceted": faceted,
-        "decisions": [_decision(d) for d in report.decisions],
         "validity": {
             "valid": wr.valid,
             "verified": wr.verified,
@@ -264,13 +263,6 @@ def build_report(
         if outcome != "error"
         else {"type": "WriteError", "message": "; ".join(wr.issues) or "the STEP is not valid"},
     }
-
-
-def _decision(d) -> dict[str, Any]:
-    out = dataclasses.asdict(d)
-    for key in ("regions", "supports", "axis", "axis_point"):
-        out[key] = list(out[key])
-    return out
 
 
 def error_report(
