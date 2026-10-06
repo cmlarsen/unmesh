@@ -77,6 +77,7 @@ struct Pool<'a> {
     info: &'a [TriInfo],
     regions: &'a [Region],
     preset: Vec<bool>,
+    refused: std::cell::Cell<usize>,
     mark: Vec<u32>,
     pos: Vec<u32>,
     token: u32,
@@ -642,6 +643,7 @@ fn grow_group(
             match pool.fits(r, kind, &axis, &shape, tol) {
                 Some(s) if s <= limit => {
                     if junction.is_some_and(|j| j.sliver(pool, owner, r, tol)) {
+                        pool.refused.set(pool.refused.get() + 1);
                         continue;
                     }
                     sags.push(s)
@@ -940,7 +942,7 @@ pub fn run(
     tol: f64,
 ) -> Grown {
     let sticky = vec![false; regions.len()];
-    let (mut grown, mut facets) = match pass(
+    let ((mut grown, mut facets), (_, mut again)) = match pass(
         vc,
         faces,
         nbr,
@@ -951,10 +953,13 @@ pub fn run(
         &sticky,
         tol,
     ) {
-        Ok((round, _)) => round,
+        Ok(round) => round,
         Err(grown) => return grown,
     };
     for _ in 1..PASSES {
+        if !again {
+            break;
+        }
         match pass(
             vc,
             faces,
@@ -966,9 +971,10 @@ pub fn run(
             &facets,
             tol,
         ) {
-            Ok(((next, flags), true)) => {
+            Ok(((next, flags), (true, more))) => {
                 grown = next;
                 facets = flags;
+                again = more;
             }
             _ => break,
         }
@@ -988,8 +994,10 @@ pub fn run(
 /// A later round sees the strips an earlier one left once `peel` has taken
 /// their slivers of an adjacent blend, and the lone triangles it flagged
 /// (`sticky`) as plane regions again; those still left ungrouped stay facets.
-/// Returns the regions, which of them become facets, and whether anything
-/// changed.
+/// Returns the regions, which of them become facets, whether this round
+/// changed anything, and whether another round could: this one refused a
+/// blend sliver, peeled triangles into a group or left a region flagged as
+/// facets.
 #[allow(clippy::too_many_arguments)]
 fn pass(
     vc: &[V3],
@@ -1001,7 +1009,7 @@ fn pass(
     preset: Vec<(usize, Single)>,
     sticky: &[bool],
     tol: f64,
-) -> Result<((Grown, Vec<bool>), bool), Grown> {
+) -> Result<((Grown, Vec<bool>), (bool, bool)), Grown> {
     super::timing::sub_start();
     let pairs = region_pairs(nbr, label);
     let n = regions.len();
@@ -1038,6 +1046,7 @@ fn pass(
         info,
         regions: &regions,
         preset: is_preset,
+        refused: std::cell::Cell::new(0),
         mark: vec![0; vc.len()],
         pos: vec![0; vc.len()],
         token: 0,
@@ -1244,7 +1253,8 @@ fn pass(
         tol,
     );
     super::timing::sub_lap("grow.peel");
-    changed |= extra.iter().any(|e| !e.is_empty());
+    let peeled = extra.iter().any(|e| !e.is_empty());
+    changed |= peeled;
     changed |= join_touching(
         &mut pool,
         nbr,
@@ -1257,6 +1267,7 @@ fn pass(
     );
 
     super::timing::sub_lap("grow.join");
+    let refused = pool.refused.get() > 0;
     let mut out: Vec<Region> = Vec::new();
     let mut facets: Vec<bool> = Vec::new();
     let mut out_label = vec![NONE; faces.len()];
@@ -1348,9 +1359,9 @@ fn pass(
                 regions: out,
                 prefit,
             },
-            facets,
+            facets.clone(),
         ),
-        changed,
+        (changed, refused || peeled || facets.contains(&true)),
     ))
 }
 
@@ -1989,6 +2000,7 @@ mod tests {
             info: &p.info,
             regions: &p.regions,
             preset: vec![false; p.regions.len()],
+            refused: std::cell::Cell::new(0),
             mark: vec![0; p.vc.len()],
             pos: vec![0; p.vc.len()],
             token: 0,
@@ -2149,6 +2161,7 @@ mod tests {
             info: &info,
             regions: &regions,
             preset: vec![false; regions.len()],
+            refused: std::cell::Cell::new(0),
             mark: vec![0; w.vc.len()],
             pos: vec![0; w.vc.len()],
             token: 0,
