@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cmlarsen/unmesh/docs/fidelity.schema.json",
+  "title": "unmesh fidelity report v1",
+  "type": "object",
+  "required": ["schema", "version", "unmesh_version", "outcome", "exit_code", "units", "input", "output", "runtime_s", "error"],
+  "properties": {
+    "schema": { "const": "unmesh.fidelity" },
+    "version": { "const": 1 },
+    "unmesh_version": { "type": "string" },
+    "outcome": { "enum": ["analytic", "mixed", "faceted", "error"] },
+    "exit_code": { "enum": [0, 1, 2, 3] },
+    "units": { "const": "mm" },
+    "input": {
+      "type": ["object", "null"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "format": { "enum": ["stl", "obj", "array"] },
+        "unit": { "enum": ["mm", "in"] },
+        "scale_to_mm": { "$ref": "#/$defs/positive" },
+        "triangles": { "$ref": "#/$defs/count" },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "written"],
+      "properties": { "path": { "type": ["string", "null"] }, "written": { "type": "boolean" } }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["linear", "angular_snap_deg", "tangent_threshold_deg", "vertex_merge"],
+      "properties": {
+        "linear": { "$ref": "#/$defs/positive" },
+        "angular_snap_deg": { "$ref": "#/$defs/length" },
+        "tangent_threshold_deg": { "$ref": "#/$defs/positive" },
+        "vertex_merge": { "$ref": "#/$defs/positive" }
+      }
+    },
+    "region_counts": { "type": "object", "additionalProperties": { "$ref": "#/$defs/count" } },
+    "analytic_area_fraction": { "type": "number" },
+    "deviation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["converter", "writer", "measured"],
+      "properties": {
+        "converter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max", "rms", "kind"],
+          "properties": {
+            "max": { "$ref": "#/$defs/length" },
+            "rms": { "$ref": "#/$defs/length" },
+            "kind": { "const": "bound" }
+          }
+        },
+        "writer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_vertex_displacement", "max_boundary_deviation", "max_shape_tolerance"],
+          "properties": {
+            "max_vertex_displacement": { "$ref": "#/$defs/length" },
+            "max_boundary_deviation": { "$ref": "#/$defs/length" },
+            "max_shape_tolerance": { "$ref": "#/$defs/length" }
+          }
+        },
+        "measured": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max", "tessellation_deflection", "step_to_input", "input_to_step"],
+              "properties": {
+                "max": { "$ref": "#/$defs/maybe_length" },
+                "tessellation_deflection": { "$ref": "#/$defs/positive" },
+                "step_to_input": { "$ref": "#/$defs/samples" },
+                "input_to_step": { "$ref": "#/$defs/samples" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "faces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["region", "surface", "shell", "triangles", "written_as", "converter", "writer"],
+        "properties": {
+          "region": { "$ref": "#/$defs/count" },
+          "surface": { "$ref": "#/$defs/surface" },
+          "shell": { "$ref": "#/$defs/count" },
+          "triangles": { "$ref": "#/$defs/count" },
+          "written_as": { "enum": ["plane", "cylinder", "cone", "sphere", "torus", "triangles"] },
+          "converter": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max", "rms"],
+                "properties": { "max": { "$ref": "#/$defs/maybe_length" }, "rms": { "$ref": "#/$defs/maybe_length" } }
+              }
+            ]
+          },
+          "writer": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max_shape_tolerance", "max_vertex_displacement", "max_boundary_deviation"],
+                "properties": {
+                  "max_shape_tolerance": { "$ref": "#/$defs/length" },
+                  "max_vertex_displacement": { "$ref": "#/$defs/length" },
+                  "max_boundary_deviation": { "$ref": "#/$defs/length" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "faceted": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["region", "reason"],
+        "properties": {
+          "region": { "$ref": "#/$defs/count" },
+          "reason": { "enum": ["no_surface_fit", "open_shell", "non_manifold", "assembly_failed", "facets_share", "shell_failed"] }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "regions", "supports", "chosen", "alternative", "reason", "segments", "radius", "axis", "axis_point", "alternative_deviation", "min_crease_deg", "max_crease_deg"],
+        "properties": {
+          "kind": { "enum": ["prism_or_cylinder", "chamfer_or_fillet", "two_planes_or_fillet"] },
+          "regions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/count" } },
+          "supports": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/count" } },
+          "chosen": { "const": "planes" },
+          "alternative": { "const": "cylinder" },
+          "reason": { "enum": ["one_facet", "two_facets", "crease_at_least_15deg", "not_grouped"] },
+          "segments": { "type": "integer", "minimum": 1 },
+          "radius": { "$ref": "#/$defs/positive" },
+          "axis": { "$ref": "#/$defs/vec3" },
+          "axis_point": { "$ref": "#/$defs/vec3" },
+          "alternative_deviation": { "$ref": "#/$defs/length" },
+          "min_crease_deg": { "type": "number" },
+          "max_crease_deg": { "type": "number" }
+        }
+      }
+    },
+    "validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "verified", "readback", "volume_checked_against_input", "fallback", "fallback_reason", "solids", "open_shells", "issues", "edge_fallbacks"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "verified": { "type": "boolean" },
+        "readback": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ok", "issues"],
+              "properties": { "ok": { "type": "boolean" }, "issues": { "type": "array", "items": { "type": "string" } } }
+            }
+          ]
+        },
+        "volume_checked_against_input": { "type": "boolean" },
+        "fallback": { "enum": [null, "faceted"] },
+        "fallback_reason": { "type": ["string", "null"] },
+        "solids": { "$ref": "#/$defs/count" },
+        "open_shells": { "type": "array", "items": { "$ref": "#/$defs/count" } },
+        "issues": { "type": "array", "items": { "type": "string" } },
+        "edge_fallbacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["regions", "kind", "max_deviation"],
+            "properties": {
+              "regions": { "type": "array", "items": { "$ref": "#/$defs/count" } },
+              "kind": { "enum": ["projected", "interpolated"] },
+              "max_deviation": { "$ref": "#/$defs/maybe_length" }
+            }
+          }
+        }
+      }
+    },
+    "runtime_s": {
+      "type": "object",
+      "additionalProperties": { "type": ["number", "null"], "minimum": 0 }
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "message"],
+          "properties": { "type": { "type": "string" }, "message": { "type": "string" } }
+        }
+      ]
+    }
+  },
+  "if": { "properties": { "outcome": { "const": "error" } } },
+  "then": { "properties": { "exit_code": { "const": 3 }, "error": { "type": "object" } } },
+  "else": {
+    "required": ["tolerances", "region_counts", "analytic_area_fraction", "deviation", "faces", "faceted", "decisions", "validity"],
+    "properties": { "error": { "type": "null" } }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "positive": { "type": "number", "exclusiveMinimum": 0 },
+    "length": { "type": "number", "minimum": 0 },
+    "maybe_length": { "type": ["number", "null"], "minimum": 0 },
+    "vec3": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
+    "surface": { "enum": ["plane", "cylinder", "cone", "sphere", "torus", "facets"] },
+    "samples": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max", "mean", "p99", "samples"],
+      "properties": {
+        "max": { "$ref": "#/$defs/maybe_length" },
+        "mean": { "$ref": "#/$defs/maybe_length" },
+        "p99": { "$ref": "#/$defs/maybe_length" },
+        "samples": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}
