@@ -82,6 +82,8 @@ scripts/check.sh
 - Runner memory: the pool samples each worker's RSS. A worker over `--memory-cap-mb` (default
   `(total RAM - 3 GB) / jobs`) is killed and its cell recorded as a `memory cap` error; every record
   carries `rss_peak_mb`, and a worker left above half the cap after a cell is restarted.
+- `python/unmesh/pipeline.py` and `cli.py`: `unmesh.convert_to_step` and the `unmesh convert` command (exit codes and the versioned fidelity report in `docs/api.md`, JSON Schema in `docs/fidelity.schema.json`).
+- Acceptance (#18): `uv run unmesh-harness run --grid acceptance --converter unmesh,unmesh_harness.runner.converters:convert_faceted --out DIR` scores the `standard` parts on the clean, float32, rotated and ±1 µm normal-noise rows with truth judging on every row; the second converter is the faceted baseline run as a plugin so the judge measures its deviation to the truth. `uv run unmesh-harness acceptance DIR/acceptance.jsonl [--failures]` prints the per-line pass/fail table (`unmesh_harness/acceptance.py`: pooled per-family F1, structural validity counting a faceted fallback as valid, under-reports, deviation to truth against faceted plus one input deflection; a timed-out or failed cell fails its line).
 - `scripts/`: `check.sh` and other tooling.
 
 ## Conventions
