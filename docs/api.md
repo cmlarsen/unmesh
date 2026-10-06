@@ -388,7 +388,33 @@ group it fits as members do, and groups that then touch are joined when one refi
 both. A flagged region left ungrouped becomes `facets`, as does a lone triangle whose three neighbours
 all meet it at smooth creases; a cylinder or cone group with two other cylinder or cone groups each
 sharing 15% of its boundary is a slice of a sphere or torus that was not recovered (rings of a torus
-are cones) and becomes `facets` too.
+are cones) and becomes `facets` too. Last, a region of at most two triangles that is not curved
+joins an adjacent curved region when that surface passes within `tolerances.linear` of each of its
+vertices and the region's own largest chord sagitta (or the tolerance, if larger) bounds the remnant's:
+the long slivers a tessellator leaves where a curved face meets another (a bore through a cone) have
+every corner on the surface and a sagitta like their neighbours', which growth refused. A flat cut into
+the surface (a D-flat on a boss or in a bore) also has its corners on it, but its sagitta is the flat's
+depth, so it stays a plane. The surface is not refitted; its `residual.max` takes their vertex
+distances.
+
+**Vertices and boundary kinds.** A mesh vertex where three or more regions meet (a junction) is moved
+to the least-squares point of its incident analytic surfaces: Gauss-Newton to convergence, with the
+directions the surfaces do not determine (eigenvalues of the normals' matrix below 1e-6) pulled to the
+mesh vertex, so on an intersection curve it takes the point nearest the vertex. The writer's own
+intersection solve then starts at its fixed point. The move is kept when it is at most ten times
+`tolerances.linear` and the point's distance to the input mesh (the two-ring of the vertex) plus its
+largest distance to those surfaces is at most five times `tolerances.linear`; that sum is the vertex's
+contribution to `report.max_deviation`. Next to a `facets` region the vertex is a corner of the
+patch, so its whole displacement counts instead of its distance to the mesh, and a junction of a
+`facets` region with a curved one is not moved at all (the patch would then stand in for the curved
+surface across a moved chord). Otherwise the vertex keeps its projection below. A boundary's kind follows [IR § Tangent versus
+transversal](ir.md#tangent-versus-transversal): the dihedral of the fitted surfaces is sampled at each
+polyline node (for a `facets` side, against the facet carrying the adjacent boundary edge) and runs
+are split with the hysteresis band there. A `kind_change` vertex is then moved, within the polyline
+segments next to its node, onto the point of both surfaces where their dihedral crosses
+`tangent_threshold_deg` (onto both surfaces at the node when it does not cross there), with the same
+acceptance and reporting as a junction. `Vertex.source_positions` keeps the mesh position, so every
+vertex's movement can be read from the IR.
 
 The planar converter welds the input, groups triangles into regions by growing them while every
 vertex stays within tolerance of the region's plane, merges adjacent coplanar regions, fits each

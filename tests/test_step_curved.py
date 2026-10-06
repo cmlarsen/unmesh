@@ -25,6 +25,7 @@ from OCP.TopAbs import TopAbs_EDGE  # noqa: E402
 from OCP.TopExp import TopExp_Explorer  # noqa: E402
 from OCP.TopoDS import TopoDS  # noqa: E402
 
+import unmesh  # noqa: E402
 import unmesh.ir as uir  # noqa: E402
 import unmesh.step as step  # noqa: E402
 from unmesh._writer import curved, occ  # noqa: E402
@@ -543,3 +544,58 @@ def test_a_small_flipped_pocket_is_caught_face_by_face(size, radius, tmp_path):
     unflipped = build_oracle_ir(tessellate(shape, 0.01, 0.2))
     good = step.write(unflipped, tmp_path / "g.step", mesh=tris)
     assert good.valid and good.fallback is None and good.volume_checked_against_input
+
+
+def bore_meeting_a_cone():
+    cone_pocket = Pos(0, 0, 20) * Cone(14, 2, 30, align=(Align.CENTER, Align.CENTER, Align.MAX))
+    return Box(40, 40, 40) - cone_pocket - Pos(0, 0, 8) * Rot(0, 90, 0) * Cylinder(3, 60)
+
+
+def test_bore_meeting_a_cone_converts_and_writes_analytic(tmp_path):
+    shape = bore_meeting_a_cone()
+    tris = np.asarray(tessellate(shape, 0.01, 0.2).tris, dtype=np.float64)
+    ir, rep = unmesh.convert(tris)
+    types = sorted(r.surface.type for r in ir.regions)
+    assert types == ["cone"] + ["cylinder"] * 2 + ["plane"] * 7
+    for adj in ir.adjacencies:
+        pair = {ir.regions[r].surface.type for r in adj.regions}
+        if pair == {"cone", "cylinder"}:
+            assert all(b.kind == "transversal" and b.dihedral_deg > 45 for b in adj.boundaries)
+    report = step.write(ir, tmp_path / "b.step", mesh=tris)
+    assert report.fallback is None, report.fallback_reason
+    assert report.valid and report.verified and report.volume_checked_against_input
+    written = brep_counts(occ.read_step(tmp_path / "b.step"))
+    assert written["faces"] == brep_counts(shape)["faces"]
+    assert rep.max_deviation >= max(r.residual.max for r in ir.regions)
+
+
+def d_flat_boss(depth):
+    flat_x = 10.0 - depth
+    return Cylinder(10, 20) - Pos(flat_x + 10, 0, 0) * Box(20, 40, 40)
+
+
+def d_flat_bore(depth):
+    flat_x = 6.0 - depth
+    hole = Cylinder(6, 40) - Pos(flat_x + 10, 0, 0) * Box(20, 40, 50)
+    return Box(30, 30, 20) - hole
+
+
+@pytest.mark.parametrize("make", [d_flat_boss, d_flat_bore])
+@pytest.mark.parametrize("depth", [0.1, 0.5, 1.5])
+def test_a_d_flat_survives_as_a_plane(make, depth, tmp_path):
+    shape = make(depth)
+    tris = np.asarray(tessellate(shape, 0.01, 0.2).tris, dtype=np.float64)
+    ir, rep = unmesh.convert(tris)
+    radius = 10.0 if make is d_flat_boss else 6.0
+    flats = [
+        r
+        for r in ir.regions
+        if r.surface.type == "plane"
+        and abs(abs(r.surface.normal[0]) - 1.0) < 1e-9
+        and abs(r.surface.origin[0] - (radius - depth)) < 1e-6
+    ]
+    assert len(flats) == 1, sorted(r.surface.type for r in ir.regions)
+    assert rep.max_deviation < 0.02
+    report = step.write(ir, tmp_path / "d.step", mesh=tris)
+    assert report.fallback is None, report.fallback_reason
+    assert brep_counts(occ.read_step(tmp_path / "d.step"))["faces"] == brep_counts(shape)["faces"]
