@@ -1,7 +1,9 @@
 # API
 
-Three public surfaces: the Python package `unmesh`, the optional `unmesh.step` writer, and the Rust
-crate `unmesh-core`. They share one contract, the [IR](ir.md).
+Four public surfaces: the Python package `unmesh`, the optional `unmesh.step` writer, the `unmesh`
+command line, and the Rust crate `unmesh-core`. They share one contract, the [IR](ir.md).
+`unmesh.convert_to_step` and the CLI run the whole pipeline and return the
+[fidelity report](#fidelity-report).
 
 Everything here is v0 and may change freely before the first release. `convert` fits planes,
 cylinders, cones, spheres and tori (what it cannot fit stays `facets`);
@@ -19,14 +21,20 @@ result.report.max_deviation
 
 import unmesh.step  # needs `pip install unmesh[step]`
 
-write_report = unmesh.step.write(result.ir, "part.step")
+write_report = unmesh.step.write(result.ir, "part.step", mesh="part.stl")
+
+conversion = unmesh.convert_to_step("part.stl", "part.step")  # the whole pipeline
+conversion.outcome, conversion.exit_code, conversion.fidelity  # see Fidelity report
 ```
 
 ### `unmesh.convert(mesh_or_path, options=None) -> Result`
 
 `mesh_or_path` is one of:
 
-- a path (`str` or `os.PathLike`) to an STL file;
+- a path (`str` or `os.PathLike`) to an STL file (binary or ASCII) or, by its `.obj` suffix, a
+  Wavefront OBJ file (`v` and `f` lines only; polygons are fanned from their first corner, and
+  `f` indices may be negative or carry `/vt/vn` parts, which are ignored). `unmesh.read_mesh(path)`
+  returns either as an `(n, 3, 3)` array;
 - a NumPy array of shape `(n, 3, 3)`: `n` triangles of three corners (a triangle soup);
 - a tuple `(vertices, faces)` of arrays shaped `(v, 3)` float and `(f, 3)` integer.
 
@@ -65,6 +73,28 @@ the neighbouring surface's far facet ends out of the fit.
 `convert` raises `ValueError` for input it cannot read (no triangles, wrong array shape, non-finite
 coordinates) and `OSError` for an unreadable file. It never raises for a hard-to-fit part: those regions
 come back as `facets`.
+
+### `unmesh.convert_to_step(mesh_or_path, step_path, options=None, *, unit="mm", write_options=None, measure=True) -> Conversion`
+
+The whole pipeline in one call: read the mesh (any form `convert` accepts), scale it to millimetres
+(`unit` is `"mm"` or `"in"`; an explicit `options.linear_tolerance` is in the input's unit and is
+scaled with it), `convert`, then `unmesh.step.write(ir, step_path, write_options, mesh=...)` with the
+scaled mesh, so the faceted fallback and the input-volume checks are always available. The STEP is
+always in millimetres. With `measure`, a valid written file is then read back and sampled against the
+input mesh (see `deviation.measured` below). It needs `unmesh[step]`, and checks for OCP before
+reading the mesh: a missing OCP raises `ImportError` with the install hint. Bad input raises
+`ValueError` or `OSError` as `convert` does; a hard part never raises.
+
+`Conversion` has `ir`, `report` (the converter's `Report`), `write` (the `WriteReport`), `outcome`,
+`exit_code` and `fidelity` (the [fidelity report](#fidelity-report) as a dict;
+`unmesh.pipeline.dumps(fidelity)` writes it as JSON with non-finite numbers as `null`). `outcome`:
+
+| `outcome` | exit code | meaning |
+|---|---|---|
+| `analytic` | 0 | Written and verified, every region an analytic face. |
+| `mixed` | 1 | Written and verified, with one or more `facets` regions as triangle faces next to analytic faces. |
+| `faceted` | 2 | Written and verified as a whole-part faceted solid: the writer fell back, or the converter found no analytic region at all (an open or non-manifold mesh, for example). |
+| `error` | 3 | Nothing usable was written: bad input, a missing OCP, or a `WriteReport` that is not `valid` (a part that failed and had no fallback, or a written file whose read-back does not match; such a file is left on disk). |
 
 ### `unmesh.step.write(ir, path, options=None, *, mesh=None, verify=True) -> WriteReport`
 
@@ -433,6 +463,62 @@ input](ir.md#non-manifold-and-open-input).
 Returns `(vertices, faces, source_triangles, report)`: the welded arrays, a `uint32` array giving the input
 triangle index of each welded face, and the report dict (`input_corners`, `unique_vertices`,
 `degenerate_dropped`).
+
+## Command line
+
+`pip install unmesh[step]` installs the `unmesh` command (also `python -m unmesh`):
+
+```sh
+unmesh convert in.stl out.step [--unit mm|in] [--tolerance T] [--report report.json] [--no-measure]
+unmesh --version
+```
+
+`convert` runs `unmesh.convert_to_step`. The input is an STL file, or an OBJ file by its suffix.
+`--unit` is the unit of the input coordinates (default `mm`); the STEP is always written in mm.
+`--tolerance` sets `ConvertOptions.linear_tolerance` in the input's unit (default: derived from the
+mesh's noise). `--report` writes the [fidelity report](#fidelity-report) as JSON, also on error.
+`--no-measure` skips sampling the written STEP. A one-line outcome and the key numbers go to stdout
+(stderr on error). The STEP is written to a temporary file next to the output and renamed into place
+only when the outcome is not `error`, after the report is written: on exit code 3 nothing is left at the
+output path (an existing file there is untouched). Any exception, expected or not, exits 3, and with
+`--report` still writes a report whose `error` names the exception's type and message.
+
+Exit codes:
+
+| code | outcome |
+|---|---|
+| 0 | every face analytic |
+| 1 | converted with `facets` regions (mixed) |
+| 2 | whole-part faceted (the writer's fallback, or no analytic region) |
+| 3 | error: bad arguments or input, OCP missing (the message names `pip install unmesh[step]`), or nothing valid written |
+
+## Fidelity report
+
+`unmesh convert --report` and `Conversion.fidelity` produce the same JSON object, described by
+[`fidelity.schema.json`](fidelity.schema.json). It is versioned: `schema` is `"unmesh.fidelity"` and
+`version` is `1`. A new field may be added within a version, so readers must ignore fields they do
+not know (the schema allows extra properties); removing or renaming a field, or changing a field's
+meaning or unit, bumps the version. All lengths are in millimetres (`units`), after
+the `--unit` scaling. Every number is either measured or a bound computed from measured
+quantities, and says which; a quantity that was not measured is `null`, never a guess.
+
+| field | meaning |
+|---|---|
+| `schema`, `version`, `unmesh_version` | Format identity and the library version. |
+| `outcome`, `exit_code` | As in the table above. |
+| `units` | `"mm"`. |
+| `input` | `path`, `format` (`stl`, `obj` or `array`), `unit`, `scale_to_mm`, `triangles`, and the converter's `warnings` (`code`, `message`). |
+| `output` | `path`, and `written`: whether the file exists. |
+| `tolerances` | The IR's tolerances. |
+| `region_counts`, `analytic_area_fraction` | From the converter's `Report`. |
+| `deviation.converter` | `max` and `rms` from `Report`: a bound (`kind: "bound"`) on the distance between the input mesh and the IR's surfaces, both directions, computed from how far each vertex moved and the exact chord sagitta; the harness checks it never under-reports. |
+| `deviation.writer` | `max_vertex_displacement`, `max_boundary_deviation` and `max_shape_tolerance` from the `WriteReport`: how far the writer moved geometry from the IR. |
+| `deviation.measured` | `null` with `--no-measure` or when nothing valid was written. Otherwise the written STEP sampled against the input: it is re-imported and tessellated at `tessellation_deflection` (2e-5 of the input's bounding-box diagonal, 0.1 rad). `step_to_input` is the distance from each tessellation node (a point exactly on a written face) to the input triangles: a sampled lower bound on the true maximum. `input_to_step` is the distance from each input vertex to the tessellated faces, exact to within the deflection. Each has `max`, `mean`, `p99` and `samples`; `max` is the larger of the two maxima. |
+| `faces` | One entry per IR region: `region`, `surface`, `shell`, `triangles`, `written_as` (the surface type, or `triangles` for a `facets` region or after a fallback), `converter` (`max`, `rms` of the region's residual; `null` for `facets`) and `writer` (the region's `FaceReport`: `max_shape_tolerance`, `max_vertex_displacement`, `max_boundary_deviation`; `null` after a fallback). |
+| `faceted` | One entry per region written as triangles, with a `reason`: `no_surface_fit` (the converter fitted no plane, cylinder, cone, sphere or torus within tolerance), `open_shell` (an open component is kept as one `facets` region), `non_manifold` (the same, on a mesh with non-manifold edges), `assembly_failed` (the converter's analytic assembly failed validation and every shell was kept as facets), `facets_share` (the writer wrote the whole part faceted because `facets` regions held most of the triangles), `shell_failed` (the analytic solid failed construction or verification and the writer fell back; `validity.fallback_reason` says why). |
+| `validity` | `valid`, `verified`, `readback` (`ok`, `issues`, or `null`), `volume_checked_against_input`, `fallback`, `fallback_reason`, `solids`, `open_shells`, `issues`, and `edge_fallbacks` (`regions`, `kind`, `max_deviation`), from the `WriteReport`. |
+| `runtime_s` | Seconds per stage: `read`, `convert`, `write`, `readback`, `measure` (`null` when skipped) and `total`. |
+| `error` | `null`, or `type` and `message` when `outcome` is `error`. An error report raised before conversion has only the identity fields, `input`, `output`, `runtime_s` and `error`. |
 
 ## Rust: `unmesh-core`
 

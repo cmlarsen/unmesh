@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "name": "acceptance",
+  "corpus_grid": "standard",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "timeout_s": 60,
+  "input_deflection": [
+    0.01,
+    0.2
+  ],
+  "truth_deflection": [
+    0.001,
+    0.1
+  ],
+  "cells": [
+    {
+      "operator": "identity",
+      "severity": 0.0,
+      "steps": [],
+      "seeds": [
+        0
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "float32",
+      "severity": 0.5,
+      "steps": [
+        [
+          "float32",
+          0.5
+        ]
+      ],
+      "seeds": [
+        0
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "rotation",
+      "severity": 0.5,
+      "steps": [
+        [
+          "rotation",
+          0.5
+        ]
+      ],
+      "judge_truth": true
+    },
+    {
+      "operator": "noise_normal",
+      "severity": 0.02,
+      "steps": [
+        [
+          "noise_normal",
+          0.02
+        ]
+      ],
+      "judge_truth": true
+    }
+  ],
+  "judge_samples_per_mm2": 1.0,
+  "step_deviation_sample": [
+    2,
+    5
+  ],
+  "categories": [
+    "planar",
+    "curved",
+    "chamfer_fillet",
+    "complex",
+    "imported"
+  ],
+  "parts": [
+    "blind_bore-0000",
+    "blind_bore-0001",
+    "blind_bore-0006",
+    "bore_chamfer-0000",
+    "bore_chamfer-0001",
+    "bore_chamfer-0002",
+    "bore_chamfer-0003",
+    "boss_plate-0000",
+    "boss_plate-0001",
+    "circular_fillet-0000",
+    "circular_fillet-0001",
+    "circular_fillet-0002",
+    "circular_fillet-0003",
+    "complex_assembly-0000",
+    "complex_assembly-0001",
+    "complex_assembly-0002",
+    "complex_assembly-0003",
+    "complex_assembly-0004",
+    "complex_mixed-0000",
+    "complex_mixed-0001",
+    "complex_mixed-0002",
+    "complex_mixed-0003",
+    "complex_thin-0000",
+    "complex_thin-0001",
+    "complex_thin-0002",
+    "complex_thin-0003",
+    "complex_thin-0005",
+    "complex_thin-0009",
+    "complex_thin-0012",
+    "complex_void-0000",
+    "complex_void-0001",
+    "complex_void-0002",
+    "complex_void-0003",
+    "corner_fillet-0000",
+    "corner_fillet-0001",
+    "corner_fillet-0002",
+    "corner_fillet-0003",
+    "counterbore-0000",
+    "counterbore-0001",
+    "counterbore-0003",
+    "counterbore-0004",
+    "countersink-0000",
+    "countersink-0001",
+    "countersink-0003",
+    "countersink-0004",
+    "imported-0000",
+    "imported-0001",
+    "imported-0002",
+    "imported-0011",
+    "imported-0012",
+    "imported-0013",
+    "imported-0021",
+    "imported-0022",
+    "imported-0025",
+    "imported-0026",
+    "imported-0103",
+    "imported-0106",
+    "imported-0107",
+    "imported-0198",
+    "imported-0201",
+    "imported-0206",
+    "imported-0207",
+    "imported-0214",
+    "imported-0218",
+    "imported-0225",
+    "lshape_outline-0000",
+    "lshape_outline-0001",
+    "planar_chamfer-0000",
+    "planar_chamfer-0001",
+    "planar_chamfer-0002",
+    "planar_chamfer-0003",
+    "plate_pockets-0000",
+    "plate_pockets-0001",
+    "polygon_prism-0000",
+    "polygon_prism-0001",
+    "polygon_prism-0002",
+    "polygon_prism-0004",
+    "revolved_cone-0000",
+    "revolved_dome-0000",
+    "revolved_torus-0000",
+    "rotated_pockets-0000",
+    "rotated_pockets-0001",
+    "round_boss-0000",
+    "round_boss-0001",
+    "round_slot_blind-0000",
+    "round_slot_through-0000",
+    "round_slot_through-0001",
+    "square_slots-0000",
+    "square_slots-0001",
+    "stepped_block-0000",
+    "stepped_block-0001",
+    "straight_fillet-0000",
+    "straight_fillet-0001",
+    "straight_fillet-0002",
+    "straight_fillet-0003",
+    "thin_walls-0000",
+    "thin_walls-0001",
+    "through_bore-0000",
+    "through_cuts-0000",
+    "through_cuts-0003"
+  ]
+}

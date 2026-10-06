@@ -73,8 +73,48 @@ def _soup(mesh_or_path: MeshLike) -> np.ndarray:
             raise ValueError("face index out of range")
         return vertices[faces]
     if isinstance(mesh_or_path, str | os.PathLike):
-        return _core.read_stl(mesh_or_path)
+        return read_mesh(mesh_or_path)
     return mesh_or_path
+
+
+def read_mesh(path: str | os.PathLike) -> np.ndarray:
+    if os.fspath(path).lower().endswith(".obj"):
+        return _read_obj(path)
+    return _core.read_stl(path)
+
+
+def _obj_index(token: str, count: int) -> int:
+    i = int(token.split("/", 1)[0])
+    if i == 0:
+        raise ValueError("OBJ face index 0 is not valid (indices start at 1)")
+    return i - 1 if i > 0 else count + i
+
+
+def _read_obj(path: str | os.PathLike) -> np.ndarray:
+    vertices: list[tuple[float, float, float]] = []
+    tris: list[tuple[int, int, int]] = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for number, line in enumerate(f, 1):
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                if parts[0] == "v":
+                    vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                elif parts[0] == "f":
+                    ids = [_obj_index(t, len(vertices)) for t in parts[1:]]
+                    if len(ids) < 3:
+                        raise ValueError("a face needs at least three vertices")
+                    tris.extend((ids[0], ids[k], ids[k + 1]) for k in range(1, len(ids) - 1))
+            except (ValueError, IndexError) as e:
+                raise ValueError(f"{os.fspath(path)}:{number}: malformed OBJ line: {e}") from None
+    if not tris:
+        raise ValueError(f"{os.fspath(path)}: OBJ file has no faces")
+    v = np.asarray(vertices, dtype=np.float64)
+    f = np.asarray(tris, dtype=np.int64)
+    if f.min() < 0 or f.max() >= len(v):
+        raise ValueError(f"{os.fspath(path)}: OBJ face index out of range")
+    return v[f]
 
 
 def convert(mesh_or_path: MeshLike, options: ConvertOptions | None = None) -> Result:
@@ -84,7 +124,7 @@ def convert(mesh_or_path: MeshLike, options: ConvertOptions | None = None) -> Re
         text, raw = _core.convert_indexed(vertices, faces, *args)
     else:
         if isinstance(mesh_or_path, str | os.PathLike):
-            tris = _core.read_stl(mesh_or_path)
+            tris = read_mesh(mesh_or_path)
         else:
             tris = mesh_or_path
         text, raw = _core.convert_soup(tris, *args)

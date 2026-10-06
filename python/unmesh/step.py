@@ -16,6 +16,16 @@ FLUX_DEFLECTION = 1e-4
 FLUX_RELATIVE = 1e-9
 
 
+INSTALL_HINT = "unmesh.step needs OCP; install it with `pip install unmesh[step]`"
+
+
+def require_ocp() -> None:
+    try:
+        from unmesh._writer import faceted, occ, topology  # noqa: F401
+    except ImportError as e:
+        raise ImportError(INSTALL_HINT) from e
+
+
 @dataclass(frozen=True)
 class WriteOptions:
     max_shape_tolerance: float = 1e-3
@@ -138,9 +148,9 @@ def _triangles(mesh) -> np.ndarray:
         f = np.asarray(mesh[1], dtype=np.int64)
         tris = v[f]
     elif isinstance(mesh, (str, os.PathLike)):
-        from unmesh import read_stl
+        from unmesh.api import read_mesh
 
-        tris = read_stl(mesh)
+        tris = read_mesh(mesh)
     else:
         tris = np.asarray(mesh, dtype=float)
     if tris.ndim != 3 or tris.shape[1:] != (3, 3):
@@ -542,12 +552,8 @@ def write(
     started = time.perf_counter()
     ir.validate()
     options = options or WriteOptions()
-    try:
-        from unmesh._writer import faceted, occ, topology
-    except ImportError as e:
-        raise ImportError(
-            "unmesh.step needs OCP; install it with `pip install unmesh[step]`"
-        ) from e
+    require_ocp()
+    from unmesh._writer import faceted, occ, topology
 
     n_outer = sum(1 for s in ir.shells if s.role == "outer")
     tris = _triangles(mesh) if mesh is not None else None
