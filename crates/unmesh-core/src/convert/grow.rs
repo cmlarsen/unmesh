@@ -29,6 +29,10 @@ const DOUBLY_RATIO: f64 = 0.01;
 const PASSES: usize = 3;
 const WIDEN_REL: f64 = 0.1;
 
+/// A growth round's regions, which of them become facets, whether it
+/// changed anything, and whether another round could.
+type Round = ((Grown, Vec<bool>), (bool, bool));
+
 pub struct Grown {
     pub label: Vec<u32>,
     pub regions: Vec<Region>,
@@ -1009,7 +1013,7 @@ fn pass(
     preset: Vec<(usize, Single)>,
     sticky: &[bool],
     tol: f64,
-) -> Result<((Grown, Vec<bool>), (bool, bool)), Grown> {
+) -> Result<Round, Grown> {
     super::timing::sub_start();
     let pairs = region_pairs(nbr, label);
     let n = regions.len();
