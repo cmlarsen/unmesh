@@ -14,6 +14,7 @@ mod refine;
 mod segment;
 mod snap;
 mod surface;
+mod tangency;
 mod timing;
 mod topology;
 mod weld;
@@ -245,7 +246,19 @@ fn finish(
     timing::lap("snap");
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
-    let (finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
+    let (mut finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
+    tangency::snap(
+        tangency::Args {
+            vc: &w.vc,
+            faces: &w.faces,
+            nbr: &shells.topo.nbr,
+            info,
+            flabel: &flabel,
+            tol,
+            threshold_deg: options.tangent_threshold_deg,
+        },
+        &mut finals,
+    );
     timing::lap("finalize");
 
     let Projected {
