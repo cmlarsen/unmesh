@@ -493,7 +493,8 @@ all meet it at smooth creases; a cylinder or cone group with two other cylinder 
 sharing 15% of its boundary is a slice of a sphere or torus that was not recovered (rings of a torus
 are cones) and becomes `facets` too. Last, a region of at most two triangles that is not curved
 joins an adjacent curved region when that surface passes within `tolerances.linear` of each of its
-vertices and the region's own largest chord sagitta (or the tolerance, if larger) bounds the remnant's:
+vertices and the region's own largest chord sagitta (or the tolerance, if larger), plus the remnant's
+largest vertex distance (noise lifts a chord's sagitta by up to that much), bounds the remnant's:
 the long slivers a tessellator leaves where a curved face meets another (a bore through a cone) have
 every corner on the surface and a sagitta like their neighbours', which growth refused. A flat cut into
 the surface (a D-flat on a boss or in a bore) also has its corners on it, but its sagitta is the flat's
