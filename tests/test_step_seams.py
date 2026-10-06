@@ -240,3 +240,23 @@ def test_a_seam_split_never_folds_a_triangle(tmp_path, monkeypatch):
     report = step.write(ir, tmp_path / "fold.step", mesh=tris)
     assert report.fallback == "faceted"
     assert "folds a facets triangle" in report.fallback_reason
+
+
+def test_only_moves_the_ir_records_are_excused_at_patch_corners():
+    ir, tris, region = _largest_patch("corner_fillet", 3, interior=True)
+    patch = ir.regions[region].surface
+    corners = np.asarray(patch.vertices, dtype=float)[np.asarray(patch.faces, dtype=np.int64)]
+    vertex = next(v for v in ir.vertices if region in v.regions)
+    shifted = np.asarray(vertex.position) + np.array([0.0, 0.0, 0.3])
+    vertex.source_positions = [tuple(shifted)]
+    claimed = step._recorded_moves(ir, region, corners)
+    at_vertex = np.all(corners == np.asarray(vertex.position), axis=2)
+    assert at_vertex.any()
+    assert np.allclose(claimed[at_vertex], 0.3)
+    surfaces = [
+        ir.regions[a + b - region]
+        for a, b in (adj.regions for adj in ir.adjacencies)
+        if region in (a, b)
+    ]
+    bound = max(s.residual.max for s in surfaces if s.residual is not None)
+    assert claimed[~at_vertex].max() <= bound
