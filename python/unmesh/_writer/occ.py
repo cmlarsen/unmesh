@@ -404,3 +404,31 @@ def fix_shape(shape):
     fix = ShapeFix_Shape(shape)
     fix.Perform()
     return fix.Shape(), fix.Context()
+
+
+def tessellate(shape, linear: float, angular: float) -> tuple[np.ndarray, np.ndarray]:
+    shape = BRepBuilderAPI_Copy(shape).Shape()
+    BRepMesh_IncrementalMesh(shape, linear, False, angular, True)
+    nodes, tris = [], []
+    for face in _faces_of(shape):
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(face, loc)
+        if tri is None:
+            raise RuntimeError("a written face has no triangulation")
+        trsf = loc.Transformation()
+        pts = np.array(
+            [tri.Node(i).Transformed(trsf).Coord() for i in range(1, tri.NbNodes() + 1)],
+            dtype=np.float64,
+        ).reshape(-1, 3)
+        idx = np.array(
+            [
+                [tri.Triangle(j).Value(k) - 1 for k in (1, 2, 3)]
+                for j in range(1, tri.NbTriangles() + 1)
+            ],
+            dtype=np.int64,
+        ).reshape(-1, 3)
+        nodes.append(pts)
+        tris.append(pts[idx])
+    if not nodes:
+        return np.zeros((0, 3)), np.zeros((0, 3, 3))
+    return np.concatenate(nodes), np.concatenate(tris)
