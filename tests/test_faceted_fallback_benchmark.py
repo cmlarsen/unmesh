@@ -1,4 +1,7 @@
 import copy
+import json
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -164,7 +167,72 @@ def test_faceted_fallback_timings(shape, target, tmp_path):
     )
     assert report.fallback == "faceted"
     assert report.valid
-    assert report.verified and report.readback.ok
-    assert report.readback.volume == pytest.approx(expected, rel=1e-9)
+    assert report.verified and report.text_check.ok
+    assert report.text_check.volume == pytest.approx(expected, rel=1e-9)
+    if report.readback is not None:
+        assert report.verified_by == "occt+text" and report.readback.ok
+        assert report.readback.volume == pytest.approx(expected, rel=1e-9)
+    else:
+        assert report.verified_by == "text" and report.readback_skipped
     if target <= 100_000:
         assert write_s < 10.0
+
+
+IMPORTED_VERIFY_S = 30.0
+IMPORTED_PEAK_RSS_MB = 2048.0
+WRITE_IN_A_FRESH_PROCESS = """
+import json, resource, sys
+import unmesh, unmesh.step as step
+from unmesh.ir import Ir
+stl, ir_path, out = sys.argv[1:4]
+tris = unmesh.read_stl(stl)
+ir = Ir.loads(open(ir_path).read())
+r = step.write(ir, out, mesh=tris)
+peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak /= 2**20 if sys.platform == "darwin" else 2**10
+print(json.dumps({
+    "valid": r.valid, "fallback": r.fallback, "verified_by": r.verified_by,
+    "timings": r.timings, "peak_rss_mb": peak, "triangles": len(tris),
+    "volume": r.text_check.volume if r.text_check else None,
+}))
+"""
+
+
+@pytest.mark.benchmark
+def test_large_imported_faceted_write_is_verified_in_bounded_time_and_memory(tmp_path):
+    from unmesh_harness.corpus import load_manifest
+    from unmesh_harness.imported import cached_step_record, load_imported_shape
+    from unmesh_harness.labels import tessellate
+
+    entry = next(e for e in load_manifest()["entries"] if e["id"] == "imported-0201")
+    try:
+        cached_step_record(entry["source"])
+    except (FileNotFoundError, KeyError):
+        pytest.skip("imported-0201 is not in the dataset cache (scripts/fetch-datasets)")
+    mesh = tessellate(load_imported_shape(entry), 0.01, 0.2)
+    stl = tmp_path / "part.stl"
+    mesh.write_stl(stl)
+    tris = unmesh.read_stl(stl)
+    ir, _ = unmesh.convert(tris)
+    (tmp_path / "part.json").write_text(ir.dumps())
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            WRITE_IN_A_FRESH_PROCESS,
+            str(stl),
+            str(tmp_path / "part.json"),
+            str(tmp_path / "part.step"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(done.stdout.strip().splitlines()[-1])
+    print(f"[benchmark] imported-0201 {result}")
+    assert result["triangles"] > 390_000
+    assert result["fallback"] == "faceted" and result["valid"]
+    assert result["verified_by"] == "text"
+    assert result["volume"] == pytest.approx(signed_volume(tris), rel=1e-6)
+    assert result["timings"]["readback_s"] < IMPORTED_VERIFY_S
+    assert result["peak_rss_mb"] < IMPORTED_PEAK_RSS_MB

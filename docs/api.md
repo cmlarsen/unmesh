@@ -107,6 +107,7 @@ it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 - `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
 - `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
 - `max_seam_gap` (default `1e-4`, absolute): the largest distance a straight seam edge between a `facets` patch and a curved face may keep from the curved surface. Patch boundary chords are subdivided until every piece is within it.
+- `readback_memory_mb` (default `2048`) and `readback_timeout_s` (default `120`): the memory cap and timeout of the OCCT read-back process (see below).
 
 `mesh` is the source mesh the IR was converted from, in any form `convert` accepts (path, `(n, 3, 3)`
 array, `(vertices, faces)` tuple). The IR does not embed the mesh, and analytic regions carry no
@@ -251,17 +252,63 @@ across the long edge (repeated until none is left, so adjacent zero-area triangl
 every solid from the first face whose probe ray gives a decisive answer, and on a rough, locally folded
 mesh a probe from an arbitrary face can land on a fold and invert the solid; a hull face's probe cannot.
 
-After writing, `write` re-imports the file with OCCT's default STEP reader (healing on, as a consumer
-would read it) and compares the solid count, the shell count, and each solid's volume and validity with
+After writing, `write` verifies the file it wrote, in up to two independent ways, and says which ran
+in `verified_by`.
+
+**OCCT read-back** re-imports the file with OCCT's STEP reader, with healing on, as a consumer would
+read it, and compares the solid count, the shell count, and each solid's volume and validity with
 what it wrote. The volume tolerance is `1e-9 * |V| + area * shape tolerance`. Curved solids are
 measured with OCCT's adaptive volume integration at precision 1e-9 (the default fixed-order rule was
 off by 0.6% on faces bounded by kinked B-spline edges); planar and faceted solids use the default.
-Any mismatch makes the report invalid and is named in `readback.issues`, `issues` and the shell's
-`issues`; the file is left on disk. For the faceted fallback, `shells[*].volume` and
-`max_shape_tolerance` are the re-imported values. The read-back is on by default because OCCT-based
-consumers (OttoCAM, FreeCAD) read through the same healing that can invert a file; reading with healing
-off would miss exactly that. `verify=False` skips it for callers that accept unverified output: the
-report then has `verified=False`, `readback=None`, and `valid` covers construction only.
+A file of up to 4 MB is re-imported in the calling process with the default healing (`reader`
+`"occt"`). A larger file is re-imported in a short-lived child process (the same Python executable),
+so the memory OCCT keeps is returned when it exits; the child is killed when its resident memory
+passes `readback_memory_mb` or it runs past `readback_timeout_s`, and `readback.peak_rss_mb` records
+the largest resident memory sampled. In the child, a faceted file is read with every healing step
+except `ShapeFix_Shell`'s face-orientation repair (`reader` `"occt_no_face_orientation"`): that
+repair is quadratic in the face count (478 s for the 108k-face imported-0207 with `noise_normal`,
+more than 15 minutes for the 387k-face imported-0201), and the text check below proves that every
+closed shell's faces are already consistently oriented, so on a file that passes it the repair has
+nothing to do. The solid-orientation step that #81 found can invert a rough shell still runs.
+
+**Text check** (faceted fallback only) parses the written STEP text with unmesh's own parser,
+independently of OCCT and of the writer's data. It accepts only the entities the faceted writer
+emits (any other entity, a `FACE_BOUND`, a reversed bound, a malformed reference or a reference
+to the wrong kind of entity fails it) and checks: every edge loop is connected, every face's loop
+lies within `max_shape_tolerance` of its plane and winds counter-clockwise about the plane's
+normal, every edge of a closed shell
+is used exactly once in each direction and by no other shell, every edge of an open shell at most
+once in each direction, every face is in exactly one shell and every closed shell in exactly one
+solid, the outer shell of each solid encloses a positive volume and each void a negative one, and
+each solid's signed volume (the divergence sum over its polygon faces) matches the volume written
+from the mesh within the read-back tolerance. Its result is `text_check`, a `ReadBack` with `reader`
+`"text"`; its `max_shape_tolerance` analogue is the largest distance of a vertex from its face's
+plane or its edge's line.
+
+A faceted file whose OCCT read-back would need more than `readback_memory_mb` (estimated as
+300 MB plus 26 times the file size, measured at 25 times on 55 MB and 104 MB faceted files) is
+verified by the text check alone: `verified_by` is `"text"` and `readback_skipped` says why. A faceted
+read-back stopped by the memory cap or the timeout is likewise reported in `readback_skipped`, with
+the text check as the verification. The residual risk of text-only verification is the one the
+read-back exists for: an OCCT reader whose healing inverts or rejects the file (#81) goes unnoticed.
+Faces on the convex hull are written first so that the solid-orientation probe cannot land on a fold,
+which is what inverted the #81 files. An analytic or mixed file has no text check, so a read-back
+stopped by the cap or the timeout leaves it unverified: `verified_by` is `None`, `valid` is `False`
+and `issues` says why.
+
+Measured on an M-series Mac under load, before and after (#106): imported-0201 (393,588 triangles,
+a 347 MB faceted file) went from more than 15 minutes of read-back to 15 s of text check, with the
+whole write peaking at 1.1 GB instead of 2.6 GB before any read-back; imported-0207 with
+`noise_normal` (108,668 triangles) from 478 s and 2.4 GB to 3 s and 0.7 GB.
+
+Any mismatch makes the report invalid and is named in `readback.issues` or `text_check.issues`,
+`issues` and the shell's `issues`; the file is left on disk. For the faceted fallback,
+`shells[*].volume` is the re-imported volume (the parsed one when OCCT did not run) and
+`max_shape_tolerance` the re-imported tolerance. The verification is on by default because
+OCCT-based consumers (OttoCAM, FreeCAD) read through the same healing that can invert a file.
+`verify=False` skips it for callers that accept unverified output: the report then has
+`verified=False`, `verified_by=None`, `readback=None`, `text_check=None`, and `valid` covers
+construction only.
 
 `write` does not raise for a hard IR. It raises only for I/O errors and for an `ir` that fails
 `Ir.validate()`.
@@ -284,11 +331,14 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `seams` | `SeamReport(regions, surface_type, points, max_gap, chord_gap, inserted, tolerance)` for each facets/analytic boundary. Next to a plane, `max_gap` is the largest distance from the boundary points to the plane and the rest are 0. Next to a curved surface, `max_gap` is the largest distance from the written seam edges to the surface, `chord_gap` the same for the unsplit boundary chords (the gap the subdivision closed), `inserted` the number of points added, and `tolerance` the largest tolerance of the seam's edges. |
 | `faceted_regions` | Number of regions written as triangle faces: the `facets` regions of a mixed solid, or every region after a faceted fallback. |
 | `faceted_faces` | Number of triangle faces written for `facets` regions, after seam splits (0 after a faceted fallback). |
-| `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
-| `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
-| `verified` | Whether the written file was re-imported and checked. |
+| `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, any read-back or text-check mismatch, and a write that could not be verified. |
+| `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues, reader, peak_rss_mb)` from re-importing the written file with OCCT, or `None` when nothing was written, `verify=False`, or the read-back was skipped or stopped. `reader` is `"occt"` or `"occt_no_face_orientation"`; `peak_rss_mb` is the child process's largest sampled resident memory (`None` in-process). |
+| `text_check` | The same `ReadBack` from the text check (`reader` `"text"`, faceted fallback only), or `None`. |
+| `verified` | Whether any verification of the written file ran. |
+| `verified_by` | `"occt"`, `"text"`, `"occt+text"`, or `None` when nothing was verified. |
+| `readback_skipped` | Why the OCCT read-back did not run or did not finish (its estimated memory over the cap, the cap reached, the timeout), else `None`. |
 | `volume_checked_against_input` | Whether `mesh` was given, so each written solid's volume was compared with the input mesh's (or is the mesh, after a faceted fallback). |
-| `timings` | Seconds: `write_s` (everything up to the written file) and `readback_s` (the verification), when they ran. |
+| `timings` | Seconds: `write_s` (everything up to the written file) and `readback_s` (the whole verification: text check and read-back), when they ran. |
 
 ### `unmesh.ir`
 
