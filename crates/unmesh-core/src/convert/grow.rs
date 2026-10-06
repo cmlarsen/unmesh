@@ -797,6 +797,7 @@ pub fn run(
     regions: Vec<Region>,
     tol: f64,
 ) -> Grown {
+    super::timing::sub_start();
     let pairs = region_pairs(nbr, label);
     let Some(g) = graph(&regions, &pairs, tol) else {
         return Grown {
@@ -859,7 +860,7 @@ pub fn run(
             seeded[r as usize] = true;
         }
     }
-    super::timing::lap("grow.doubly");
+    super::timing::sub_lap("grow.doubly");
     let junction = Junction::new(nbr, label, &groups);
     let mut failed: FxHashMap<Vec<u32>, f64> = FxHashMap::default();
     for s in 0..n as u32 {
@@ -909,14 +910,14 @@ pub fn run(
             }
         }
     }
-    super::timing::lap("grow.seed");
+    super::timing::sub_lap("grow.seed");
     let mut near: Vec<Vec<u32>> = vec![Vec::new(); n];
     for &(a, b) in &pairs {
         near[a as usize].push(b);
         near[b as usize].push(a);
     }
     let groups = merge_groups(&mut pool, &near, groups, &owner, tol);
-    super::timing::lap("grow.merge");
+    super::timing::sub_lap("grow.merge");
     let groups: Vec<Group> = groups
         .into_iter()
         .filter(|grp| grp.members.len() >= MIN_MEMBERS && grp.fit.4 <= tol)
@@ -946,7 +947,7 @@ pub fn run(
         })
         .collect();
 
-    super::timing::lap("grow.final");
+    super::timing::sub_lap("grow.final");
     let mut face_group = vec![NONE; faces.len()];
     for (gi, grp) in groups.iter().enumerate() {
         if sliced[gi] {
@@ -970,7 +971,7 @@ pub fn run(
         &sliced,
         tol,
     );
-    super::timing::lap("grow.peel");
+    super::timing::sub_lap("grow.peel");
     join_touching(
         &mut pool,
         nbr,
@@ -982,7 +983,7 @@ pub fn run(
         tol,
     );
 
-    super::timing::lap("grow.join");
+    super::timing::sub_lap("grow.join");
     let mut out: Vec<Region> = Vec::new();
     let mut out_label = vec![NONE; faces.len()];
     let mut prefit = Vec::new();
