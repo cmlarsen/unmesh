@@ -30,13 +30,13 @@ def _write_report(wr) -> dict:
 
 
 def convert_unmesh(stl_path: Path) -> ConverterResult:
-    from unmesh import step
+    from unmesh.pipeline import convert_to_step
 
-    tris = unmesh.read_stl(stl_path)
-    ir, report = unmesh.convert(tris)
     step_path = Path(stl_path).with_suffix(".step")
-    wr = step.write(ir, step_path, mesh=tris)
+    conversion = convert_to_step(stl_path, step_path, measure=False)
+    ir, report, wr = conversion.ir, conversion.report, conversion.write
     payload = {
+        "outcome": conversion.outcome,
         "max_deviation": report.max_deviation,
         "rms_deviation": report.rms_deviation,
         "analytic_area_fraction": report.analytic_area_fraction,
