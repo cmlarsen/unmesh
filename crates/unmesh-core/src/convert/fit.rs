@@ -33,6 +33,7 @@ fn has_crease(
     false
 }
 
+#[derive(Clone)]
 pub struct Region {
     pub faces: Vec<u32>,
     pub surface: Surface,

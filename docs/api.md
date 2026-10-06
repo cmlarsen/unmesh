@@ -465,12 +465,18 @@ region and its two most opposed smooth neighbours, extended along the same turni
 24 or 48 vertices (a short arc of a staggered cone band does not determine its axis); it is fitted from
 the normal-scatter and circle estimates, plus, for cones, an apex and half-angle solved linearly from the
 vertices about an axis taken from the normals or from the rows of vertices (each row a circle across the
-axis). The group then absorbs neighbouring regions whose vertices are within `tolerances.linear` of the
+axis). Under noise a short arc of a narrow cone band also fits a tilted cylinder, so a seed whose largest
+residual exceeds a tenth of `tolerances.linear` keeps widening to the larger sizes while one surface still
+fits it, and on such a widened chain (or a chain of 48 vertices or more whose plane regions are themselves
+noisy) a cone is also refined from its normal-based estimate when the cheap screen rejects it. The group
+then absorbs neighbouring regions whose vertices are within `tolerances.linear` of the
 surface, whose plane normal lies within the spread of the surface normals over its vertices, and whose
 chord sagitta is at most 16 times the group's median: tessellated curves cut every chord at a similar
 deflection, while a flat face is never absorbed into a large cylinder through its four edges (the side
 of a rounded rectangle and the strips beside it always lie on one). A stalled group is refitted and
-retries what it rejected; adjacent groups that fit one surface are joined; the result is refitted
+retries what it rejected (three times, or for as long as the retries keep adding regions); adjacent groups
+are joined when the surface of either, or a fresh fit of their union (a cylinder or cone, else a cone
+refined from its normals), holds both; the result is refitted
 (tessellation law included) and joins the coaxial snapping above. On a sphere or a torus the normal
 test allows twice the spread plus the chord sagitta across the facet's width (a facet whose corners sit
 on different rings tilts beyond the normals at its corners, and a sliver's normal is set by how far its
@@ -479,7 +485,10 @@ Where two surfaces meet tangentially the planar stage can join a strip of one wi
 or keep a few nearly coplanar triangles of a sphere or torus together, so that region fits neither:
 afterwards each triangle of an ungrouped region of at most 64 triangles moves into an adjacent curved
 group it fits as members do, and groups that then touch are joined when one refitted surface holds
-both. A flagged region left ungrouped becomes `facets`, as does a lone triangle whose three neighbours
+both. Under noise (a seed fit whose rms exceeds a tenth of `tolerances.linear`) such a strip never joins a
+cylinder or cone group while it holds a triangle that fits the adjacent sphere or torus group; instead growth runs again (up to three rounds) once those triangles have moved: the
+groups of earlier rounds come in fixed, grow into the plane regions beside them and join new groups, and
+lone triangles flagged `facets` are planes again until a round leaves them ungrouped. A flagged region left ungrouped becomes `facets`, as does a lone triangle whose three neighbours
 all meet it at smooth creases; a cylinder or cone group with two other cylinder or cone groups each
 sharing 15% of its boundary is a slice of a sphere or torus that was not recovered (rings of a torus
 are cones) and becomes `facets` too. Last, a region of at most two triangles that is not curved
