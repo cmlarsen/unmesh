@@ -1014,6 +1014,43 @@ pub fn fit_quick(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Result
     }
 }
 
+/// A cone refined from the normal-based estimate whatever its initial
+/// residual, kept going only if one short round brings it within `gate`:
+/// under noise that estimate can start far off on a narrow band that a cone
+/// still fits.
+pub fn fit_cone_ungated(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Option<Single> {
+    let (axis, alpha) = init_cone(pts, tris)?;
+    let m = [Member {
+        pts: pts.to_vec(),
+        kind: Kind::Cone { sign: 1.0 },
+        slot: 0,
+    }];
+    let free = [false, false];
+    let q = fit_joint_with(
+        &m,
+        axis,
+        vec![0.0, alpha],
+        &free,
+        false,
+        tol,
+        1,
+        QUICK_ITERS,
+    );
+    if q.fit[0].1 > gate {
+        return None;
+    }
+    let j = fit_joint(&m, q.axis, q.shape, &free, false, tol);
+    let (rms, max) = j.fit[0];
+    (max <= tol && valid_shape(&j.shape, &m[0])).then_some((
+        Kind::Cone { sign: 1.0 },
+        j.axis,
+        j.shape,
+        rms,
+        max,
+        false,
+    ))
+}
+
 /// `fit_single`, skipping the refinement of any initial estimate whose
 /// largest vertex residual exceeds `gate` (the estimates are exact on exact
 /// chord facets, so a large residual means the region is not that surface).
