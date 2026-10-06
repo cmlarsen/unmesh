@@ -13,6 +13,9 @@ _LIST = r"\(([#\d,]+)\)"
 _REAL = r"([-+0-9.Ee]+)"
 _BOOL = r"\.([TF])\."
 
+_STRING = r"'(?:[^'\n\\]|'')*'"
+_UNITS = r"\(\(#(\d+),#(\d+),#(\d+)\)\)"
+
 _KINDS = {
     "point": rf"CARTESIAN_POINT\('',\({_REAL},{_REAL},{_REAL}\)\)",
     "direction": rf"DIRECTION\('',\({_REAL},{_REAL},{_REAL}\)\)",
@@ -34,30 +37,59 @@ _KINDS = {
     "brep_rep": rf"ADVANCED_BREP_SHAPE_REPRESENTATION\('',{_LIST},{_REF}\)",
     "surface_model": rf"SHELL_BASED_SURFACE_MODEL\('',{_LIST}\)",
     "surface_rep": rf"MANIFOLD_SURFACE_SHAPE_REPRESENTATION\('',{_LIST},{_REF}\)",
+    "application": r"APPLICATION_CONTEXT\('core data for automotive mechanical design processes'\)",
+    "protocol": rf"APPLICATION_PROTOCOL_DEFINITION\('international standard',"
+    rf"'automotive_design',2000,{_REF}\)",
+    "product_context": rf"PRODUCT_CONTEXT\('',{_REF},'mechanical'\)",
+    "product": rf"PRODUCT\({_STRING},{_STRING},'',\({_REF}\)\)",
+    "category": rf"PRODUCT_RELATED_PRODUCT_CATEGORY\('part',\$,\({_REF}\)\)",
+    "formation": rf"PRODUCT_DEFINITION_FORMATION\('','',{_REF}\)",
+    "definition_context": rf"PRODUCT_DEFINITION_CONTEXT\('part definition',{_REF},'design'\)",
+    "definition": rf"PRODUCT_DEFINITION\('design','',{_REF},{_REF}\)",
+    "definition_shape": rf"PRODUCT_DEFINITION_SHAPE\('','',{_REF}\)",
+    "uncertainty": rf"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\({_REAL}\),{_REF},"
+    r"'distance_accuracy_value','confusion accuracy'\)",
+    "shape_definition": rf"SHAPE_DEFINITION_REPRESENTATION\({_REF},{_REF}\)",
+    "relationship": rf"SHAPE_REPRESENTATION_RELATIONSHIP\('','',{_REF},{_REF}\)",
+    "length_unit": r"\( LENGTH_UNIT\(\) NAMED_UNIT\(\*\) SI_UNIT\(\.MILLI\.,\.METRE\.\) \)",
+    "angle_unit": r"\( NAMED_UNIT\(\*\) PLANE_ANGLE_UNIT\(\) SI_UNIT\(\$,\.RADIAN\.\) \)",
+    "solid_angle_unit": r"\( NAMED_UNIT\(\*\) SI_UNIT\(\$,\.STERADIAN\.\) SOLID_ANGLE_UNIT\(\) \)",
+    "context": rf"\( GEOMETRIC_REPRESENTATION_CONTEXT\(3\) "
+    rf"GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT\(\({_REF}\)\) GLOBAL_UNIT_ASSIGNED_CONTEXT{_UNITS} "
+    r"REPRESENTATION_CONTEXT\('Context #1','3D Context with UNIT and UNCERTAINTY'\) \)",
 }
-_CONTEXT = (
-    "APPLICATION_CONTEXT",
-    "APPLICATION_PROTOCOL_DEFINITION",
-    "PRODUCT_CONTEXT",
-    "PRODUCT",
-    "PRODUCT_RELATED_PRODUCT_CATEGORY",
-    "PRODUCT_DEFINITION_FORMATION",
-    "PRODUCT_DEFINITION_CONTEXT",
-    "PRODUCT_DEFINITION",
-    "PRODUCT_DEFINITION_SHAPE",
-    "UNCERTAINTY_MEASURE_WITH_UNIT",
-    "SHAPE_DEFINITION_REPRESENTATION",
-    "SHAPE_REPRESENTATION_RELATIONSHIP",
+_COMPLEX = ("length_unit", "angle_unit", "solid_angle_unit", "context")
+_SINGLE = (
+    "application",
+    "protocol",
+    "product_context",
+    "product",
+    "category",
+    "formation",
+    "definition_context",
+    "definition",
+    "definition_shape",
+    "uncertainty",
+    "shape_definition",
+    *_COMPLEX,
 )
 _PATTERNS = {k: re.compile(_ID + v + r";(?=\n)") for k, v in _KINDS.items()}
-_NAMES = {v.split("\\(")[0]: k for k, v in _KINDS.items()}
+_NAMES = {v.split("\\(")[0]: k for k, v in _KINDS.items() if k not in _COMPLEX}
 _COMMON = list(_KINDS)[:12]
 _RARE = re.compile(
     _ID
     + "("
-    + "|".join([*(n for n, k in _NAMES.items() if k not in _COMMON), *_CONTEXT, ""])
+    + "|".join([*(n for n, k in _NAMES.items() if k not in _COMMON), ""])
     + r")\(([^\n]*)\);(?=\n)"
 )
+_HEADER = re.compile(
+    r"ISO-10303-21;\nHEADER;\n"
+    r"FILE_DESCRIPTION\(\('unmesh faceted solid'\),'2;1'\);\n"
+    rf"FILE_NAME\({_STRING},'[0-9T:-]+',\(''\),\(''\),'unmesh','unmesh',''\);\n"
+    r"FILE_SCHEMA\(\('AUTOMOTIVE_DESIGN \{ 1 0 10303 214 1 1 1 1 \}'\)\);\n"
+    r"ENDSEC;\nDATA;\n"
+)
+_FOOTER = b"ENDSEC;\nEND-ISO-10303-21;\n"
 _LISTS = {
     "loop": 1,
     "closed_shell": 1,
@@ -67,7 +99,7 @@ _LISTS = {
     "surface_model": 1,
     "surface_rep": 1,
 }
-_FLOATS = {"point", "direction", "vector"}
+_FLOATS = {"point", "direction", "vector", "uncertainty"}
 
 
 class _Bad(Exception):
@@ -97,17 +129,32 @@ class _Table:
     lists: list = field(default_factory=list)
 
 
-def _chunks(path):
+def _sections(path) -> tuple[int, int]:
+    size = os.path.getsize(path)
     with open(path, "rb") as fh:
-        tail = b"\n"
-        while True:
-            block = fh.read(CHUNK)
-            if not block:
-                if tail.strip():
-                    yield tail.decode("ascii")
-                return
-            block = tail + block
-            cut = block.rfind(b"\n")
+        head = fh.read(4096).decode("ascii", "replace")
+        fh.seek(max(size - len(_FOOTER), 0))
+        tail = fh.read()
+    m = _HEADER.match(head)
+    if m is None:
+        raise _Bad("the file does not start with the faceted writer's Part 21 header")
+    if tail != _FOOTER or size - len(_FOOTER) < m.end():
+        raise _Bad("the file does not end with ENDSEC; END-ISO-10303-21; (truncated?)")
+    return m.end() - 1, size - len(_FOOTER)
+
+
+def _chunks(path, start: int, end: int):
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        left = end - start
+        tail = b""
+        while left > 0:
+            block = tail + fh.read(min(CHUNK, left))
+            left = end - fh.tell()
+            cut = block.rfind(b"\n") if left > 0 else len(block) - 1
+            if cut <= 0:
+                tail = block
+                continue
             yield block[: cut + 1].decode("ascii")
             tail = block[cut:]
 
@@ -115,21 +162,25 @@ def _chunks(path):
 def _parse(path) -> tuple[dict[str, _Table], int, int]:
     tables = {k: _Table() for k in _KINDS}
     total = matched = 0
-    for text in _chunks(path):
-        total += text.count("\n#")
+    start, end = _sections(path)
+    for text in _chunks(path, start, end):
+        if not text.startswith("\n") or not text.endswith("\n"):
+            raise _Bad("the DATA section is not made of whole lines")
+        total += text.count("\n") - 1
         for kind in _COMMON:
             rows = _PATTERNS[kind].findall(text)
             matched += len(rows)
             _add(tables[kind], kind, rows)
         rare: dict[str, list] = {}
         for ref, name, args in _RARE.findall(text):
-            kind = _NAMES.get(name)
-            if kind is None:
-                matched += 1
-                continue
-            rows = _PATTERNS[kind].findall(f"\n#{ref} = {name}({args});\n")
-            matched += len(rows)
-            rare.setdefault(kind, []).extend(rows)
+            line = f"\n#{ref} = {name}({args});\n"
+            kinds = [_NAMES[name]] if name else _COMPLEX
+            for kind in kinds:
+                rows = _PATTERNS[kind].findall(line)
+                if rows:
+                    matched += len(rows)
+                    rare.setdefault(kind, []).extend(rows)
+                    break
         for kind, rows in rare.items():
             _add(tables[kind], kind, rows)
     return tables, total, matched
@@ -138,6 +189,8 @@ def _parse(path) -> tuple[dict[str, _Table], int, int]:
 def _add(t: _Table, kind: str, rows: list) -> None:
     if not rows:
         return
+    if isinstance(rows[0], str):
+        rows = [(r,) for r in rows]
     if kind in _LISTS:
         at = _LISTS[kind]
         t.ids.append(np.array([r[0] for r in rows], dtype=np.int64))
@@ -222,12 +275,81 @@ def read(path: str | os.PathLike) -> TextRead:
     try:
         tables, total, matched = _parse(path)
         if matched != total:
-            raise _Bad(f"{total - matched} entities are not ones the faceted writer emits")
-        return _check(_Index(tables))
+            raise _Bad(
+                f"{total - matched} lines of the DATA section are not entities the faceted"
+                " writer emits"
+            )
+        ix = _Index(tables)
+        _structure(ix)
+        return _check(ix)
     except _Bad as e:
         return TextRead([], 0, [str(e)])
     except (KeyError, IndexError, ValueError) as e:
         return TextRead([], 0, [f"the file could not be parsed: {type(e).__name__}: {e}"])
+
+
+_CHAIN = (
+    ("protocol", 0, "application"),
+    ("product_context", 0, "application"),
+    ("product", 0, "product_context"),
+    ("category", 0, "product"),
+    ("formation", 0, "product"),
+    ("definition_context", 0, "application"),
+    ("definition", 0, "formation"),
+    ("definition", 1, "definition_context"),
+    ("definition_shape", 0, "definition"),
+    ("uncertainty", 1, "length_unit"),
+    ("context", 0, "uncertainty"),
+    ("context", 1, "length_unit"),
+    ("context", 2, "angle_unit"),
+    ("context", 3, "solid_angle_unit"),
+    ("shape_definition", 0, "definition_shape"),
+)
+
+
+def _members(ix: _Index, kind: str, allowed: tuple[str, ...]) -> list[str]:
+    flat, _ = ix.lists[kind]
+    if len(flat) and (flat.max() >= len(ix.kind) or flat.min() < 0):
+        raise _Bad(f"a {kind.replace('_', ' ')} item is not in the file")
+    names = [ix.names[k] if k >= 0 else None for k in ix.kind[flat]]
+    if any(n not in allowed for n in names):
+        raise _Bad(f"a {kind.replace('_', ' ')} item is not one of {', '.join(allowed)}")
+    return names
+
+
+def _structure(ix: _Index) -> None:
+    for kind in _SINGLE:
+        if len(ix.ids[kind]) != 1:
+            raise _Bad(f"the file has {len(ix.ids[kind])} {kind.replace('_', ' ')} entities, not 1")
+    for kind, col, target in _CHAIN:
+        ix.rows(ix.cols[kind][:, col].astype(np.int64), target, f"the {kind.replace('_', ' ')}")
+    if not ix.cols["uncertainty"][0, 0] > 0:
+        raise _Bad("the length uncertainty is not positive")
+    breps, surfaces = len(ix.ids["brep_rep"]), len(ix.ids["surface_rep"])
+    if breps > 1 or surfaces > 1 or breps + surfaces == 0:
+        raise _Bad(f"the file has {breps} brep and {surfaces} surface representations")
+    for kind in ("brep_rep", "surface_rep"):
+        if len(ix.ids[kind]):
+            ix.rows(ix.cols[kind][:, 0], "context", f"the {kind.replace('_', ' ')}")
+    main = "brep_rep" if breps else "surface_rep"
+    ix.rows(ix.cols["shape_definition"][:, 1], main, "the shape definition representation")
+    rel = ix.cols.get("relationship", np.zeros((0, 2), dtype=np.int64))
+    if len(rel) != (1 if breps and surfaces else 0):
+        raise _Bad("the representation relationships do not link the surface representation")
+    if len(rel):
+        ix.rows(rel[:, 0], "surface_rep", "the representation relationship")
+        ix.rows(rel[:, 1], "brep_rep", "the representation relationship")
+    items = _members(ix, "brep_rep", ("axis", "manifold", "voids"))
+    solids = len(ix.ids["manifold"]) + len(ix.ids["voids"])
+    if items.count("manifold") + items.count("voids") != solids or len(
+        set(ix.lists["brep_rep"][0].tolist())
+    ) != len(items):
+        raise _Bad("a solid is not in the brep representation exactly once")
+    models = _members(ix, "surface_rep", ("axis", "surface_model"))
+    if models.count("surface_model") != len(ix.ids["surface_model"]) or len(
+        set(ix.lists["surface_rep"][0].tolist())
+    ) != len(models):
+        raise _Bad("a surface model is not in the surface representation exactly once")
 
 
 def _check(ix: _Index) -> TextRead:
@@ -268,6 +390,8 @@ def _check(ix: _Index) -> TextRead:
     nxt = np.arange(len(use)) + 1
     nxt[offsets[1:] - 1] = offsets[:-1]
     _require(oe_end[use] == oe_start[use[nxt]], "an edge loop is not connected")
+    corner = loop_of_use * len(vertex_pt) + oe_start[use]
+    _require(len(np.unique(corner)) == len(corner), "an edge loop passes through a vertex twice")
 
     bound = ix.cols["bound"]
     _require(bound[:, 1] == 1, "a face bound is reversed")

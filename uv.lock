@@ -1604,6 +1604,7 @@ dependencies = [
 [package.optional-dependencies]
 step = [
     { name = "cadquery-ocp" },
+    { name = "psutil" },
 ]
 
 [package.dev-dependencies]
@@ -1620,6 +1621,7 @@ dev = [
 requires-dist = [
     { name = "cadquery-ocp", marker = "extra == 'step'", specifier = ">=7.8,<7.9" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "psutil", marker = "extra == 'step'", specifier = ">=5.9" },
 ]
 provides-extras = ["step"]
 

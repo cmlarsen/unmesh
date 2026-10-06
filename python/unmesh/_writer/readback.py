@@ -25,7 +25,7 @@ class Solid:
 class Outcome:
     solids: list[Solid] = field(default_factory=list)
     shells: int = 0
-    peak_rss_mb: float = 0.0
+    peak_rss_mb: float | None = None
     error: str | None = None
     limit: str | None = None
 
@@ -55,7 +55,12 @@ def run(path, precise: bool, face_orientation: bool, memory_mb: float, timeout_s
             proc = subprocess.Popen(
                 args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr, env=env
             )
-            outcome = _watch(proc, memory_mb, timeout_s)
+            try:
+                outcome = _watch(proc, memory_mb, timeout_s)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
         if outcome.limit is not None:
             return outcome
         if proc.returncode != 0 or not os.path.exists(out):
@@ -80,41 +85,23 @@ def _watch(proc, memory_mb: float, timeout_s: float) -> Outcome:
     while proc.poll() is None:
         rss = _rss_mb(proc.pid)
         if rss is not None:
-            outcome.peak_rss_mb = max(outcome.peak_rss_mb, rss)
+            outcome.peak_rss_mb = max(outcome.peak_rss_mb or 0.0, rss)
             if rss > memory_mb:
                 outcome.limit = f"its memory reached {rss:.0f} MB, over the {memory_mb:.0f} MB cap"
         if outcome.limit is None and time.monotonic() - start > timeout_s:
             outcome.limit = f"it ran longer than the {timeout_s:g} s timeout"
         if outcome.limit is not None:
-            proc.kill()
-            proc.wait()
             return outcome
         time.sleep(POLL_S)
     return outcome
 
 
 def _rss_mb(pid: int) -> float | None:
-    try:
-        import psutil
+    import psutil
 
+    try:
         return psutil.Process(pid).memory_info().rss / 2**20
-    except ImportError:
-        pass
-    except Exception:
-        return None
-    try:
-        with open(f"/proc/{pid}/status", encoding="ascii") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024
-    except OSError:
-        pass
-    try:
-        out = subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5
-        ).stdout.split()
-        return int(out[0]) / 1024 if out else None
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except psutil.Error:
         return None
 
 

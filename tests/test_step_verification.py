@@ -225,10 +225,22 @@ def written(sphere, tmp_path):
 @pytest.mark.parametrize(
     "old,new,issue",
     [
-        ("DATA;\n", "DATA;\n#999999 = B_SPLINE_CURVE_WITH_KNOTS('',1);\n", "not ones the faceted"),
-        ("FACE_OUTER_BOUND('',#", "FACE_BOUND('',#", "not ones the faceted"),
+        ("DATA;\n", "DATA;\n#999999 = B_SPLINE_CURVE_WITH_KNOTS('',1);\n", "not entities"),
+        ("DATA;\n", "DATA;\n#999999 = ( FOO_BAR('') BAZ() );\n", "not entities"),
+        ("DATA;\n", "DATA;\nGARBAGE GOES HERE;\n", "not entities"),
+        ("DATA;\n", "DATA;\n\n", "not entities"),
+        ("FACE_OUTER_BOUND('',#", "FACE_BOUND('',#", "not entities"),
+        ("SI_UNIT(.MILLI.,.METRE.)", "SI_UNIT($,.METRE.)", "not entities"),
+        ("'mechanical'", "'electrical'", "not entities"),
+        ("FILE_SCHEMA(('AUTOMOTIVE_DESIGN", "FILE_SCHEMA(('CONFIG_CONTROL_DESIGN", "header"),
+        ("END-ISO-10303-21;\n", "", "truncated"),
         (",.T.);\n", ",.F.);\n", ""),
         ("ORIENTED_EDGE('',*,*,#", "ORIENTED_EDGE('',*,*,#1", "refers to"),
+        (
+            "PRODUCT_DEFINITION_SHAPE('','',#",
+            "PRODUCT_DEFINITION_SHAPE('','',#9",
+            "definition shape",
+        ),
     ],
 )
 def test_text_check_rejects_what_it_does_not_recognise(written, old, new, issue):
@@ -248,3 +260,56 @@ def test_text_check_handles_lines_longer_than_a_chunk(tmp_path, monkeypatch):
     read = textcheck.read(path)
     assert read.issues == [] and read.solids[0].valid
     assert read.solids[0].volume == whole.solids[0].volume
+
+
+def test_text_check_rejects_a_truncated_file(written):
+    data = written.read_bytes()
+    written.write_bytes(data[: len(data) // 2])
+    assert any("truncated" in i for i in textcheck.read(written).issues)
+
+
+def test_text_check_rejects_a_file_without_its_shape_definition(written):
+    lines = written.read_text().splitlines(keepends=True)
+    written.write_text("".join(x for x in lines if "SHAPE_DEFINITION_REPRESENTATION" not in x))
+    assert any("shape definition" in i for i in textcheck.read(written).issues)
+
+
+def test_text_check_rejects_a_dangling_reference(written):
+    text = written.read_text()
+    last = max(int(x.split(" = ")[0][1:]) for x in text.splitlines() if x.startswith("#"))
+    written.write_text(
+        text.replace("MANIFOLD_SOLID_BREP('',#", f"MANIFOLD_SOLID_BREP('',#{last}0", 1)
+    )
+    assert any("not in the file" in i for i in textcheck.read(written).issues)
+
+
+def test_text_check_rejects_a_loop_through_a_vertex_twice(written):
+    import re
+
+    text = written.read_text()
+    m = re.search(r"EDGE_LOOP\('',\((#\d+),(#\d+),(#\d+)\)\)", text)
+    a, b, c = m.groups()
+    twice = f"EDGE_LOOP('',({a},{b},{c},{a},{b},{c}))"
+    written.write_text(text.replace(m.group(0), twice, 1))
+    read = textcheck.read(written)
+    assert read.issues
+
+
+def test_a_parent_side_exception_kills_the_child(written, monkeypatch):
+    import subprocess
+
+    started = []
+    real = subprocess.Popen
+
+    def record(*a, **kw):
+        started.append(real(*a, **kw))
+        return started[-1]
+
+    def boom(proc, memory_mb, timeout_s):
+        raise RuntimeError("parent failed while watching")
+
+    monkeypatch.setattr(subprocess, "Popen", record)
+    monkeypatch.setattr(readback, "_watch", boom)
+    with pytest.raises(RuntimeError):
+        readback.run(written, False, False, 2048.0, 60.0)
+    assert started and started[0].returncode is not None

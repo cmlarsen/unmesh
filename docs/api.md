@@ -272,18 +272,29 @@ closed shell's faces are already consistently oriented, so on a file that passes
 nothing to do. The solid-orientation step that #81 found can invert a rough shell still runs.
 
 **Text check** (faceted fallback only) parses the written STEP text with unmesh's own parser,
-independently of OCCT and of the writer's data. It accepts only the entities the faceted writer
-emits (any other entity, a `FACE_BOUND`, a reversed bound, a malformed reference or a reference
-to the wrong kind of entity fails it) and checks: every edge loop is connected, every face's loop
-lies within `max_shape_tolerance` of its plane and winds counter-clockwise about the plane's
-normal, every edge of a closed shell
-is used exactly once in each direction and by no other shell, every edge of an open shell at most
-once in each direction, every face is in exactly one shell and every closed shell in exactly one
-solid, the outer shell of each solid encloses a positive volume and each void a negative one, and
-each solid's signed volume (the divergence sum over its polygon faces) matches the volume written
-from the mesh within the read-back tolerance. Its result is `text_check`, a `ReadBack` with `reader`
-`"text"`; its `max_shape_tolerance` analogue is the largest distance of a vertex from its face's
-plane or its edge's line.
+independently of OCCT and of the writer's data, as a strict grammar for exactly what the faceted
+writer emits, so that a file that passes it is one an OCCT reader can load with the structure that
+was written. The file must start with the writer's Part 21 header (`FILE_DESCRIPTION`, `FILE_NAME`,
+the AP214 `FILE_SCHEMA`) and end with `ENDSEC;` and `END-ISO-10303-21;` (a truncated file fails);
+every line of the DATA section must be one `#n = ...;` instance of an allowed entity in the
+writer's exact form (any other entity, complex instance, blank or stray line, a `FACE_BOUND`, a
+reversed bound, a changed unit or context string fails it); every reference must resolve to an
+entity of the right type; and the product chain must be present once and connected:
+`APPLICATION_CONTEXT`, `PRODUCT_CONTEXT` → `PRODUCT` → `PRODUCT_DEFINITION_FORMATION` →
+`PRODUCT_DEFINITION` → `PRODUCT_DEFINITION_SHAPE` → `SHAPE_DEFINITION_REPRESENTATION` → the brep
+representation (or the surface representation, with a `SHAPE_REPRESENTATION_RELATIONSHIP` linking
+it when both exist), whose context carries the length uncertainty and the millimetre, radian and
+steradian units. Every solid must be an item of the brep representation and every surface model of
+the surface representation, once. It then checks: every edge loop is connected and passes through
+no vertex twice, every face's loop lies within `max_shape_tolerance` of its plane and winds
+counter-clockwise about the plane's normal, every edge of a closed shell is used exactly once in
+each direction and by no other shell, every edge of an open shell at most once in each direction,
+every face is in exactly one shell and every closed shell in exactly one solid, the outer shell of
+each solid encloses a positive volume and each void a negative one, and each solid's signed volume
+(the divergence sum over its polygon faces) matches the volume written from the mesh within the
+read-back tolerance. Its result is `text_check`, a `ReadBack` with `reader` `"text"`; its
+`max_shape_tolerance` analogue is the largest distance of a vertex from its face's plane or its
+edge's line.
 
 A faceted file whose OCCT read-back would need more than `readback_memory_mb` (estimated as
 300 MB plus 26 times the file size, measured at 25 times on 55 MB and 104 MB faceted files) is
@@ -294,7 +305,10 @@ read-back exists for: an OCCT reader whose healing inverts or rejects the file (
 Faces on the convex hull are written first so that the solid-orientation probe cannot land on a fold,
 which is what inverted the #81 files. An analytic or mixed file has no text check, so a read-back
 stopped by the cap or the timeout leaves it unverified: `verified_by` is `None`, `valid` is `False`
-and `issues` says why.
+and `issues` says why. A large analytic or mixed file still gets the full healing, quadratic
+face-orientation repair included, so it can hit the default 120 s timeout and be reported invalid
+for that reason, not because the writer built it wrong. The memory cap is sampled with `psutil`,
+which `unmesh[step]` requires; the parent kills the child on any exception of its own.
 
 Measured on an M-series Mac under load, before and after (#106): imported-0201 (393,588 triangles,
 a 347 MB faceted file) went from more than 15 minutes of read-back to 15 s of text check, with the
@@ -566,7 +580,7 @@ quantities, and says which; a quantity that was not measured is `null`, never a 
 | `deviation.measured` | `null` with `--no-measure` or when nothing valid was written. Otherwise the written STEP sampled against the input: it is re-imported and tessellated at `tessellation_deflection` (2e-5 of the input's bounding-box diagonal, 0.1 rad). `step_to_input` is the distance from each tessellation node (a point exactly on a written face) to the input triangles: a sampled lower bound on the true maximum. `input_to_step` is the distance from each input vertex to the tessellated faces, exact to within the deflection. Each has `max`, `mean`, `p99` and `samples`; `max` is the larger of the two maxima. |
 | `faces` | One entry per IR region: `region`, `surface`, `shell`, `triangles`, `written_as` (the surface type, or `triangles` for a `facets` region or after a fallback), `converter` (`max`, `rms` of the region's residual; `null` for `facets`) and `writer` (the region's `FaceReport`: `max_shape_tolerance`, `max_vertex_displacement`, `max_boundary_deviation`; `null` after a fallback). |
 | `faceted` | One entry per region written as triangles, with a `reason`: `no_surface_fit` (the converter fitted no plane, cylinder, cone, sphere or torus within tolerance), `open_shell` (an open component is kept as one `facets` region), `non_manifold` (the same, on a mesh with non-manifold edges), `assembly_failed` (the converter's analytic assembly failed validation and every shell was kept as facets), `facets_share` (the writer wrote the whole part faceted because `facets` regions held most of the triangles), `shell_failed` (the analytic solid failed construction or verification and the writer fell back; `validity.fallback_reason` says why). |
-| `validity` | `valid`, `verified`, `readback` (`ok`, `issues`, or `null`), `volume_checked_against_input`, `fallback`, `fallback_reason`, `solids`, `open_shells`, `issues`, and `edge_fallbacks` (`regions`, `kind`, `max_deviation`), from the `WriteReport`. |
+| `validity` | `valid`, `verified`, `verified_by`, `readback` and `text_check` (each `ok`, `issues`, or `null`), `readback_skipped`, `volume_checked_against_input`, `fallback`, `fallback_reason`, `solids`, `open_shells`, `issues`, and `edge_fallbacks` (`regions`, `kind`, `max_deviation`), from the `WriteReport`. |
 | `runtime_s` | Seconds per stage: `read`, `convert`, `write`, `readback`, `measure` (`null` when skipped) and `total`. |
 | `error` | `null`, or `type` and `message` when `outcome` is `error`. An error report raised before conversion has only the identity fields, `input`, `output`, `runtime_s` and `error`. |
 
