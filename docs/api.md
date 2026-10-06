@@ -467,7 +467,7 @@ the normal-scatter and circle estimates, plus, for cones, an apex and half-angle
 vertices about an axis taken from the normals or from the rows of vertices (each row a circle across the
 axis). Under noise a short arc of a narrow cone band also fits a tilted cylinder, so a seed whose largest
 residual exceeds a tenth of `tolerances.linear` keeps widening to the larger sizes while one surface still
-fits it, and on such a widened chain (or a chain of 24 vertices or more whose plane regions are themselves
+fits it, and on such a widened chain (or a chain of 48 vertices or more whose plane regions are themselves
 noisy) a cone is also refined from its normal-based estimate when the cheap screen rejects it. The group
 then absorbs neighbouring regions whose vertices are within `tolerances.linear` of the
 surface, whose plane normal lies within the spread of the surface normals over its vertices, and whose

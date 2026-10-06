@@ -461,7 +461,7 @@ fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], wide: bool, tol: f64) -> Result<
         Err(init)
             if init <= ESCALATE * tol
                 && (wide
-                    || (pts.len() >= SEED_POINTS[1]
+                    || (pts.len() >= SEED_POINTS[2]
                         && chain
                             .iter()
                             .any(|&r| pool.regions[r as usize].rms > WIDEN_REL * tol))) =>
