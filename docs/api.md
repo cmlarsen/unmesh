@@ -500,6 +500,30 @@ the surface (a D-flat on a boss or in a bore) also has its corners on it, but it
 depth, so it stays a plane. The surface is not refitted; its `residual.max` takes their vertex
 distances.
 
+**Tangency.** Fitted independently, a fillet and its neighbours are tangent only to within the noise
+(a plane can stand off its fillet cylinder by a good part of `tolerances.linear`), and the writer's
+tangent edge then needs a shape tolerance of that size. So after fitting, every pair of adjacent
+analytic regions whose fitted surfaces meet at a median dihedral under `tangent_threshold_deg` over
+their shared mesh vertices (as boundary kinds are decided below), whose surfaces have the shape of a
+tangency (plane and cylinder: the axis in the plane's direction; plane and torus: the axis along the
+normal; cylinder and torus, cylinder and sphere: coaxial) and whose mismatch is at most five times
+the tolerance, is made exactly tangent. The pairs form clusters (a fillet with both its planes, a
+box's corner blends with all their edges and faces), and each cluster is refitted jointly: plane
+normals stay fixed; each axis is set to what its tangencies demand (perpendicular to the normals of
+the planes a cylinder touches along a line, the cross product when there are two, parallel to the
+normal of a plane a torus touches along a circle, shared by coaxial members), refused beyond
+`tangent_threshold_deg`; then the plane offsets, axis positions, centres and radii are the weighted
+least-squares fit of the members' vertices under the linear tangency conditions (plane offset =
+the axis' distance ± radius, tube top on the plane, cylinder radius = major ± minor radius, sphere
+centre on the axis with the cylinder's radius), solved by Gauss-Newton on the null space of those
+conditions so a redundant set (a corner sphere sits on three axes) holds exactly. The refit is kept
+only when every member's vertices stay within `tolerances.linear` of its new surface and the
+cluster's weighted squared residual grows by at most `(2k + 10)` times its per-vertex mean, `k`
+the number of conditions; otherwise the cluster keeps its independent fits. Each changed region's
+`residual` and chord sagitta are recomputed on the new surface before vertices are projected, so
+`report.max_deviation` covers the move. A cluster already tangent to within `1e-4` of the tolerance is
+left as fitted, so a clean tessellation keeps its surfaces bit for bit.
+
 **Vertices and boundary kinds.** A mesh vertex where three or more regions meet (a junction) is moved
 to the least-squares point of its incident analytic surfaces: Gauss-Newton to convergence, with the
 directions the surfaces do not determine (eigenvalues of the normals' matrix below 1e-6) pulled to the
