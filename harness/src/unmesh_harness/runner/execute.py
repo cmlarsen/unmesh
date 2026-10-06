@@ -223,6 +223,8 @@ def _score(
         )
     record["analytic_area_fraction"] = (report or {}).get("analytic_area_fraction")
     record["warnings"] = (report or {}).get("warnings", [])
+    if (report or {}).get("tool") is not None:
+        record["tool"] = report["tool"]
     record["status"] = "ok"
     return record
 

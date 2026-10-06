@@ -85,9 +85,20 @@ def run_grid(
     hidden: bool = False,
     memory_cap_mb: float | None = None,
 ) -> RunSummary:
+    from .converters import unavailable
     from .hidden import hidden_seeds
 
     started = time.perf_counter()
+    available = []
+    for name in converters:
+        reason = unavailable(name)
+        if reason is None:
+            available.append(name)
+        else:
+            log(f"skipping converter {name}: {reason}")
+    if not available:
+        raise ValueError(f"no available converter among {converters}")
+    converters = available
     check_extension_fresh()
     sha = sha or git_sha()
     timeout = timeout or grid.timeout_s

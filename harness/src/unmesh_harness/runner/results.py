@@ -257,11 +257,11 @@ def _cell_violations(r: dict[str, Any], floors: dict[str, Any]) -> list[str]:
 
 
 def gate(records: list[dict[str, Any]], grid, converters: list[str], sha: str | None = None):
-    from .converters import BASELINES
+    from .converters import UNGATED
 
     result = Gate()
     by_key = {record_key(r): r for r in records}
-    gated = [c for c in converters if c not in BASELINES]
+    gated = [c for c in converters if c not in UNGATED]
     if not gated:
         result.violations.append("no gated converter in this run")
     for cell, spec in grid.expand(converters, sha if sha is not None else _sha_of(records)):
