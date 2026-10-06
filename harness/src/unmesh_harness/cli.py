@@ -205,6 +205,27 @@ def _oracle_fit(args) -> int:
     return 0
 
 
+def _acceptance(args) -> int:
+    from .acceptance import failures, render, table
+    from .runner import load_grid
+    from .runner.results import latest, read_results
+
+    all_records = read_results(args.results)
+    shas = sorted({r.get("git_sha", "") for r in all_records})
+    if len(shas) != 1:
+        print(f"error: records carry {len(shas)} git shas {shas}; refusing to mix commits")
+        return 2
+    records = list(latest(all_records, shas[0]).values())
+    deflection = float(load_grid(args.grid).input_deflection[0])
+    result = table(records, deflection)
+    print(render(result))
+    if args.failures:
+        print()
+        for line in failures(records, deflection):
+            print(line)
+    return 0 if all(line["pass"] for line in result["lines"]) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unmesh-harness")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -279,6 +300,13 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("run_b", type=Path)
     compare.add_argument("--converter", default="unmesh")
 
+    accept = sub.add_parser(
+        "acceptance", help="print the #18 acceptance table from an acceptance-grid results file"
+    )
+    accept.add_argument("results", type=Path)
+    accept.add_argument("--grid", default="acceptance")
+    accept.add_argument("--failures", action="store_true", help="list every failing cell")
+
     oracle = sub.add_parser(
         "oracle-fit", help="fit surfaces on the oracle segmentation and score recovery"
     )
@@ -308,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.group == "report":
         return _report(args)
+    if args.group == "acceptance":
+        return _acceptance(args)
     if args.action == "build":
         manifest = load_manifest(args.manifest)
         out = (args.out or default_cache_dir()) / args.grid
