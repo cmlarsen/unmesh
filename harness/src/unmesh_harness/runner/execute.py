@@ -188,7 +188,9 @@ def _score(
         facets = [r for r in ir.regions if r.surface.type == "facets"]
         if step_faces is not None:
             if facets:
-                limit = len(ir.regions) - len(facets) + sum(len(r.triangles) for r in facets)
+                triangles = sum(len(r.triangles) for r in facets)
+                written = max(triangles, write.get("faceted_faces") or 0)
+                limit = len(ir.regions) - len(facets) + written
                 mismatch = step_faces > limit
             else:
                 mismatch = step_faces != len(ir.regions)

@@ -39,6 +39,15 @@ class SeamGap:
     surface_type: str
     points: int
     max_gap: float
+    chord_gap: float = 0.0
+    inserted: int = 0
+    tolerance: float = 0.0
+
+
+@dataclass
+class PatchWrite:
+    corners: np.ndarray
+    splits: list[tuple[int, int, np.ndarray, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -51,6 +60,7 @@ class ShellPlan:
     seams: list[SeamGap] = field(default_factory=list)
     vertex_displacement: dict[int, float] = field(default_factory=dict)
     boundary_deviation: dict[int, float] = field(default_factory=dict)
+    patches: dict[int, PatchWrite] = field(default_factory=dict)
 
 
 @dataclass
@@ -199,6 +209,38 @@ def _plane_face(ir, region, segments) -> FacePlan:
     return FacePlan(region, "plane", np.asarray(plane.origin, dtype=float), normal, ordered)
 
 
+def check_windings(faces: list[tuple[int, list]], facets: set[int]) -> None:
+    owner: dict[tuple, tuple[int, int]] = {}
+    for face, (region, loops) in enumerate(faces):
+        for loop in loops:
+            keys = [_key(p) for p in loop]
+            for a, b in zip(keys, keys[1:] + keys[:1], strict=True):
+                if a == b:
+                    continue
+                other_face, other = owner.setdefault((a, b), (face, region))
+                if other_face != face and (region in facets or other in facets):
+                    bad = region if region in facets else other
+                    raise BuildError(
+                        f"region {bad}: facets triangles wind against their neighbours"
+                    )
+
+
+def check_patch_boundary(ir: Ir, a: int, b: int, bd, cache: dict) -> None:
+    for r in (a, b):
+        surface = ir.regions[r].surface
+        if not isinstance(surface, Facets):
+            continue
+        keys = cache.get(r)
+        if keys is None:
+            keys = cache[r] = {_key(p) for p in surface.vertices}
+        for p in bd.points:
+            if _key(p) not in keys:
+                raise BuildError(
+                    f"region {r}: boundary point {tuple(map(float, p))} with region"
+                    f" {b if r == a else a} is not a vertex of the facets patch"
+                )
+
+
 def _facets_faces(region: int, surface: Facets, snapped) -> list[FacePlan]:
     v = np.array([snapped.get(_key(p), np.asarray(p, dtype=float)) for p in surface.vertices])
     faces = []
@@ -230,11 +272,13 @@ def plan_shell(ir: Ir, index: int, vpos, vmoved, bad, limit: float) -> ShellPlan
                     raise BuildError(bad[v.id])
                 plan.vertex_displacement[r] = max(plan.vertex_displacement[r], m)
     segments: dict[int, list[_Segment]] = {r: [] for r in shell.regions}
+    patch_keys: dict = {}
     for adj in ir.adjacencies:
         a, b = adj.regions
         if a not in members:
             continue
         for bd in adj.boundaries:
+            check_patch_boundary(ir, a, b, bd, patch_keys)
             nodes, dev = _boundary_nodes(ir, bd, a, b, vpos, limit)
             for r in (a, b):
                 plan.boundary_deviation[r] = max(plan.boundary_deviation[r], dev)
@@ -254,6 +298,13 @@ def plan_shell(ir: Ir, index: int, vpos, vmoved, bad, limit: float) -> ShellPlan
             plan.faces.append(_plane_face(ir, r, segments[r]))
         elif isinstance(surface, Facets):
             plan.faces.extend(_facets_faces(r, surface, snapped))
+            plan.patches[r] = PatchWrite(
+                np.array(
+                    [[f.loops[0][i] for i in range(3)] for f in plan.faces[-len(surface.faces) :]]
+                )
+            )
         else:
             raise BuildError(f"region {r}: {surface.type} surfaces are not supported yet")
+    if shell.closed and plan.patches:
+        check_windings([(f.region, f.loops) for f in plan.faces], set(plan.patches))
     return plan

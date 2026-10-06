@@ -76,6 +76,7 @@ it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 
 - `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
 - `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
+- `max_seam_gap` (default `1e-4`, absolute): the largest distance a straight seam edge between a `facets` patch and a curved face may keep from the curved surface. Patch boundary chords are subdivided until every piece is within it.
 
 `mesh` is the source mesh the IR was converted from, in any form `convert` accepts (path, `(n, 3, 3)`
 array, `(vertices, faces)` tuple). The IR does not embed the mesh, and analytic regions carry no
@@ -137,8 +138,23 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   face closes there with a degenerate edge, as OCCT's own fillets do. Tangent circles on a sphere
   are moved onto it (onto a great circle when within the deviation limit of one), the pole is the
   exact intersection of the two meridians, and tangent edges ending there are refitted to it.
-- **`facets` regions next to a curved region** are not supported yet: the shell fails with the
-  reason `facets regions next to curved surfaces are not supported yet (#34)`.
+- **`facets` regions next to a curved region** share straight seam edges with it. The interior
+  boundary points are moved onto the curved surface (the patch vertices with them; a vertex where
+  only one analytic surface meets is moved onto it), and every chord of the boundary is split at
+  the surface point nearest its midpoint, recursively, until each piece is within `max_seam_gap` of
+  the surface (sampled at seven interior points). A closed boundary that winds around the surface
+  also gets a point where the surface's seam crosses it. The patch triangle on a split chord is
+  fanned from its opposite corner (from its centroid when more than one of its sides is split), and
+  a fan triangle that folds over fails the shell. The curved face and the triangles use the same
+  edges, so there is no gap and no T-junction; each edge's tolerance covers its distance from the
+  curved surface (1.01 times the sampled distance, at least `1e-7`). Each seam is reported in `seams`.
+  Two alternatives were measured and rejected (#34), on the oracle IRs of five seeds of every
+  curved and chamfer_fillet family with one seeded non-planar region forced to `facets` (75 parts,
+  deflection (0.01, 0.2)): keeping the mesh chords as edges with their tolerance loosened to cover
+  the gap, and trimming the curved face by the chord polyline projected onto it (the triangles then
+  share the projected curves). Both need tolerances up to 5e-3, so 29 of the 75 parts exceed the
+  `1e-3` cap and fall back whole; subdividing needs at most 8.8e-5, writes all 75 mixed, and adds
+  13% more triangle faces.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
   surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
   on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
@@ -158,6 +174,23 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   orientation flipped) fails the shell. The outer shell must enclose positive
   volume and each cavity negative. Nothing flips a face to fix it: a mismatch fails the shell. ShapeFix
   runs only on a solid that `BRepCheck_Analyzer` rejects, and the orientation is checked again after it.
+
+**Facets patches.** A part whose `facets` regions hold more than half of the IR's triangles (and
+that also has analytic regions) is written as the whole-part faceted solid when `mesh` is given,
+with `fallback_reason` naming the share: one `ADVANCED_FACE` per triangle on its own plane costs
+about 2.4 KB, so the mixed solid is several times larger and slower than the faceted one and no
+more exact (circular_fillet seed 6 with its torus forced to `facets`: 28.3 MB in 13.3 s mixed, 5.9
+MB in 1.2 s faceted). Every boundary point between a patch and its neighbour must be one of the
+patch's vertices (else the shell fails, naming the patch). In a closed shell, every edge a patch
+triangle shares must be used in opposite directions by its two faces, checked on the built faces
+before any ShapeFix runs, on planar and curved shells alike; a flipped patch fails the shell
+instead of being re-oriented by healing. When `mesh` is given, each patch triangle is matched to
+its source triangle (`triangles[i]` to `faces[i]`, up to a rotation of its corners) and every
+written corner must lie within the deviation limit of the source corner; each seam split point
+must lie within `max_seam_gap` of its curved surface and within the deviation limit plus that
+region's `residual.max` (the chord sagitta) of the source triangle's side. A patch beyond either
+bound fails the shell, named, and the measured largest distance is the patch's
+`max_vertex_displacement` in `faces`. Without `mesh`, a patch is written as given and unchecked.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within
 `max_shape_tolerance`. When `mesh` is given, each analytic solid's volume is also compared with the
@@ -218,7 +251,9 @@ report then has `verified=False`, `readback=None`, and `valid` covers constructi
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
-| `seams` | `SeamReport(regions, surface_type, points, max_gap)` for each facets/analytic boundary: the largest distance from the boundary points to the analytic surface. |
+| `seams` | `SeamReport(regions, surface_type, points, max_gap, chord_gap, inserted, tolerance)` for each facets/analytic boundary. Next to a plane, `max_gap` is the largest distance from the boundary points to the plane and the rest are 0. Next to a curved surface, `max_gap` is the largest distance from the written seam edges to the surface, `chord_gap` the same for the unsplit boundary chords (the gap the subdivision closed), `inserted` the number of points added, and `tolerance` the largest tolerance of the seam's edges. |
+| `faceted_regions` | Number of regions written as triangle faces: the `facets` regions of a mixed solid, or every region after a faceted fallback. |
+| `faceted_faces` | Number of triangle faces written for `facets` regions, after seam splits (0 after a faceted fallback). |
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, and any read-back mismatch. |
 | `readback` | `ReadBack(ok, solids, shells, volume, expected_solids, expected_shells, expected_volume, volume_tolerance, issues)` from re-importing the written file, or `None` when nothing was written or `verify=False`. |
 | `verified` | Whether the written file was re-imported and checked. |

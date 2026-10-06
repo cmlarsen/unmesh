@@ -24,6 +24,8 @@ def _write_report(wr) -> dict:
         "fallback_reason": wr.fallback_reason,
         "solids": wr.solids,
         "issues": list(wr.issues),
+        "faceted_regions": wr.faceted_regions,
+        "faceted_faces": wr.faceted_faces,
     }
 
 

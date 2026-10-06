@@ -11,6 +11,7 @@ from unmesh.ir import Ir
 
 READBACK_RELATIVE = 1e-9
 INPUT_VOLUME_RELATIVE = 1e-6
+FACETED_SHARE = 0.5
 FLUX_DEFLECTION = 1e-4
 FLUX_RELATIVE = 1e-9
 
@@ -19,6 +20,7 @@ FLUX_RELATIVE = 1e-9
 class WriteOptions:
     max_shape_tolerance: float = 1e-3
     max_deviation: float = 5e-3
+    max_seam_gap: float = 1e-4
 
 
 @dataclass
@@ -36,6 +38,9 @@ class SeamReport:
     surface_type: str
     points: int
     max_gap: float
+    chord_gap: float = 0.0
+    inserted: int = 0
+    tolerance: float = 0.0
 
 
 @dataclass
@@ -91,6 +96,8 @@ class WriteReport:
     shells: list[ShellReport] = field(default_factory=list)
     seams: list[SeamReport] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    faceted_regions: int = 0
+    faceted_faces: int = 0
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
@@ -122,6 +129,7 @@ class _Group:
     curved: bool = False
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
     tangent_edges: list[TangentEdge] = field(default_factory=list)
+    patches: dict = field(default_factory=dict)
 
 
 def _triangles(mesh) -> np.ndarray:
@@ -201,10 +209,11 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                 if refined is None:
                     refined = curved.refine_vertices(ir, vpos, vmoved, bad, limit)
                 for idx in members:
-                    cs = curved.build_shell(ir, idx, *refined, limit, occ.new_pool())
-                    seams.extend(
-                        SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in cs.seams
+                    cs = curved.build_shell(
+                        ir, idx, *refined, limit, occ.new_pool(), options.max_seam_gap
                     )
+                    seams.extend(SeamReport(**vars(s)) for s in cs.seams)
+                    g.patches.update(cs.patches)
                     moved.update(cs.vertex_displacement)
                     dev.update(cs.boundary_deviation)
                     g.edge_fallbacks.extend(
@@ -220,9 +229,8 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                     built.append((idx, cs.shell, cs.mapping))
             for idx in members if not g.curved else ():
                 plan = topology.plan_shell(ir, idx, vpos, vmoved, bad, limit)
-                seams.extend(
-                    SeamReport(s.regions, s.surface_type, s.points, s.max_gap) for s in plan.seams
-                )
+                seams.extend(SeamReport(**vars(s)) for s in plan.seams)
+                g.patches.update(plan.patches)
                 moved.update(plan.vertex_displacement)
                 dev.update(plan.boundary_deviation)
                 built.append((idx, *occ.build_plan_shell(plan)))
@@ -241,6 +249,70 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
         except Exception as e:
             g.issues.append(f"{type(e).__name__}: {e}")
     return groups, seams
+
+
+def _check_patches(ir: Ir, g: _Group, tris: np.ndarray, seam_gap: float, limit: float) -> None:
+    from unmesh._writer import geometry as geo
+    from unmesh._writer import topology
+
+    measured = {}
+    for r in (r for idx in _members(ir, g.outer) for r in ir.shells[idx].regions):
+        if not _is_facets(ir, r):
+            continue
+        patch = g.patches.get(r)
+        if patch is None:
+            s = ir.regions[r].surface
+            v = np.asarray(s.vertices, dtype=float)
+            patch = topology.PatchWrite(v[np.asarray(s.faces, dtype=np.int64).reshape(-1, 3)])
+        ids = np.asarray(ir.regions[r].triangles, dtype=np.int64)
+        if len(ids) != len(patch.corners) or (len(ids) and ids.max() >= len(tris)):
+            g.valid = False
+            g.issues.append(f"region {r}: the facets patch does not match the input mesh")
+            continue
+        mesh = tris[ids]
+        off = np.stack(
+            [
+                np.linalg.norm(patch.corners - np.roll(mesh, -k, axis=1), axis=2).max(axis=1)
+                for k in range(3)
+            ]
+        )
+        turn = off.argmin(axis=0)
+        worst = float(off.min(axis=0).max(initial=0.0))
+        split = 0.0
+        for fi, side, x, seam in patch.splits:
+            corners = np.roll(mesh[fi], -turn[fi], axis=0)
+            a, b = corners[side], corners[(side + 1) % 3]
+            residual = ir.regions[seam].residual
+            room = limit + (residual.max if residual is not None else 0.0)
+            on_mesh = _segment_distance(x, a, b)
+            on_surface = geo.distance(ir.regions[seam].surface, x)
+            split = max(split, on_mesh)
+            if on_mesh > room or on_surface > seam_gap:
+                g.valid = False
+                kind = ir.regions[seam].surface.type
+                g.issues.append(
+                    f"region {r}: a seam split point is {on_mesh:.3g} from the input mesh"
+                    f" (allowed {room:.3g}) and {on_surface:.3g} from the {kind}"
+                    f" (allowed {seam_gap:.3g})"
+                )
+                break
+        measured[r] = max(worst, split)
+        if worst > limit:
+            g.valid = False
+            g.issues.append(
+                f"region {r}: a facets patch vertex is {worst:.3g} from the input mesh,"
+                f" over the {limit:.3g} limit"
+            )
+    for f in g.faces:
+        if f.region in measured:
+            f.max_vertex_displacement = measured[f.region]
+    g.moved = max([g.moved, *measured.values()])
+
+
+def _segment_distance(x, a, b) -> float:
+    d = b - a
+    t = float(np.clip((x - a) @ d / max(float(d @ d), 1e-300), 0.0, 1.0))
+    return float(np.linalg.norm(x - (a + t * d)))
 
 
 def _is_curved(ir: Ir, idx: int) -> bool:
@@ -299,7 +371,8 @@ def _check_face_fluxes(ir: Ir, g: _Group, tris: np.ndarray, occ) -> None:
     ].reshape(-1, 3)
     floor = FLUX_DEFLECTION * float(np.ptp(every, axis=0).max())
     deflection = max(min(deviation.values()), floor)
-    written = occ.face_fluxes(g.shape, g.mapping, g.context, origins, deflection)
+    facets = frozenset(r for r in origins if _is_facets(ir, r))
+    written = occ.face_fluxes(g.shape, g.mapping, g.context, origins, deflection, facets)
     for idx in members:
         shell_ids = np.asarray(
             [t for r in ir.shells[idx].regions for t in ir.regions[r].triangles], dtype=np.int64
@@ -477,10 +550,26 @@ def write(
         ) from e
 
     n_outer = sum(1 for s in ir.shells if s.role == "outer")
-    groups, seams = _analytic(ir, options, occ, topology)
     tris = _triangles(mesh) if mesh is not None else None
+    share = _faceted_share(ir)
+    whole = tris is not None and FACETED_SHARE < share < 1.0
+    if whole:
+        groups, seams = [], []
+        for outer, shell in enumerate(ir.shells):
+            if shell.role == "outer":
+                g = _Group(outer, "solid" if shell.closed else "shell")
+                g.issues.append(
+                    f"facets regions hold {share:.0%} of the triangles, over the"
+                    f" {FACETED_SHARE:.0%} share above which the faceted solid is written"
+                )
+                groups.append(g)
+    else:
+        groups, seams = _analytic(ir, options, occ, topology)
     if tris is not None:
+        limit = topology.deviation_limit(ir, options.max_deviation)
         for g in groups:
+            if not whole:
+                _check_patches(ir, g, tris, options.max_seam_gap, limit)
             if g.valid and g.kind == "solid":
                 _check_input_volume(ir, g, tris, occ)
     fallback = None
@@ -538,6 +627,10 @@ def write(
         ],
         seams=seams,
         issues=issues,
+        faceted_regions=_faceted_regions(ir, written, fallback),
+        faceted_faces=sum(
+            1 for g in written if fallback is None for r, _ in g.mapping if _is_facets(ir, r)
+        ),
         max_vertex_displacement=max((g.moved for g in groups), default=0.0),
         max_boundary_deviation=max((g.deviation for g in groups), default=0.0),
         edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
@@ -554,3 +647,20 @@ def _solid_count(written: list[_Group], occ, fallback) -> int:
     if fallback == "faceted":
         return sum(1 for g in written if g.kind == "solid")
     return sum(occ.count_solids(g.shape) for g in written)
+
+
+def _is_facets(ir: Ir, region: int) -> bool:
+    return ir.regions[region].surface.type == "facets"
+
+
+def _faceted_regions(ir: Ir, written: list[_Group], fallback) -> int:
+    regions = [r for g in written for idx in _members(ir, g.outer) for r in ir.shells[idx].regions]
+    if fallback == "faceted":
+        return len(regions)
+    return sum(1 for r in regions if _is_facets(ir, r))
+
+
+def _faceted_share(ir: Ir) -> float:
+    total = sum(len(r.triangles) for r in ir.regions)
+    facets = sum(len(r.triangles) for r in ir.regions if _is_facets(ir, r.id))
+    return facets / total if total else 0.0
