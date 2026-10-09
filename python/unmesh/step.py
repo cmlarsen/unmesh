@@ -289,8 +289,9 @@ def _check_patches(ir: Ir, g: _Group, tris: np.ndarray, seam_gap: float, limit: 
             continue
         mesh = tris[ids]
         surf = ir.regions[r].surface
-        claimed = _recorded_moves(
-            ir, r, np.asarray(surf.vertices, dtype=float)[np.asarray(surf.faces, dtype=np.int64)]
+        corners = np.asarray(surf.vertices, dtype=float)[np.asarray(surf.faces, dtype=np.int64)]
+        claimed = np.minimum(
+            _recorded_moves(ir, r, corners), topology.RECORDED_MOVE_FACTOR * ir.tolerances.linear
         )
         gaps = np.stack(
             [np.linalg.norm(patch.corners - np.roll(mesh, -k, axis=1), axis=2) for k in range(3)]

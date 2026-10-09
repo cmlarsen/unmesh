@@ -218,13 +218,17 @@ before any ShapeFix runs, on planar and curved shells alike; a flipped patch fai
 instead of being re-oriented by healing. When `mesh` is given, each patch triangle is matched to
 its source triangle (`triangles[i]` to `faces[i]`, up to a rotation of its corners) and every
 written corner must lie within the deviation limit of the source corner, beyond the move the IR
-itself records there: at an IR vertex its distance from its `source_positions`, at a boundary point
-on a neighbouring analytic surface that region's `residual.max`, elsewhere none (the converter
-reports those moves in `max_deviation`, and under noise they can exceed the absolute cap: two
-noisy planes meet up to about `tolerances.linear` from the mesh corner); each seam split point
-must lie within `max_seam_gap` of its curved surface and within the deviation limit plus that
-region's `residual.max` (the chord sagitta) of the source triangle's side. A patch beyond either
-bound fails the shell, named, and the measured largest distance is the patch's
+itself records there, excused up to ten times `tolerances.linear`: at an IR vertex its distance
+from its `source_positions`, at any corner within `tolerances.vertex_merge` of a neighbouring
+analytic region's surface that region's `residual.max`, elsewhere none. The ten-times clamp matches
+the converter's junction refinement, which accepts a junction move only within ten times
+`tolerances.linear` (see *Vertices and boundary kinds*); an IR that claims more is treated as if it
+claimed ten times `tolerances.linear`, so a corner further than the deviation limit beyond that
+falls back. The converter reports those moves in `max_deviation`, and under noise they can exceed
+the absolute cap: two noisy planes meet up to about `tolerances.linear` from the mesh corner; each
+seam split point must lie within `max_seam_gap` of its curved surface and within the deviation
+limit plus that region's `residual.max` (the chord sagitta) of the source triangle's side. A patch
+beyond either bound fails the shell, named, and the measured largest distance is the patch's
 `max_vertex_displacement` in `faces`. Without `mesh`, a patch is written as given and unchecked.
 
 Validation, per solid: `BRepCheck_Analyzer`, positive volume, and the largest shape tolerance within

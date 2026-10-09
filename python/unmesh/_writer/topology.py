@@ -9,6 +9,7 @@ from unmesh.ir import Facets, Ir, Plane
 
 VERTEX_PULL = 1e-8
 DEVIATION_FACTOR = 5.0
+RECORDED_MOVE_FACTOR = 10.0
 KEY_SCALE = 1e7
 
 
