@@ -405,6 +405,8 @@ def _kill_process_group(path: str | None) -> None:
         pgid = int(Path(path).read_text().strip())
     except (OSError, ValueError):
         return
+    if pgid <= 1:
+        return
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):

@@ -379,6 +379,23 @@ def test_dead_worker_reaps_its_tool_process_group(tmp_path, monkeypatch):
     assert _wait_gone(int(pid_file.read_text().strip()))
 
 
+def test_kill_process_group_ignores_invalid_pgids(tmp_path, monkeypatch):
+    from unmesh_harness.runner import execute
+
+    calls = []
+    monkeypatch.setattr(execute.os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+    path = tmp_path / "pgid"
+    for content in ("0", "-3", "not-a-number"):
+        path.write_text(content)
+        execute._kill_process_group(str(path))
+    execute._kill_process_group(None)
+    execute._kill_process_group(str(tmp_path / "missing"))
+    assert calls == []
+    path.write_text("4321")
+    execute._kill_process_group(str(path))
+    assert calls == [(4321, execute.signal.SIGKILL)]
+
+
 class _DeadSlot:
     def __init__(self, ctx):
         self.ready = False
