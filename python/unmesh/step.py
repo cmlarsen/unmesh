@@ -172,10 +172,10 @@ def _members(ir: Ir, outer: int) -> list[int]:
     ]
 
 
-def _check(g: _Group, occ, max_tol: float) -> None:
+def _check(g: _Group, occ, max_tol: float, valid: bool | None = None) -> None:
     g.tolerance = occ.tolerance_of(g.shape)
     g.shells = occ.shell_count(g.shape)
-    ok = occ.is_valid(g.shape)
+    ok = occ.is_valid(g.shape) if valid is None else valid
     if not ok:
         g.issues.append("BRepCheck_Analyzer reports the shape invalid")
     if g.kind == "solid":
@@ -191,17 +191,20 @@ def _check(g: _Group, occ, max_tol: float) -> None:
 
 
 def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
+    valid = None
     if g.kind == "solid" and g.curved:
         g.shape = occ.make_oriented_solid(outer_shell, cavities)
-        if not occ.is_valid(g.shape):
+        valid = occ.is_valid(g.shape)
+        if not valid:
             g.shape, g.context = occ.fix_shape(g.shape)
             occ.check_orientation(g.shape)
+            valid = None
     elif g.kind == "solid":
         solid = occ.make_solid(outer_shell, cavities)
         g.shape, g.context = occ.fix_shape(solid)
     else:
         g.shape = outer_shell
-    _check(g, occ, options.max_shape_tolerance)
+    _check(g, occ, options.max_shape_tolerance, valid)
 
 
 def _analytic(ir: Ir, options: WriteOptions, occ, topology):
