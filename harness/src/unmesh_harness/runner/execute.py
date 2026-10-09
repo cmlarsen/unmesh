@@ -327,6 +327,9 @@ def execute(task: dict[str, Any]) -> dict[str, Any]:
             raise
         tail = traceback.format_exc().strip().splitlines()[-6:]
         record = {"status": "error", "error": f"{type(e).__name__}: {e}", "traceback": tail}
+        peak_mb = getattr(e, "peak_mb", None)
+        if peak_mb is not None:
+            record["tool_rss_peak_mb"] = round(float(peak_mb), 1)
     record["wall"] = time.perf_counter() - started
     return record
 

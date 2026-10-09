@@ -34,6 +34,16 @@ class ToolUnavailable(RuntimeError):
     pass
 
 
+class MemoryCapExceeded(RuntimeError):
+    def __init__(self, name: str, cap_mb: float, peak_mb: float) -> None:
+        self.cap_mb = cap_mb
+        self.peak_mb = peak_mb
+        super().__init__(
+            f"external tool {name} exceeded memory cap of {cap_mb:g} MB "
+            f"(observed peak {peak_mb:.0f} MB)"
+        )
+
+
 def _executable(env: str, what: str) -> str:
     value = os.environ.get(env)
     if not value:
@@ -100,20 +110,6 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
-def _memory_limiter(cap_mb: float):
-    limit = int(max(cap_mb, 1.0) * 2**20)
-
-    def _limit() -> None:
-        try:
-            import resource
-
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-        except (ValueError, OSError, ImportError, AttributeError):
-            pass
-
-    return _limit
-
-
 def _record_tool_pgid(pid: int) -> str | None:
     path = os.environ.get(PGID_ENV)
     if not path:
@@ -147,10 +143,10 @@ def _run(
         text=True,
         env=env,
         start_new_session=True,
-        preexec_fn=_memory_limiter(cap) if cap is not None else None,
     )
     pgid_file = _record_tool_pgid(proc.pid)
     deadline = time.monotonic() + timeout
+    peak = 0.0
     try:
         while True:
             remaining = deadline - time.monotonic()
@@ -160,12 +156,11 @@ def _run(
                 out, err = proc.communicate(timeout=min(POLL_S, remaining))
                 break
             except subprocess.TimeoutExpired:
-                if cap is not None:
-                    rss = _tree_rss_mb(proc.pid)
-                    if rss > cap:
-                        raise RuntimeError(
-                            f"{name} exceeded its memory cap ({rss:.0f} MB > {cap:g} MB)"
-                        ) from None
+                if cap is None:
+                    continue
+                peak = max(peak, _tree_rss_mb(proc.pid))
+                if peak > cap:
+                    raise MemoryCapExceeded(name, cap, peak) from None
     except BaseException:
         _kill_tree(proc)
         raise

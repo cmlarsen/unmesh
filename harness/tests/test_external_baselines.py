@@ -226,46 +226,31 @@ def test_external_tool_memory_cap_stops_the_tool(tmp_path, monkeypatch):
     )
     monkeypatch.setenv(external.MEMORY_ENV, "256")
     monkeypatch.setenv(external.TIMEOUT_ENV, "30")
-    try:
-        code, _, _ = external._run([str(tool)])
-    except RuntimeError as error:
-        assert "memory cap" in str(error)
-    else:
-        assert code != 0
+    with pytest.raises(RuntimeError, match="memory cap"):
+        external._run([str(tool)])
     assert _wait_gone(int(pid_file.read_text().strip()))
 
 
-def _allocating_tool(tmp_path, peak_file, chunk_mb=2, period_s=0.008):
+def _allocating_tool(tmp_path, chunk_mb=4, period_s=0.003, steps=384):
     return _script(
         tmp_path,
         "greedy-tool",
         f"""#!{sys.executable}
-import os
 import time
 
-import psutil
-
-peak_file = {str(peak_file)!r}
 chunk = {chunk_mb} * 1024 * 1024
 held = []
-process = psutil.Process()
-peak = 0
-while True:
+for _ in range({steps}):
     held.append(bytearray(chunk))
-    peak = max(peak, process.memory_info().rss)
-    tmp = peak_file + ".tmp"
-    with open(tmp, "w") as handle:
-        handle.write(str(peak))
-    os.replace(tmp, peak_file)
     time.sleep({period_s})
+time.sleep(600)
 """,
     )
 
 
 def test_external_tool_memory_cap_is_enforced_tightly(tmp_path, monkeypatch):
     cap_mb = 512
-    peak_file = tmp_path / "peak"
-    tool = _allocating_tool(tmp_path, peak_file)
+    tool = _allocating_tool(tmp_path)
     monkeypatch.setenv(FREECAD_ENV, str(tool))
     monkeypatch.delenv(external.MEMORY_ENV, raising=False)
     summary = run_grid(
@@ -280,9 +265,9 @@ def test_external_tool_memory_cap_is_enforced_tightly(tmp_path, monkeypatch):
     )
     record = read_results(summary.results_path)[0]
     assert record["status"] == "error", record
-    assert peak_file.is_file(), record
-    peak = int(peak_file.read_text())
-    assert peak < 1.25 * cap_mb * 2**20, f"{peak / 2**20:.0f} MB over {cap_mb} MB cap"
+    assert "memory cap" in record["error"], record
+    peak = record["tool_rss_peak_mb"]
+    assert peak < 1.25 * cap_mb, f"{peak:.0f} MB over {cap_mb} MB cap"
 
 
 KILLER = """import os
