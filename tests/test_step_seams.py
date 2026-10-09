@@ -11,7 +11,7 @@ from OCP.TopoDS import TopoDS  # noqa: E402
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape  # noqa: E402
 
 import unmesh.step as step  # noqa: E402
-from unmesh._writer import curved, occ  # noqa: E402
+from unmesh._writer import curved, occ, topology  # noqa: E402
 from unmesh._writer import geometry as geo  # noqa: E402
 from unmesh.ir import Cylinder as IrCylinder  # noqa: E402
 from unmesh.ir import Facets  # noqa: E402
@@ -260,3 +260,46 @@ def test_only_moves_the_ir_records_are_excused_at_patch_corners():
     ]
     bound = max(s.residual.max for s in surfaces if s.residual is not None)
     assert claimed[~at_vertex].max() <= bound
+
+
+def _forged_boundary_move():
+    _, ir, tris, region = _forced("cylinder")
+    surface = ir.regions[region].surface
+    cylinder = next(
+        ir.regions[a + b - region]
+        for a, b in (adj.regions for adj in ir.adjacencies)
+        if region in (a, b) and ir.regions[a + b - region].surface.type == "cylinder"
+    )
+    positions = {tuple(v.position) for v in ir.vertices}
+    index = next(
+        i
+        for i, p in enumerate(surface.vertices)
+        if tuple(p) not in positions
+        and abs(geo.distance(cylinder.surface, np.asarray(p, dtype=float)))
+        <= ir.tolerances.vertex_merge
+    )
+    p = np.asarray(surface.vertices[index], dtype=float)
+    normal = geo.closest(cylinder.surface, p)[1]
+    moved = geo.closest(cylinder.surface, p + 0.3 * geo.perpendicular(normal))[0]
+    old = tuple(round(float(x), 6) for x in p)
+    surface.vertices[index] = tuple(float(x) for x in moved)
+    for adj in ir.adjacencies:
+        for boundary in adj.boundaries:
+            for i, point in enumerate(boundary.points):
+                if tuple(round(float(x), 6) for x in point) == old:
+                    boundary.points[i] = tuple(float(x) for x in moved)
+    cylinder.residual.max = 0.3
+    ir.validate()
+    return ir, tris, region
+
+
+def test_a_move_the_ir_claims_beyond_ten_times_tolerance_falls_back(tmp_path, monkeypatch):
+    ir, tris, region = _forged_boundary_move()
+    report = step.write(ir, tmp_path / "forged.step", mesh=tris)
+    assert report.fallback == "faceted", report.fallback_reason
+    assert f"region {region}: a facets patch vertex is" in report.fallback_reason
+    assert "beyond the IR's recorded move" in report.fallback_reason
+
+    ir, tris, _ = _forged_boundary_move()
+    monkeypatch.setattr(topology, "RECORDED_MOVE_FACTOR", 1e9)
+    assert step.write(ir, tmp_path / "unclamped.step", mesh=tris).fallback is None
