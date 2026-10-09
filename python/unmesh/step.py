@@ -288,14 +288,18 @@ def _check_patches(ir: Ir, g: _Group, tris: np.ndarray, seam_gap: float, limit: 
             g.issues.append(f"region {r}: the facets patch does not match the input mesh")
             continue
         mesh = tris[ids]
-        off = np.stack(
-            [
-                np.linalg.norm(patch.corners - np.roll(mesh, -k, axis=1), axis=2).max(axis=1)
-                for k in range(3)
-            ]
+        surf = ir.regions[r].surface
+        claimed = _recorded_moves(
+            ir, r, np.asarray(surf.vertices, dtype=float)[np.asarray(surf.faces, dtype=np.int64)]
         )
+        gaps = np.stack(
+            [np.linalg.norm(patch.corners - np.roll(mesh, -k, axis=1), axis=2) for k in range(3)]
+        )
+        off = gaps.max(axis=2)
         turn = off.argmin(axis=0)
+        best = gaps[turn, np.arange(len(ids))]
         worst = float(off.min(axis=0).max(initial=0.0))
+        excess = float((best - claimed).max(initial=0.0))
         split = 0.0
         for fi, side, x, seam in patch.splits:
             corners = np.roll(mesh[fi], -turn[fi], axis=0)
@@ -315,16 +319,37 @@ def _check_patches(ir: Ir, g: _Group, tris: np.ndarray, seam_gap: float, limit: 
                 )
                 break
         measured[r] = max(worst, split)
-        if worst > limit:
+        if excess > limit:
             g.valid = False
             g.issues.append(
-                f"region {r}: a facets patch vertex is {worst:.3g} from the input mesh,"
-                f" over the {limit:.3g} limit"
+                f"region {r}: a facets patch vertex is {excess:.3g} from the input mesh beyond"
+                f" the IR's recorded move, over the {limit:.3g} limit"
             )
     for f in g.faces:
         if f.region in measured:
             f.max_vertex_displacement = measured[f.region]
     g.moved = max([g.moved, *measured.values()])
+
+
+def _recorded_moves(ir: Ir, region: int, corners: np.ndarray) -> np.ndarray:
+    from unmesh._writer import geometry as geo
+
+    moved = {}
+    for v in ir.vertices:
+        p = np.asarray(v.position, dtype=float)
+        moved[tuple(p)] = min(float(np.linalg.norm(p - np.asarray(q))) for q in v.source_positions)
+    near = []
+    for adj in ir.adjacencies:
+        if region in adj.regions:
+            other = ir.regions[adj.regions[0] + adj.regions[1] - region]
+            if other.residual is not None:
+                near.append((other.surface, other.residual.max))
+    snap = ir.tolerances.vertex_merge
+    out = []
+    for c in corners.reshape(-1, 3):
+        on = [m for s, m in near if abs(geo.distance(s, c)) <= snap]
+        out.append(max([moved.get(tuple(c), 0.0), *on]))
+    return np.array(out).reshape(corners.shape[:2])
 
 
 def _segment_distance(x, a, b) -> float:

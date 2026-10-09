@@ -217,7 +217,11 @@ triangle shares must be used in opposite directions by its two faces, checked on
 before any ShapeFix runs, on planar and curved shells alike; a flipped patch fails the shell
 instead of being re-oriented by healing. When `mesh` is given, each patch triangle is matched to
 its source triangle (`triangles[i]` to `faces[i]`, up to a rotation of its corners) and every
-written corner must lie within the deviation limit of the source corner; each seam split point
+written corner must lie within the deviation limit of the source corner, beyond the move the IR
+itself records there: at an IR vertex its distance from its `source_positions`, at a boundary point
+on a neighbouring analytic surface that region's `residual.max`, elsewhere none (the converter
+reports those moves in `max_deviation`, and under noise they can exceed the absolute cap: two
+noisy planes meet up to about `tolerances.linear` from the mesh corner); each seam split point
 must lie within `max_seam_gap` of its curved surface and within the deviation limit plus that
 region's `residual.max` (the chord sagitta) of the source triangle's side. A patch beyond either
 bound fails the shell, named, and the measured largest distance is the patch's
