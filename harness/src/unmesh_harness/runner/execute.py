@@ -5,6 +5,7 @@ import math
 import multiprocessing as mp
 import os
 import shutil
+import signal
 import tempfile
 import time
 import traceback
@@ -143,7 +144,7 @@ EXTERNAL_RESERVE_S = 5.0
 
 def _arm_tool_limits(task: dict[str, Any]) -> None:
     from .converters import EXTERNAL_BASELINES
-    from .external import MEMORY_ENV, TIMEOUT_ENV
+    from .external import MEMORY_ENV, PGID_ENV, TIMEOUT_ENV
 
     if task["converter"] not in EXTERNAL_BASELINES:
         return
@@ -155,6 +156,9 @@ def _arm_tool_limits(task: dict[str, Any]) -> None:
     cap = task.get("memory_cap_mb")
     if cap:
         os.environ[MEMORY_ENV] = f"{cap:g}"
+    pgid_file = task.get("pgid_file")
+    if pgid_file:
+        os.environ[PGID_ENV] = pgid_file
 
 
 def _score(
@@ -323,6 +327,9 @@ def execute(task: dict[str, Any]) -> dict[str, Any]:
             raise
         tail = traceback.format_exc().strip().splitlines()[-6:]
         record = {"status": "error", "error": f"{type(e).__name__}: {e}", "traceback": tail}
+        peak_mb = getattr(e, "peak_mb", None)
+        if peak_mb is not None:
+            record["tool_rss_peak_mb"] = round(float(peak_mb), 1)
     record["wall"] = time.perf_counter() - started
     return record
 
@@ -394,12 +401,28 @@ def _kill_descendants(pid: int) -> None:
             pass
 
 
+def _kill_process_group(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        pgid = int(Path(path).read_text().strip())
+    except (OSError, ValueError):
+        return
+    if pgid <= 1:
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 class _Slot:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.proc = None
         self.conn = None
         self.task: tuple[Any, dict[str, Any]] | None = None
+        self.pgid_file: str | None = None
         self.started = 0.0
         self.peak = 0.0
         self.ready = False
@@ -418,9 +441,11 @@ class _Slot:
         child.close()
         self.conn = parent
         self.ready = False
+        self.pgid_file = None
 
     def kill(self) -> None:
         _kill_descendants(self.proc.pid)
+        _kill_process_group(self.pgid_file)
         self.proc.kill()
         self.proc.join()
         self.conn.close()
@@ -445,6 +470,7 @@ def run_pool(
             for slot in slots:
                 if slot.ready and slot.task is None and pending:
                     slot.task = pending.popleft()
+                    slot.pgid_file = slot.task[1].get("pgid_file")
                     slot.started = time.monotonic()
                     slot.peak = 0.0
                     slot.sample()
@@ -531,6 +557,12 @@ def run_pool(
                 slot.conn.send(None)
             except (OSError, ValueError):
                 pass
+            _kill_descendants(slot.proc.pid)
+            _kill_process_group(slot.pgid_file)
             slot.proc.join(timeout=2)
             if slot.proc.is_alive():
                 slot.proc.kill()
+            try:
+                slot.conn.close()
+            except OSError:
+                pass

@@ -17,9 +17,10 @@ FREECAD_ENV = "UNMESH_FREECAD"
 STL2STEP_ENV = "UNMESH_STL2STEP"
 TIMEOUT_ENV = "UNMESH_BASELINE_TIMEOUT"
 MEMORY_ENV = "UNMESH_BASELINE_MEMORY_MB"
+PGID_ENV = "UNMESH_BASELINE_PGID_FILE"
 DEFAULT_TIMEOUT_S = 55.0
 VERSION_TIMEOUT_S = 15.0
-POLL_S = 0.5
+POLL_S = 0.05
 FREECAD_MESH_TOLERANCE = 0.05
 LABEL_DEFLECTION = (0.005, 0.1)
 CANDIDATES = 16
@@ -31,6 +32,16 @@ FREECAD_SCRIPT = Path(__file__).with_name("freecad_refine.py")
 
 class ToolUnavailable(RuntimeError):
     pass
+
+
+class MemoryCapExceeded(RuntimeError):
+    def __init__(self, name: str, cap_mb: float, peak_mb: float) -> None:
+        self.cap_mb = cap_mb
+        self.peak_mb = peak_mb
+        super().__init__(
+            f"external tool {name} exceeded memory cap of {cap_mb:g} MB "
+            f"(observed peak {peak_mb:.0f} MB)"
+        )
 
 
 def _executable(env: str, what: str) -> str:
@@ -99,6 +110,26 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
+def _record_tool_pgid(pid: int) -> str | None:
+    path = os.environ.get(PGID_ENV)
+    if not path:
+        return None
+    try:
+        Path(path).write_text(str(os.getpgid(pid)))
+    except (OSError, PermissionError):
+        return None
+    return path
+
+
+def _clear_tool_pgid(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def _run(
     cmd: list[str], env: dict[str, str] | None = None, timeout: float | None = None
 ) -> tuple[int, str, str]:
@@ -113,7 +144,9 @@ def _run(
         env=env,
         start_new_session=True,
     )
+    pgid_file = _record_tool_pgid(proc.pid)
     deadline = time.monotonic() + timeout
+    peak = 0.0
     try:
         while True:
             remaining = deadline - time.monotonic()
@@ -123,15 +156,16 @@ def _run(
                 out, err = proc.communicate(timeout=min(POLL_S, remaining))
                 break
             except subprocess.TimeoutExpired:
-                if cap is not None:
-                    rss = _tree_rss_mb(proc.pid)
-                    if rss > cap:
-                        raise RuntimeError(
-                            f"{name} exceeded its memory cap ({rss:.0f} MB > {cap:g} MB)"
-                        ) from None
+                if cap is None:
+                    continue
+                peak = max(peak, _tree_rss_mb(proc.pid))
+                if peak > cap:
+                    raise MemoryCapExceeded(name, cap, peak) from None
     except BaseException:
         _kill_tree(proc)
         raise
+    finally:
+        _clear_tool_pgid(pgid_file)
     return proc.returncode, out, err
 
 

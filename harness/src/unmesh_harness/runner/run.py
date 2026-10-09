@@ -278,6 +278,7 @@ def _run_cells(
             "converter": cell.converter,
             "timeout": timeout,
             "memory_cap_mb": memory_cap_mb,
+            "pgid_file": str(work / f"tool-{len(cell_jobs)}.pgid"),
         }
         if cell.part in ready:
             cell_jobs.append((cell, task))
