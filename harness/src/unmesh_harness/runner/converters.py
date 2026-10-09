@@ -82,7 +82,15 @@ def convert_faceted(stl_path: Path) -> ConverterResult:
     return ir.dumps(), str(step_path) if step_path.exists() else None, json.dumps(payload)
 
 
+def _external(name: str) -> Converter:
+    from . import external
+
+    return {"freecad-refine": external.convert_freecad, "stl2step": external.convert_stl2step}[name]
+
+
 BASELINES = frozenset({"faceted"})
+EXTERNAL_BASELINES = frozenset({"freecad-refine", "stl2step"})
+UNGATED = BASELINES | EXTERNAL_BASELINES
 
 CONVERTERS: dict[str, Converter] = {"unmesh": convert_unmesh, "faceted": convert_faceted}
 
@@ -90,17 +98,38 @@ CONVERTERS: dict[str, Converter] = {"unmesh": convert_unmesh, "faceted": convert
 def get_converter(name: str) -> Converter:
     if name in CONVERTERS:
         return CONVERTERS[name]
+    if name in EXTERNAL_BASELINES:
+        return _external(name)
     if ":" in name:
         module, attr = name.split(":", 1)
         return getattr(importlib.import_module(module), attr)
-    raise KeyError(f"unknown converter {name!r}; known: {sorted(CONVERTERS)} or module:function")
+    known = sorted(CONVERTERS.keys() | EXTERNAL_BASELINES)
+    raise KeyError(f"unknown converter {name!r}; known: {known} or module:function")
+
+
+def unavailable(name: str) -> str | None:
+    from .external import ToolUnavailable
+
+    try:
+        require = getattr(get_converter(name), "require", None)
+    except (ImportError, AttributeError, KeyError):
+        return None
+    if require is None:
+        return None
+    try:
+        require()
+    except ToolUnavailable as e:
+        return str(e)
+    return None
 
 
 def plugin_hash(name: str) -> str:
     import hashlib
     import importlib.util
 
-    if name in CONVERTERS or ":" not in name:
+    if name in EXTERNAL_BASELINES:
+        name = "unmesh_harness.runner.external:"
+    elif name in CONVERTERS or ":" not in name:
         return ""
     spec = importlib.util.find_spec(name.split(":", 1)[0])
     if spec is None or not spec.origin or not Path(spec.origin).is_file():

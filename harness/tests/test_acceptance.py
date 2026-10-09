@@ -1,6 +1,14 @@
 import pytest
 
-from unmesh_harness.acceptance import CONVERTER, FACETED, failures, render, table
+from unmesh_harness.acceptance import (
+    CONVERTER,
+    FACETED,
+    baseline_table,
+    failures,
+    render,
+    render_baselines,
+    table,
+)
 
 
 def record(part, family, converter=CONVERTER, **kw):
@@ -85,3 +93,21 @@ def test_timed_out_cell_without_family_fails_its_line():
     assert line(result, "validity")["value"] == 0.5
     assert not line(result, "calibration")["pass"]
     assert not line(result, "deviation to truth")["pass"]
+
+
+def test_baseline_targets_take_the_best_baseline_plus_margin():
+    records = [
+        record("round_boss-a", "round_boss", matched=6),
+        record("round_boss-a", "round_boss", FACETED, matched=0, regions=40),
+        record("round_boss-a", "round_boss", "freecad-refine", matched=3, regions=30),
+        record("round_boss-a", "round_boss", "stl2step", status="timeout", error="exceeded"),
+    ]
+    result = baseline_table(records, [FACETED, "freecad-refine", "stl2step"])
+    boss = next(t for t in result["targets"] if t["group"] == "round_boss")
+    assert boss["best_baseline"] == "freecad-refine"
+    assert boss["target"] == pytest.approx(2 * 3 / 30 * 3 / 6 / (3 / 30 + 3 / 6) + 0.10)
+    assert boss["pass"]
+    assert result["f1"]["stl2step"]["round_boss"][("identity", 0.0)] == 0.0
+    assert result["stats"]["stl2step"][("identity", 0.0)]["timeouts"] == 1
+    text = render_baselines(result)
+    assert "### faceted" in text and "| round_boss | identity 0 | freecad-refine |" in text

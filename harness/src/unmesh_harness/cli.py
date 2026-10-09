@@ -226,6 +226,29 @@ def _acceptance(args) -> int:
     return 0 if all(line["pass"] for line in result["lines"]) else 1
 
 
+def _baselines(args) -> int:
+    from .acceptance import baseline_table, render_baselines
+    from .runner.results import latest, read_results
+
+    all_records = [r for path in args.results for r in read_results(path)]
+    shas = sorted({r.get("git_sha", "") for r in all_records})
+    if len(shas) != 1:
+        print(f"error: records carry {len(shas)} git shas {shas}; refusing to mix commits")
+        return 2
+    records = list(latest(all_records, shas[0]).values())
+    present = {r.get("converter") for r in records}
+    baselines = [c for c in args.baseline if c in present]
+    for c in args.baseline:
+        if c not in present:
+            print(f"warning: no records for baseline {c}")
+    if args.converter not in present or not baselines:
+        print(f"error: need records for {args.converter} and at least one baseline")
+        return 2
+    result = baseline_table(records, baselines, args.converter)
+    print(render_baselines(result))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unmesh-harness")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -307,6 +330,18 @@ def main(argv: list[str] | None = None) -> int:
     accept.add_argument("--grid", default="acceptance")
     accept.add_argument("--failures", action="store_true", help="list every failing cell")
 
+    base = sub.add_parser(
+        "baselines", help="per-family F1 and the targets of #18 against each baseline"
+    )
+    base.add_argument("results", type=Path, nargs="+")
+    base.add_argument("--converter", default="unmesh")
+    base.add_argument(
+        "--baseline",
+        action="append",
+        default=None,
+        help="repeatable; default: faceted (plugin), freecad-refine, stl2step",
+    )
+
     oracle = sub.add_parser(
         "oracle-fit", help="fit surfaces on the oracle segmentation and score recovery"
     )
@@ -338,6 +373,11 @@ def main(argv: list[str] | None = None) -> int:
         return _report(args)
     if args.group == "acceptance":
         return _acceptance(args)
+    if args.group == "baselines":
+        from .acceptance import FACETED
+
+        args.baseline = args.baseline or [FACETED, "freecad-refine", "stl2step"]
+        return _baselines(args)
     if args.action == "build":
         manifest = load_manifest(args.manifest)
         out = (args.out or default_cache_dir()) / args.grid

@@ -98,6 +98,65 @@ def _finite(value: Any) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
+def region_kinds(ir, clean, degraded) -> tuple[int, int]:
+    """(faceted, analytic) regions classified against the ground-truth surfaces.
+
+    A region emitted as a ``facets`` patch is faceted. Any other region is
+    analytic exactly when its surface type equals the area-weighted majority true
+    surface type of the input triangles mapped to it: a plane carrying a true
+    cylinder, cone, sphere or torus is an approximation and counts as faceted.
+    Regions no input triangle maps to are ignored.
+    """
+    face_id = np.asarray(degraded.face_id)
+    types = sorted({f.surface for f in clean.faces})
+    code_of_type = {name: i for i, name in enumerate(types)}
+    face_code = np.zeros(max((f.id for f in clean.faces), default=-1) + 1, dtype=np.int64)
+    for face in clean.faces:
+        face_code[face.id] = code_of_type[face.surface]
+    faceted = analytic = 0
+    for region in ir.regions:
+        tris = np.asarray(region.triangles, dtype=np.int64)
+        if not len(tris):
+            continue
+        if region.surface.type == "facets":
+            faceted += 1
+            continue
+        ids = face_id[tris]
+        keep = (ids >= 0) & (ids < len(face_code))
+        if not keep.any():
+            continue
+        triangles = degraded.tris[tris[keep]]
+        areas = np.linalg.norm(
+            np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+            axis=1,
+        )
+        weights = np.bincount(face_code[ids[keep]], weights=areas, minlength=len(types))
+        if region.surface.type == types[int(weights.argmax())]:
+            analytic += 1
+        else:
+            faceted += 1
+    return faceted, analytic
+
+
+EXTERNAL_RESERVE_S = 5.0
+
+
+def _arm_tool_limits(task: dict[str, Any]) -> None:
+    from .converters import EXTERNAL_BASELINES
+    from .external import MEMORY_ENV, TIMEOUT_ENV
+
+    if task["converter"] not in EXTERNAL_BASELINES:
+        return
+    timeout = task.get("timeout")
+    if timeout:
+        elapsed = time.perf_counter() - task.get("_started", time.perf_counter())
+        reserve = min(EXTERNAL_RESERVE_S, timeout / 2.0)
+        os.environ[TIMEOUT_ENV] = f"{max(1.0, timeout - elapsed - reserve):g}"
+    cap = task.get("memory_cap_mb")
+    if cap:
+        os.environ[MEMORY_ENV] = f"{cap:g}"
+
+
 def _score(
     task: dict[str, Any], degraded, tris, stl_path: Path, phases: dict[str, float]
 ) -> dict[str, Any]:
@@ -112,6 +171,7 @@ def _score(
     baseline = task["converter"] in BASELINES
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
     started = time.perf_counter()
+    _arm_tool_limits(task)
     ir_json, step_path, report_json = get_converter(task["converter"])(stl_path)
     seconds = time.perf_counter() - started
     record: dict[str, Any] = {
@@ -140,6 +200,9 @@ def _score(
         record["status"] = "invalid_ir"
         record["error"] = f"{type(e).__name__}: {e}"
         return record
+    faceted, analytic = region_kinds(ir, clean, degraded)
+    record["faceted_regions"] = faceted
+    record["analytic_regions"] = analytic
     frame = to_original(degraded)
     use_truth = task["judge_truth"] and truth_tris is not None
     truth_in_input = None
@@ -223,6 +286,8 @@ def _score(
         )
     record["analytic_area_fraction"] = (report or {}).get("analytic_area_fraction")
     record["warnings"] = (report or {}).get("warnings", [])
+    if (report or {}).get("tool") is not None:
+        record["tool"] = report["tool"]
     record["status"] = "ok"
     return record
 
@@ -250,6 +315,7 @@ def run_cell(task: dict[str, Any]) -> dict[str, Any]:
 
 def execute(task: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
+    task["_started"] = started
     try:
         record = run_prep(task) if task["kind"] == "prep" else run_cell(task)
     except BaseException as e:
@@ -276,6 +342,7 @@ JUDGE_FIELDS = (
 )
 READY = "__ready__"
 RECYCLE_FRACTION = 0.5
+MAX_BOOT_FAILURES = 4
 SINGLE_THREAD_ENV = (
     "OMP_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -287,12 +354,21 @@ SINGLE_THREAD_ENV = (
 def _serve(conn) -> None:
     from . import converters, score  # noqa: F401
 
-    conn.send(READY)
+    try:
+        conn.send(READY)
+    except (BrokenPipeError, EOFError, OSError):
+        return
     while True:
-        task = conn.recv()
+        try:
+            task = conn.recv()
+        except (EOFError, OSError):
+            return
         if task is None:
             return
-        conn.send(execute(task))
+        try:
+            conn.send(execute(task))
+        except (BrokenPipeError, EOFError, OSError):
+            return
 
 
 def rss_mb(pid: int) -> float | None:
@@ -302,6 +378,20 @@ def rss_mb(pid: int) -> float | None:
         return psutil.Process(pid).memory_info().rss / 2**20
     except psutil.Error:
         return None
+
+
+def _kill_descendants(pid: int) -> None:
+    import psutil
+
+    try:
+        children = psutil.Process(pid).children(recursive=True)
+    except psutil.Error:
+        return
+    for child in children:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
 
 
 class _Slot:
@@ -330,6 +420,7 @@ class _Slot:
         self.ready = False
 
     def kill(self) -> None:
+        _kill_descendants(self.proc.pid)
         self.proc.kill()
         self.proc.join()
         self.conn.close()
@@ -348,6 +439,7 @@ def run_pool(
     ctx = mp.get_context("spawn")
     pending = deque(jobs)
     slots = [_Slot(ctx) for _ in range(min(workers, len(jobs)))]
+    boot_failures = 0
     try:
         while pending or any(s.task for s in slots):
             for slot in slots:
@@ -356,22 +448,46 @@ def run_pool(
                     slot.started = time.monotonic()
                     slot.peak = 0.0
                     slot.sample()
-                    slot.conn.send(slot.task[1])
+                    try:
+                        slot.conn.send(slot.task[1])
+                    except (BrokenPipeError, EOFError, OSError):
+                        key, _ = slot.task
+                        slot.task = None
+                        slot.kill()
+                        slot.start()
+                        yield (
+                            key,
+                            {
+                                "status": "error",
+                                "error": "worker process died before the cell started",
+                            },
+                        )
             live = {s.conn: s for s in slots if s.task or not s.ready}
             for conn in wait(list(live), timeout=0.2):
                 slot = live[conn]
                 try:
                     message = conn.recv()
                 except (EOFError, OSError):
+                    was_ready = slot.ready
+                    task = slot.task
+                    slot.task = None
                     slot.kill()
                     slot.start()
-                    if slot.task:
-                        key, _ = slot.task
-                        slot.task = None
-                        yield key, {"status": "error", "error": "worker process died"}
+                    if not was_ready:
+                        boot_failures += 1
+                        if boot_failures > max(MAX_BOOT_FAILURES, 2 * len(slots)):
+                            raise RuntimeError(
+                                "pool workers kept dying before they announced readiness; "
+                                "if run_grid or run_pool is called from a script, guard the "
+                                "call with `if __name__ == '__main__':` — the spawn start "
+                                "method re-imports __main__"
+                            ) from None
+                    elif task is not None:
+                        yield task[0], {"status": "error", "error": "worker process died"}
                     continue
                 if message == READY and not slot.ready:
                     slot.ready = True
+                    boot_failures = 0
                     continue
                 key, _ = slot.task
                 slot.task = None
