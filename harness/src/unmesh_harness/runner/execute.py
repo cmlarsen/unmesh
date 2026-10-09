@@ -160,6 +160,9 @@ def _score(
         record["status"] = "invalid_ir"
         record["error"] = f"{type(e).__name__}: {e}"
         return record
+    faceted = sum(1 for r in ir.regions if r.surface.type == "facets")
+    record["faceted_regions"] = faceted
+    record["analytic_regions"] = len(ir.regions) - faceted
     frame = to_original(degraded)
     use_truth = task["judge_truth"] and truth_tris is not None
     truth_in_input = None
@@ -337,6 +340,20 @@ def rss_mb(pid: int) -> float | None:
         return None
 
 
+def _kill_descendants(pid: int) -> None:
+    import psutil
+
+    try:
+        children = psutil.Process(pid).children(recursive=True)
+    except psutil.Error:
+        return
+    for child in children:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
+
+
 class _Slot:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
@@ -363,6 +380,7 @@ class _Slot:
         self.ready = False
 
     def kill(self) -> None:
+        _kill_descendants(self.proc.pid)
         self.proc.kill()
         self.proc.join()
         self.conn.close()

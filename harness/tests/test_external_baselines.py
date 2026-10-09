@@ -183,6 +183,47 @@ def test_converter_that_kills_its_worker_is_recorded(tmp_path, monkeypatch):
     assert by_converter["unmesh"]["status"] == "ok"
 
 
+SPAWNER = """import subprocess
+import sys
+import time
+
+
+def spawn(stl_path):
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import os, time; "
+            "open(os.environ['UNMESH_TEST_PIDFILE'], 'w').write(str(os.getpid())); "
+            "time.sleep(600)",
+        ]
+    )
+    time.sleep(600)
+"""
+
+
+def test_worker_kill_reaps_a_converters_children(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "spawner.py").write_text(SPAWNER)
+    monkeypatch.syspath_prepend(str(plugins))
+    pid_file = tmp_path / "child.pid"
+    monkeypatch.setenv("UNMESH_TEST_PIDFILE", str(pid_file))
+    summary = run_grid(
+        _one_part_grid(),
+        ["spawner:spawn"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=6,
+        log=lambda *_: None,
+    )
+    record = read_results(summary.results_path)[0]
+    assert record["status"] in ("error", "timeout"), record
+    assert pid_file.is_file()
+    assert not psutil.pid_exists(int(pid_file.read_text().strip()))
+
+
 class _DeadSlot:
     def __init__(self, ctx):
         self.ready = False
