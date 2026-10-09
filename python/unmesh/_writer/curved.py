@@ -1856,15 +1856,18 @@ class _UVLoop:
             if pc is None:
                 raise BuildError(f"region {region}: could not project an edge onto the surface")
             pc = corrected_pcurve(surf, curve, first, last, pc)
-            error = pcurve_error(surf, curve, first, last, pc)
-            if error > PCURVE_EXACT:
-                for build in (meridian_pcurve, sampled_pcurve):
-                    other = build(surf, curve, first, last, self.v_periodic)
-                    if other is None:
-                        continue
-                    other_error = pcurve_error(surf, curve, first, last, other)
-                    if other_error < error:
-                        pc, error = other, other_error
+            if not isinstance(curve, Geom_Line):
+                # A line edge's perpendicular projection is already the nearest-point
+                # map, so the sampled fallback only matches it; skip the 512-sample check.
+                error = pcurve_error(surf, curve, first, last, pc)
+                if error > PCURVE_EXACT:
+                    for build in (meridian_pcurve, sampled_pcurve):
+                        other = build(surf, curve, first, last, self.v_periodic)
+                        if other is None:
+                            continue
+                        other_error = pcurve_error(surf, curve, first, last, other)
+                        if other_error < error:
+                            pc, error = other, other_error
             a, b = (first, last) if e.Orientation() == TopAbs_FORWARD else (last, first)
             uv.append([np.array(pc.Value(a).Coord()), np.array(pc.Value(b).Coord())])
             self.pcurves.append(pc)

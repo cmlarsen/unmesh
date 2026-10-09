@@ -196,3 +196,28 @@ def test_straight_fillet_fallback_rate_under_1um_noise(tmp_path):
             assert report.max_shape_tolerance <= MAX_SHAPE_TOLERANCE_MM
             assert report.tangent_edges
     assert len(reasons) < 0.05 * len(seeds), reasons
+
+
+MIXED_WRITE_BUDGET_S = 10.0
+MIXED_WRITE_CI_FACTOR = 3.0
+
+
+@pytest.mark.benchmark
+def test_noisy_through_bore_mixed_write_within_budget(tmp_path):
+    import time
+
+    from unmesh_harness import degrade
+
+    clean = tessellate(generate("through_bore", 0).solid, *DEFLECTION)
+    mesh = degrade.chain(clean, [("noise_normal", 0.02)], 0)
+    stl_path = tmp_path / "input.stl"
+    mesh.write_stl(stl_path)
+    tris = np.asarray(unmesh.read_stl(stl_path), dtype=np.float64)
+    ir = unmesh.convert(tris).ir
+
+    start = time.process_time()
+    report = step.write(ir, tmp_path / "through_bore.step", mesh=tris, verify=False)
+    seconds = time.process_time() - start
+    assert report.valid and report.fallback is None, report.issues
+    assert report.faceted_regions > 0, "the part must exercise the mixed-solid writer"
+    assert seconds <= MIXED_WRITE_BUDGET_S * MIXED_WRITE_CI_FACTOR, (seconds, len(tris))
