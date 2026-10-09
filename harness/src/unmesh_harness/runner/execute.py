@@ -98,6 +98,25 @@ def _finite(value: Any) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
+EXTERNAL_RESERVE_S = 5.0
+
+
+def _arm_tool_limits(task: dict[str, Any]) -> None:
+    from .converters import EXTERNAL_BASELINES
+    from .external import MEMORY_ENV, TIMEOUT_ENV
+
+    if task["converter"] not in EXTERNAL_BASELINES:
+        return
+    timeout = task.get("timeout")
+    if timeout:
+        elapsed = time.perf_counter() - task.get("_started", time.perf_counter())
+        reserve = min(EXTERNAL_RESERVE_S, timeout / 2.0)
+        os.environ[TIMEOUT_ENV] = f"{max(1.0, timeout - elapsed - reserve):g}"
+    cap = task.get("memory_cap_mb")
+    if cap:
+        os.environ[MEMORY_ENV] = f"{cap:g}"
+
+
 def _score(
     task: dict[str, Any], degraded, tris, stl_path: Path, phases: dict[str, float]
 ) -> dict[str, Any]:
@@ -112,6 +131,7 @@ def _score(
     baseline = task["converter"] in BASELINES
     clean, truth_tris = _load_part(task["cache"], task["entry"]["id"])
     started = time.perf_counter()
+    _arm_tool_limits(task)
     ir_json, step_path, report_json = get_converter(task["converter"])(stl_path)
     seconds = time.perf_counter() - started
     record: dict[str, Any] = {
@@ -252,6 +272,7 @@ def run_cell(task: dict[str, Any]) -> dict[str, Any]:
 
 def execute(task: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
+    task["_started"] = started
     try:
         record = run_prep(task) if task["kind"] == "prep" else run_cell(task)
     except BaseException as e:
@@ -278,6 +299,7 @@ JUDGE_FIELDS = (
 )
 READY = "__ready__"
 RECYCLE_FRACTION = 0.5
+MAX_BOOT_FAILURES = 4
 SINGLE_THREAD_ENV = (
     "OMP_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -289,12 +311,21 @@ SINGLE_THREAD_ENV = (
 def _serve(conn) -> None:
     from . import converters, score  # noqa: F401
 
-    conn.send(READY)
+    try:
+        conn.send(READY)
+    except (BrokenPipeError, EOFError, OSError):
+        return
     while True:
-        task = conn.recv()
+        try:
+            task = conn.recv()
+        except (EOFError, OSError):
+            return
         if task is None:
             return
-        conn.send(execute(task))
+        try:
+            conn.send(execute(task))
+        except (BrokenPipeError, EOFError, OSError):
+            return
 
 
 def rss_mb(pid: int) -> float | None:
@@ -350,6 +381,7 @@ def run_pool(
     ctx = mp.get_context("spawn")
     pending = deque(jobs)
     slots = [_Slot(ctx) for _ in range(min(workers, len(jobs)))]
+    boot_failures = 0
     try:
         while pending or any(s.task for s in slots):
             for slot in slots:
@@ -358,22 +390,46 @@ def run_pool(
                     slot.started = time.monotonic()
                     slot.peak = 0.0
                     slot.sample()
-                    slot.conn.send(slot.task[1])
+                    try:
+                        slot.conn.send(slot.task[1])
+                    except (BrokenPipeError, EOFError, OSError):
+                        key, _ = slot.task
+                        slot.task = None
+                        slot.kill()
+                        slot.start()
+                        yield (
+                            key,
+                            {
+                                "status": "error",
+                                "error": "worker process died before the cell started",
+                            },
+                        )
             live = {s.conn: s for s in slots if s.task or not s.ready}
             for conn in wait(list(live), timeout=0.2):
                 slot = live[conn]
                 try:
                     message = conn.recv()
                 except (EOFError, OSError):
+                    was_ready = slot.ready
+                    task = slot.task
+                    slot.task = None
                     slot.kill()
                     slot.start()
-                    if slot.task:
-                        key, _ = slot.task
-                        slot.task = None
-                        yield key, {"status": "error", "error": "worker process died"}
+                    if not was_ready:
+                        boot_failures += 1
+                        if boot_failures > max(MAX_BOOT_FAILURES, 2 * len(slots)):
+                            raise RuntimeError(
+                                "pool workers kept dying before they announced readiness; "
+                                "if run_grid or run_pool is called from a script, guard the "
+                                "call with `if __name__ == '__main__':` — the spawn start "
+                                "method re-imports __main__"
+                            ) from None
+                    elif task is not None:
+                        yield task[0], {"status": "error", "error": "worker process died"}
                     continue
                 if message == READY and not slot.ready:
                     slot.ready = True
+                    boot_failures = 0
                     continue
                 key, _ = slot.task
                 slot.task = None

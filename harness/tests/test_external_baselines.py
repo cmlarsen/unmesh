@@ -1,10 +1,14 @@
 import json
+import os
+import sys
+import types
 
 import numpy as np
+import psutil
 import pytest
 
 from unmesh.ir import Ir
-from unmesh_harness.runner import load_grid, run_grid
+from unmesh_harness.runner import external, load_grid, run_grid
 from unmesh_harness.runner.converters import get_converter, unavailable
 from unmesh_harness.runner.external import (
     FREECAD_ENV,
@@ -12,6 +16,7 @@ from unmesh_harness.runner.external import (
     ToolUnavailable,
     assign_faces,
 )
+from unmesh_harness.runner.results import read_results
 
 TOOLS = {"freecad-refine": FREECAD_ENV, "stl2step": STL2STEP_ENV}
 
@@ -92,3 +97,117 @@ def test_tool_smoke(name, tmp_path):
     assert sum(len(r.triangles) for r in ir.regions) == ir.source.triangle_count
     if name == "stl2step":
         assert "cylinder" in kinds
+
+
+def _one_part_grid():
+    import dataclasses
+
+    grid = load_grid("smoke")
+    return dataclasses.replace(
+        grid,
+        entries=grid.entries[:1],
+        cells=[c for c in grid.cells if c["operator"] == "identity"],
+        seeds=[0],
+        step_deviation_sample=(1, 1),
+    )
+
+
+def _script(tmp_path, name, body):
+    path = tmp_path / name
+    path.write_text(body)
+    path.chmod(0o755)
+    return path
+
+
+def test_external_tool_timeout_is_recorded_and_killed(tmp_path, monkeypatch):
+    pid_file = tmp_path / "tool.pid"
+    tool = _script(tmp_path, "slow-tool", f"#!/bin/sh\necho $$ > {pid_file}\nexec sleep 600\n")
+    monkeypatch.setenv(FREECAD_ENV, str(tool))
+    monkeypatch.delenv(external.MEMORY_ENV, raising=False)
+    summary = run_grid(
+        _one_part_grid(),
+        ["freecad-refine"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=6,
+        log=lambda *_: None,
+    )
+    record = read_results(summary.results_path)[0]
+    assert record["status"] == "error", record
+    assert "exceeded" in record["error"]
+    assert not psutil.pid_exists(int(pid_file.read_text().strip()))
+
+
+def test_external_tool_memory_cap_kills_and_raises(tmp_path, monkeypatch):
+    pid_file = tmp_path / "tool.pid"
+    alloc = "import time; held = bytearray(500 * 1024 * 1024); time.sleep(600)"
+    tool = _script(
+        tmp_path,
+        "hungry-tool",
+        f'#!/bin/sh\necho $$ > {pid_file}\nexec "{sys.executable}" -c "{alloc}"\n',
+    )
+    monkeypatch.setenv(external.MEMORY_ENV, "256")
+    monkeypatch.setenv(external.TIMEOUT_ENV, "30")
+    with pytest.raises(RuntimeError, match="memory cap"):
+        external._run([str(tool)])
+    assert not psutil.pid_exists(int(pid_file.read_text().strip()))
+
+
+KILLER = """import os
+import signal
+
+
+def kill(stl_path):
+    os.kill(os.getpid(), signal.SIGKILL)
+"""
+
+
+def test_converter_that_kills_its_worker_is_recorded(tmp_path, monkeypatch):
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "killer.py").write_text(KILLER)
+    monkeypatch.syspath_prepend(str(plugins))
+    summary = run_grid(
+        _one_part_grid(),
+        ["killer:kill", "unmesh"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=30,
+        log=lambda *_: None,
+    )
+    by_converter = {r["converter"]: r for r in read_results(summary.results_path)}
+    assert by_converter["killer:kill"]["status"] == "error"
+    assert "worker process died" in by_converter["killer:kill"]["error"]
+    assert by_converter["unmesh"]["status"] == "ok"
+
+
+class _DeadSlot:
+    def __init__(self, ctx):
+        self.ready = False
+        self.task = None
+        self.peak = 0.0
+        self.started = 0.0
+        self.conn, child = ctx.Pipe()
+        child.close()
+        self.proc = types.SimpleNamespace(
+            pid=os.getpid(), join=lambda timeout=None: None, is_alive=lambda: False
+        )
+
+    def start(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def sample(self):
+        return 0.0
+
+
+def test_pool_fails_fast_when_workers_die_before_ready(monkeypatch):
+    from unmesh_harness.runner import execute
+
+    monkeypatch.setattr(execute, "_Slot", _DeadSlot)
+    with pytest.raises(RuntimeError, match="before they announced readiness"):
+        list(execute.run_pool([("k", {})], 1, 1.0, None))

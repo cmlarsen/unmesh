@@ -110,7 +110,10 @@ def get_converter(name: str) -> Converter:
 def unavailable(name: str) -> str | None:
     from .external import ToolUnavailable
 
-    require = getattr(get_converter(name), "require", None)
+    try:
+        require = getattr(get_converter(name), "require", None)
+    except (ImportError, AttributeError, KeyError):
+        return None
     if require is None:
         return None
     try:

@@ -276,6 +276,8 @@ def _run_cells(
             "dev_input_floor": spec.get("floors", {}).get("dev_input_max", float("inf")),
             "seed": cell.seed,
             "converter": cell.converter,
+            "timeout": timeout,
+            "memory_cap_mb": memory_cap_mb,
         }
         if cell.part in ready:
             cell_jobs.append((cell, task))

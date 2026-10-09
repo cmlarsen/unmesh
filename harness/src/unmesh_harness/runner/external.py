@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,10 @@ from unmesh.ir import Facets, Ir, Region, Residual, Shell, Source, Tolerances
 FREECAD_ENV = "UNMESH_FREECAD"
 STL2STEP_ENV = "UNMESH_STL2STEP"
 TIMEOUT_ENV = "UNMESH_BASELINE_TIMEOUT"
+MEMORY_ENV = "UNMESH_BASELINE_MEMORY_MB"
 DEFAULT_TIMEOUT_S = 55.0
+VERSION_TIMEOUT_S = 15.0
+POLL_S = 0.5
 FREECAD_MESH_TOLERANCE = 0.05
 LABEL_DEFLECTION = (0.005, 0.1)
 CANDIDATES = 16
@@ -51,7 +55,56 @@ def _timeout() -> float:
     return float(os.environ.get(TIMEOUT_ENV, DEFAULT_TIMEOUT_S))
 
 
-def _run(cmd: list[str], env: dict[str, str] | None = None) -> tuple[int, str, str]:
+def _memory_cap_mb() -> float | None:
+    value = os.environ.get(MEMORY_ENV)
+    return float(value) if value else None
+
+
+def _tree_rss_mb(pid: int) -> float:
+    import psutil
+
+    try:
+        procs = [psutil.Process(pid), *psutil.Process(pid).children(recursive=True)]
+    except psutil.Error:
+        return 0.0
+    total = 0.0
+    for proc in procs:
+        try:
+            total += proc.memory_info().rss / 2**20
+        except psutil.Error:
+            pass
+    return total
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    import psutil
+
+    try:
+        children = psutil.Process(proc.pid).children(recursive=True)
+    except psutil.Error:
+        children = []
+    for child in children:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _run(
+    cmd: list[str], env: dict[str, str] | None = None, timeout: float | None = None
+) -> tuple[int, str, str]:
+    timeout = _timeout() if timeout is None else timeout
+    cap = _memory_cap_mb()
+    name = Path(cmd[0]).name
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -60,12 +113,25 @@ def _run(cmd: list[str], env: dict[str, str] | None = None) -> tuple[int, str, s
         env=env,
         start_new_session=True,
     )
+    deadline = time.monotonic() + timeout
     try:
-        out, err = proc.communicate(timeout=_timeout())
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise TimeoutError(f"{Path(cmd[0]).name} exceeded {_timeout():g} s") from None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"{name} exceeded {timeout:g} s")
+            try:
+                out, err = proc.communicate(timeout=min(POLL_S, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                if cap is not None:
+                    rss = _tree_rss_mb(proc.pid)
+                    if rss > cap:
+                        raise RuntimeError(
+                            f"{name} exceeded its memory cap ({rss:.0f} MB > {cap:g} MB)"
+                        ) from None
+    except BaseException:
+        _kill_tree(proc)
+        raise
     return proc.returncode, out, err
 
 
@@ -253,7 +319,7 @@ def convert_stl2step(stl_path: Path) -> tuple[str | None, str | None, str | None
     exe = stl2step_command()
     stl_path = Path(stl_path)
     step_path = stl_path.with_name(stl_path.stem + ".stl2step.step")
-    _, version, _ = _run([exe, "--version"])
+    _, version, _ = _run([exe, "--version"], timeout=min(VERSION_TIMEOUT_S, _timeout()))
     cmd = [exe, str(stl_path), "-o", str(step_path), "--engine", "trueform", "--quiet"]
     code, out, err = _run([*cmd, "--threads", "1"])
     result = _result_line(out)
