@@ -98,6 +98,28 @@ def _finite(value: Any) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
+def region_kinds(ir) -> tuple[int, int]:
+    """(faceted, analytic) regions classified by what the written faces are.
+
+    A region is faceted when the writer emitted it as a ``facets`` patch, or when
+    the solid is mesh-like — more than half of its non-empty planar faces carry
+    exactly one input triangle — and the face is planar. Regions that no input
+    triangle maps to are ignored.
+    """
+    planes = [r for r in ir.regions if r.surface.type == "plane" and r.triangles]
+    singletons = sum(1 for r in planes if len(r.triangles) == 1)
+    mesh_like = 2 * singletons > len(planes)
+    faceted = analytic = 0
+    for r in ir.regions:
+        if not r.triangles:
+            continue
+        if r.surface.type == "facets" or (mesh_like and r.surface.type == "plane"):
+            faceted += 1
+        else:
+            analytic += 1
+    return faceted, analytic
+
+
 EXTERNAL_RESERVE_S = 5.0
 
 
@@ -160,9 +182,9 @@ def _score(
         record["status"] = "invalid_ir"
         record["error"] = f"{type(e).__name__}: {e}"
         return record
-    faceted = sum(1 for r in ir.regions if r.surface.type == "facets")
+    faceted, analytic = region_kinds(ir)
     record["faceted_regions"] = faceted
-    record["analytic_regions"] = len(ir.regions) - faceted
+    record["analytic_regions"] = analytic
     frame = to_original(degraded)
     use_truth = task["judge_truth"] and truth_tris is not None
     truth_in_input = None

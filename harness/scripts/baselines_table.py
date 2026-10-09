@@ -5,7 +5,9 @@ Reads one or more `<grid>.jsonl` result files (as written by
 ``unmesh-harness run``), deduplicates each cell to its latest record, and prints a
 markdown table per converter: one row per family, with the mean F1 over the ok
 cells, the rate at which the output has no analytic faces (the writer fell back
-to faceted, or every IR region is a ``facets`` patch), and the failure rate.
+to faceted, or every written face is a facet — a ``facets`` patch, or a plane of
+a mesh-like solid whose planar faces are mostly single input triangles), and the
+failure rate.
 Cells whose operator names a noise step are split into their own section so they
 do not dilute the clean signal::
 
