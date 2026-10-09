@@ -71,8 +71,8 @@ def test_assign_faces_follows_the_nearest_face():
     assert got.tolist() == [0] * 32 + [1] * 32
 
 
-def _triangle_solid_step(tris, path):
-    from build123d import Solid, export_step
+def _sew_solid(tris):
+    from build123d import Solid
     from OCP.BRepBuilderAPI import (
         BRepBuilderAPI_MakeFace,
         BRepBuilderAPI_MakePolygon,
@@ -93,30 +93,51 @@ def _triangle_solid_step(tris, path):
     sewing.Perform()
     fixer = ShapeFix_Shell(TopoDS.Shell_s(sewing.SewedShape()))
     fixer.Perform()
-    solid = TopoDS.Solid_s(BRepBuilderAPI_MakeSolid(fixer.Shell()).Solid())
-    export_step(Solid(solid), str(path))
+    return Solid(TopoDS.Solid_s(BRepBuilderAPI_MakeSolid(fixer.Shell()).Solid()))
+
+
+def _merged_solid_step(tris, path):
+    from build123d import Solid, export_step
+    from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
+    unifier = ShapeUpgrade_UnifySameDomain(_sew_solid(tris).wrapped, True, True, True)
+    unifier.Build()
+    export_step(Solid(unifier.Shape()), str(path))
+
+
+def _tetrahedron():
+    verts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=np.float64)
+    faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
+    return _sew_solid(np.array([[verts[a], verts[b], verts[c]] for a, b, c in faces]))
 
 
 def test_written_faces_are_classified_by_their_source_triangles(tmp_path):
-    from build123d import Box, Polygon, export_step, extrude
+    from build123d import Box, Cylinder, export_step
 
     from unmesh_harness.labels import tessellate
     from unmesh_harness.runner.execute import region_kinds
 
-    box = Box(20, 20, 10)
-    tris = tessellate(box, 0.01, 0.2).tris
-    mesh_step = tmp_path / "mesh.step"
-    _triangle_solid_step(tris, mesh_step)
-    solid_step = tmp_path / "solid.step"
-    export_step(box, str(solid_step))
-    prism = extrude(Polygon((0, 0), (20, 0), (0, 10), align=None), amount=10)
-    prism_step = tmp_path / "prism.step"
-    export_step(prism, str(prism_step))
+    box = tessellate(Box(20, 20, 10), 0.01, 0.2)
+    box_step = tmp_path / "box_mesh.step"
+    export_step(_sew_solid(box.tris), str(box_step))
+    assert region_kinds(external.step_ir(box_step, box.tris), box, box) == (0, 12)
 
-    assert region_kinds(external.step_ir(mesh_step, tris)) == (12, 0)
-    assert region_kinds(external.step_ir(solid_step, tris)) == (0, 6)
-    prism_tris = tessellate(prism, 0.01, 0.2).tris
-    assert region_kinds(external.step_ir(prism_step, prism_tris)) == (0, 5)
+    cylinder = tessellate(Cylinder(10, 20), 0.01, 0.2)
+    merged_step = tmp_path / "cylinder_merged.step"
+    _merged_solid_step(cylinder.tris, merged_step)
+    merged_ir = external.step_ir(merged_step, cylinder.tris)
+    assert region_kinds(merged_ir, cylinder, cylinder) == (len(merged_ir.regions) - 2, 2)
+
+    solid_step = tmp_path / "cylinder.step"
+    export_step(Cylinder(10, 20), str(solid_step))
+    assert region_kinds(external.step_ir(solid_step, cylinder.tris), cylinder, cylinder) == (0, 3)
+
+    tetra = _tetrahedron()
+    tetra_labeled = tessellate(tetra, 0.01, 0.2)
+    tetra_step = tmp_path / "tetrahedron.step"
+    export_step(tetra, str(tetra_step))
+    tetra_ir = external.step_ir(tetra_step, tetra_labeled.tris)
+    assert region_kinds(tetra_ir, tetra_labeled, tetra_labeled) == (0, 4)
 
 
 def _bored_block_stl(path):

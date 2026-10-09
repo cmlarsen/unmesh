@@ -98,25 +98,43 @@ def _finite(value: Any) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
-def region_kinds(ir) -> tuple[int, int]:
-    """(faceted, analytic) regions classified by what the written faces are.
+def region_kinds(ir, clean, degraded) -> tuple[int, int]:
+    """(faceted, analytic) regions classified against the ground-truth surfaces.
 
-    A region is faceted when the writer emitted it as a ``facets`` patch, or when
-    the solid is mesh-like — more than half of its non-empty planar faces carry
-    exactly one input triangle — and the face is planar. Regions that no input
-    triangle maps to are ignored.
+    A region emitted as a ``facets`` patch is faceted. Any other region is
+    analytic exactly when its surface type equals the area-weighted majority true
+    surface type of the input triangles mapped to it: a plane carrying a true
+    cylinder, cone, sphere or torus is an approximation and counts as faceted.
+    Regions no input triangle maps to are ignored.
     """
-    planes = [r for r in ir.regions if r.surface.type == "plane" and r.triangles]
-    singletons = sum(1 for r in planes if len(r.triangles) == 1)
-    mesh_like = 2 * singletons > len(planes)
+    face_id = np.asarray(degraded.face_id)
+    types = sorted({f.surface for f in clean.faces})
+    code_of_type = {name: i for i, name in enumerate(types)}
+    face_code = np.zeros(max((f.id for f in clean.faces), default=-1) + 1, dtype=np.int64)
+    for face in clean.faces:
+        face_code[face.id] = code_of_type[face.surface]
     faceted = analytic = 0
-    for r in ir.regions:
-        if not r.triangles:
+    for region in ir.regions:
+        tris = np.asarray(region.triangles, dtype=np.int64)
+        if not len(tris):
             continue
-        if r.surface.type == "facets" or (mesh_like and r.surface.type == "plane"):
+        if region.surface.type == "facets":
             faceted += 1
-        else:
+            continue
+        ids = face_id[tris]
+        keep = (ids >= 0) & (ids < len(face_code))
+        if not keep.any():
+            continue
+        triangles = degraded.tris[tris[keep]]
+        areas = np.linalg.norm(
+            np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+            axis=1,
+        )
+        weights = np.bincount(face_code[ids[keep]], weights=areas, minlength=len(types))
+        if region.surface.type == types[int(weights.argmax())]:
             analytic += 1
+        else:
+            faceted += 1
     return faceted, analytic
 
 
@@ -182,7 +200,7 @@ def _score(
         record["status"] = "invalid_ir"
         record["error"] = f"{type(e).__name__}: {e}"
         return record
-    faceted, analytic = region_kinds(ir)
+    faceted, analytic = region_kinds(ir, clean, degraded)
     record["faceted_regions"] = faceted
     record["analytic_regions"] = analytic
     frame = to_original(degraded)
