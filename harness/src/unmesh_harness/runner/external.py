@@ -17,9 +17,10 @@ FREECAD_ENV = "UNMESH_FREECAD"
 STL2STEP_ENV = "UNMESH_STL2STEP"
 TIMEOUT_ENV = "UNMESH_BASELINE_TIMEOUT"
 MEMORY_ENV = "UNMESH_BASELINE_MEMORY_MB"
+PGID_ENV = "UNMESH_BASELINE_PGID_FILE"
 DEFAULT_TIMEOUT_S = 55.0
 VERSION_TIMEOUT_S = 15.0
-POLL_S = 0.5
+POLL_S = 0.05
 FREECAD_MESH_TOLERANCE = 0.05
 LABEL_DEFLECTION = (0.005, 0.1)
 CANDIDATES = 16
@@ -99,6 +100,40 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
+def _memory_limiter(cap_mb: float):
+    limit = int(max(cap_mb, 1.0) * 2**20)
+
+    def _limit() -> None:
+        try:
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        except (ValueError, OSError, ImportError, AttributeError):
+            pass
+
+    return _limit
+
+
+def _record_tool_pgid(pid: int) -> str | None:
+    path = os.environ.get(PGID_ENV)
+    if not path:
+        return None
+    try:
+        Path(path).write_text(str(os.getpgid(pid)))
+    except (OSError, PermissionError):
+        return None
+    return path
+
+
+def _clear_tool_pgid(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def _run(
     cmd: list[str], env: dict[str, str] | None = None, timeout: float | None = None
 ) -> tuple[int, str, str]:
@@ -112,7 +147,9 @@ def _run(
         text=True,
         env=env,
         start_new_session=True,
+        preexec_fn=_memory_limiter(cap) if cap is not None else None,
     )
+    pgid_file = _record_tool_pgid(proc.pid)
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -132,6 +169,8 @@ def _run(
     except BaseException:
         _kill_tree(proc)
         raise
+    finally:
+        _clear_tool_pgid(pgid_file)
     return proc.returncode, out, err
 
 

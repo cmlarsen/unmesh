@@ -112,7 +112,9 @@ area-weighted majority true surface type of the input triangles mapped to it;
 otherwise it is faceted, an approximation. So a plane sitting on a true cylinder,
 cone, sphere or torus counts as faceted, and a designed plane counts as analytic
 however few input triangles it carries. Regions no input triangle maps to are
-ignored.
+ignored. A per-triangle plane soup on a true plane therefore counts as analytic
+by design: the no-analytic rate measures surface type, and over-segmentation
+shows in F1.
 
 The no-analytic rate therefore measures whether curved truth became non-curved
 surfaces: a converter that turns a true cylinder, cone, sphere or torus into

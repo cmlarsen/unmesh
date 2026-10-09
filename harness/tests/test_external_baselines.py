@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import types
 
 import numpy as np
@@ -208,7 +209,14 @@ def test_external_tool_timeout_is_recorded_and_killed(tmp_path, monkeypatch):
     assert not psutil.pid_exists(int(pid_file.read_text().strip()))
 
 
-def test_external_tool_memory_cap_kills_and_raises(tmp_path, monkeypatch):
+def _wait_gone(pid, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while psutil.pid_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not psutil.pid_exists(pid)
+
+
+def test_external_tool_memory_cap_stops_the_tool(tmp_path, monkeypatch):
     pid_file = tmp_path / "tool.pid"
     alloc = "import time; held = bytearray(500 * 1024 * 1024); time.sleep(600)"
     tool = _script(
@@ -218,9 +226,63 @@ def test_external_tool_memory_cap_kills_and_raises(tmp_path, monkeypatch):
     )
     monkeypatch.setenv(external.MEMORY_ENV, "256")
     monkeypatch.setenv(external.TIMEOUT_ENV, "30")
-    with pytest.raises(RuntimeError, match="memory cap"):
-        external._run([str(tool)])
-    assert not psutil.pid_exists(int(pid_file.read_text().strip()))
+    try:
+        code, _, _ = external._run([str(tool)])
+    except RuntimeError as error:
+        assert "memory cap" in str(error)
+    else:
+        assert code != 0
+    assert _wait_gone(int(pid_file.read_text().strip()))
+
+
+def _allocating_tool(tmp_path, peak_file, chunk_mb=2, period_s=0.008):
+    return _script(
+        tmp_path,
+        "greedy-tool",
+        f"""#!{sys.executable}
+import os
+import time
+
+import psutil
+
+peak_file = {str(peak_file)!r}
+chunk = {chunk_mb} * 1024 * 1024
+held = []
+process = psutil.Process()
+peak = 0
+while True:
+    held.append(bytearray(chunk))
+    peak = max(peak, process.memory_info().rss)
+    tmp = peak_file + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(str(peak))
+    os.replace(tmp, peak_file)
+    time.sleep({period_s})
+""",
+    )
+
+
+def test_external_tool_memory_cap_is_enforced_tightly(tmp_path, monkeypatch):
+    cap_mb = 512
+    peak_file = tmp_path / "peak"
+    tool = _allocating_tool(tmp_path, peak_file)
+    monkeypatch.setenv(FREECAD_ENV, str(tool))
+    monkeypatch.delenv(external.MEMORY_ENV, raising=False)
+    summary = run_grid(
+        _one_part_grid(),
+        ["freecad-refine"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=30,
+        memory_cap_mb=cap_mb,
+        log=lambda *_: None,
+    )
+    record = read_results(summary.results_path)[0]
+    assert record["status"] == "error", record
+    assert peak_file.is_file(), record
+    peak = int(peak_file.read_text())
+    assert peak < 1.25 * cap_mb * 2**20, f"{peak / 2**20:.0f} MB over {cap_mb} MB cap"
 
 
 KILLER = """import os
@@ -290,13 +352,38 @@ def test_worker_kill_reaps_a_converters_children(tmp_path, monkeypatch):
     record = read_results(summary.results_path)[0]
     assert record["status"] in ("error", "timeout"), record
     assert pid_file.is_file()
-    assert not psutil.pid_exists(int(pid_file.read_text().strip()))
+    assert _wait_gone(int(pid_file.read_text().strip()))
+
+
+def test_dead_worker_reaps_its_tool_process_group(tmp_path, monkeypatch):
+    pid_file = tmp_path / "tool.pid"
+    tool = _script(
+        tmp_path,
+        "suicidal-tool",
+        f'#!/bin/sh\necho $$ > "{pid_file}"\nsleep 1\nkill -9 "$PPID"\nexec sleep 600\n',
+    )
+    monkeypatch.setenv(FREECAD_ENV, str(tool))
+    monkeypatch.delenv(external.MEMORY_ENV, raising=False)
+    summary = run_grid(
+        _one_part_grid(),
+        ["freecad-refine"],
+        tmp_path / "out",
+        jobs=1,
+        sha="s",
+        timeout=30,
+        log=lambda *_: None,
+    )
+    record = read_results(summary.results_path)[0]
+    assert record["status"] == "error", record
+    assert pid_file.is_file(), record
+    assert _wait_gone(int(pid_file.read_text().strip()))
 
 
 class _DeadSlot:
     def __init__(self, ctx):
         self.ready = False
         self.task = None
+        self.pgid_file = None
         self.peak = 0.0
         self.started = 0.0
         self.conn, child = ctx.Pipe()
