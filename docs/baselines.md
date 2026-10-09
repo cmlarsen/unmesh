@@ -157,15 +157,15 @@ counts are the same as before.
 
 | family | cells | mean F1 | no-analytic | failure |
 |---|---|---|---|---|
-| boss_plate | 15 | 0.570 | 0% | 0% |
-| lshape_outline | 15 | 0.507 | 0% | 0% |
-| plate_pockets | 10 | 0.540 | 0% | 0% |
-| polygon_prism | 10 | 0.486 | 0% | 0% |
-| rotated_pockets | 10 | 0.620 | 0% | 0% |
-| square_slots | 10 | 0.540 | 0% | 0% |
-| stepped_block | 10 | 0.519 | 0% | 0% |
-| thin_walls | 10 | 0.514 | 0% | 0% |
-| through_cuts | 10 | 0.552 | 0% | 0% |
+| boss_plate | 15 | 0.570 | 60% | 0% |
+| lshape_outline | 15 | 0.507 | 60% | 0% |
+| plate_pockets | 10 | 0.540 | 60% | 0% |
+| polygon_prism | 10 | 0.486 | 60% | 0% |
+| rotated_pockets | 10 | 0.620 | 50% | 0% |
+| square_slots | 10 | 0.540 | 60% | 0% |
+| stepped_block | 10 | 0.519 | 60% | 0% |
+| thin_walls | 10 | 0.514 | 60% | 0% |
+| through_cuts | 10 | 0.552 | 50% | 0% |
 
 ### stl2step
 
@@ -215,27 +215,27 @@ counts are the same as before.
 
 | family | cells | mean F1 | no-analytic | failure |
 |---|---|---|---|---|
-| boss_plate | 36 | 0.000 | 0% | 0% |
-| lshape_outline | 36 | 0.000 | 0% | 0% |
-| plate_pockets | 24 | 0.000 | 0% | 0% |
-| polygon_prism | 24 | 0.000 | 0% | 0% |
-| rotated_pockets | 24 | 0.001 | 0% | 0% |
-| square_slots | 24 | 0.000 | 0% | 0% |
-| stepped_block | 24 | 0.000 | 0% | 0% |
-| thin_walls | 24 | 0.000 | 0% | 0% |
-| through_cuts | 24 | 0.000 | 0% | 0% |
+| boss_plate | 36 | 0.000 | 100% | 0% |
+| lshape_outline | 36 | 0.000 | 100% | 0% |
+| plate_pockets | 24 | 0.000 | 100% | 0% |
+| polygon_prism | 24 | 0.000 | 100% | 0% |
+| rotated_pockets | 24 | 0.001 | 100% | 0% |
+| square_slots | 24 | 0.000 | 100% | 0% |
+| stepped_block | 24 | 0.000 | 100% | 0% |
+| thin_walls | 24 | 0.000 | 100% | 0% |
+| through_cuts | 24 | 0.000 | 100% | 0% |
 
 ### stl2step
 
 | family | cells | mean F1 | no-analytic | failure |
 |---|---|---|---|---|
-| boss_plate | 36 | 0.709 | 0% | 0% |
+| boss_plate | 36 | 0.709 | 31% | 0% |
 | lshape_outline | 36 | 0.990 | 0% | 0% |
-| plate_pockets | 24 | 0.594 | 0% | 0% |
-| polygon_prism | 24 | 0.804 | 0% | 0% |
-| rotated_pockets | 24 | 0.560 | 0% | 0% |
-| square_slots | 24 | 0.875 | 0% | 0% |
-| stepped_block | 24 | 0.792 | 0% | 0% |
-| thin_walls | 24 | 0.155 | 0% | 0% |
-| through_cuts | 24 | 0.587 | 0% | 0% |
+| plate_pockets | 24 | 0.594 | 42% | 0% |
+| polygon_prism | 24 | 0.804 | 8% | 0% |
+| rotated_pockets | 24 | 0.560 | 46% | 0% |
+| square_slots | 24 | 0.875 | 12% | 0% |
+| stepped_block | 24 | 0.792 | 8% | 0% |
+| thin_walls | 24 | 0.155 | 83% | 0% |
+| through_cuts | 24 | 0.587 | 38% | 0% |
 
