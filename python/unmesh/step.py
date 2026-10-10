@@ -437,6 +437,18 @@ def _check_face_fluxes(ir: Ir, g: _Group, tris: np.ndarray, occ) -> None:
             mine = written.get(r)
             if mine is None:
                 continue
+            if not mine.triangulated:
+                g.valid = False
+                g.issues.append(
+                    f"region {r}: the written face could not be triangulated for the flux check"
+                )
+                continue
+            if not np.isfinite(mine.flux):
+                g.valid = False
+                g.issues.append(
+                    f"region {r}: the written face's flux about its centre is not finite"
+                )
+                continue
             t = tris[np.asarray(ir.regions[r].triangles, dtype=np.int64)] - origins[r]
             theirs = sign * _signed_volume(t)
             d = deviation[r] + deflection

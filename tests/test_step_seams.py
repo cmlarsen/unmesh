@@ -18,6 +18,14 @@ from build123d import (  # noqa: E402
     split,
 )
 from OCP.BRep import BRep_Tool  # noqa: E402
+from OCP.BRepBuilderAPI import (  # noqa: E402
+    BRepBuilderAPI_MakeEdge,
+    BRepBuilderAPI_MakeFace,
+    BRepBuilderAPI_MakeWire,
+)
+from OCP.GeomAPI import GeomAPI_Interpolate  # noqa: E402
+from OCP.gp import gp_Dir, gp_Pln, gp_Pnt  # noqa: E402
+from OCP.TColgp import TColgp_HArray1OfPnt  # noqa: E402
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE  # noqa: E402
 from OCP.TopExp import TopExp  # noqa: E402
 from OCP.TopoDS import TopoDS  # noqa: E402
@@ -353,6 +361,36 @@ def test_a_25_degree_tilted_cap_on_a_cylinder_writes_a_valid_mixed_solid(tmp_pat
     assert report.faceted_regions == 1
     assert report.max_shape_tolerance <= 1e-3
     assert any(s.surface_type == "cylinder" for s in report.seams)
+
+
+def _needle_planar_face():
+    a = gp_Pnt(0.0, 0.0, 0.0)
+    b = gp_Pnt(10.0, 0.0, 0.0)
+    c = gp_Pnt(10.0, 2e-6, 0.0)
+    pts = TColgp_HArray1OfPnt(1, 2)
+    pts.SetValue(1, b)
+    pts.SetValue(2, c)
+    interp = GeomAPI_Interpolate(pts, False, 1e-9)
+    interp.Perform()
+    curve = interp.Curve()
+    wire = BRepBuilderAPI_MakeWire()
+    wire.Add(BRepBuilderAPI_MakeEdge(a, b).Edge())
+    wire.Add(
+        BRepBuilderAPI_MakeEdge(curve, b, c, curve.FirstParameter(), curve.LastParameter()).Edge()
+    )
+    wire.Add(BRepBuilderAPI_MakeEdge(c, a).Edge())
+    plane = gp_Pln(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0))
+    return BRepBuilderAPI_MakeFace(plane, wire.Wire(), True).Face()
+
+
+def test_a_planar_face_with_a_curved_edge_still_has_a_finite_flux():
+    face = _needle_planar_face()
+    pts = occ._polygon(face)
+    assert pts is not None and len(pts) >= 3
+    origin = 0.5 * (pts.min(axis=0) + pts.max(axis=0))
+    flux = occ.face_fluxes(face, [(0, face)], None, {0: origin}, 1e-3, frozenset({0}))[0]
+    assert flux.triangulated
+    assert math.isfinite(flux.flux) and flux.area > 0.0
 
 
 def _curve_seam_edge_ratio(path):

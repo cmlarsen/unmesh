@@ -50,3 +50,13 @@ def test_noisy_bore_chamfer_writes_analytic(tmp_path, part, seed):
     ir, tris = check_regions("bore_chamfer", part, seed)
     written = unmesh.step.write(ir, tmp_path / "part.step", mesh=tris)
     assert written.valid and written.fallback is None, written.fallback_reason
+
+
+@pytest.mark.slow
+def test_noisy_through_bore_seed_11_writes_analytic(tmp_path):
+    pytest.importorskip("OCP")
+    import unmesh.step
+
+    ir, tris = check_regions("through_bore", 0, 11)
+    written = unmesh.step.write(ir, tmp_path / "part.step", mesh=tris)
+    assert written.valid and written.fallback is None, written.fallback_reason
