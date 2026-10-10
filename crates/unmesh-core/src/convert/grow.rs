@@ -12,7 +12,7 @@ use super::surface::Surface;
 use super::topology::NONE;
 
 pub const MAX_TURN_DEG: f64 = 15.0;
-const MAX_CHORD_TURN_DEG: f64 = 80.0;
+const MAX_CHORD_TURN_DEG: f64 = 60.0;
 const MIN_MEMBERS: usize = 3;
 const SEED_TRIES: usize = 3;
 const INIT_GATE: f64 = 5.0;
@@ -46,11 +46,14 @@ struct Graph {
 }
 
 /// The angle a chord of one curve may turn and still be a piece of the same
-/// tessellated patch. With a noise estimate driving the tolerance the planar
-/// stage can leave coarser chords (a chord that fits within `tol` bows by up
-/// to `4 atan(2 tol / width)`), so the cap rises for regions narrow enough to
-/// turn that far, never past `MAX_CHORD_TURN_DEG` so a real fold is not
-/// crossed. A clean tolerance keeps the fixed cap.
+/// tessellated patch. The turn is a geometric property of the chord the planar
+/// stage left, which is bounded by the tolerance, not the noise: a chord that
+/// fits within `tol` bows by up to `4 atan(2 tol / width)`. Scaling the term
+/// by `sigma` instead (a tenth as large) drops `straight_fillet`'s four
+/// recovered fillets to one on `noise_normal@0.1`, so the tolerance stands.
+/// What the #156 fix got wrong was the 80° ceiling: a narrow region could turn
+/// that far and swallow a whole part into one near-degenerate cone. A real
+/// fold approaches 90°, so the ceiling is `MAX_CHORD_TURN_DEG`, with a margin.
 fn max_turn(a: &Region, b: &Region, tol: f64, noisy: bool) -> f64 {
     if !noisy {
         return MAX_TURN_DEG.to_radians();

@@ -36,38 +36,71 @@ const INITIAL_TOL_REL: f64 = 5e-4;
 const MIN_TOL_REL: f64 = 1e-6;
 const FLOAT_TOL_REL: f64 = 5e-7;
 
-/// A tessellated surface that carries no vertex noise keeps many adjacent
-/// faces that are exactly coplanar: the mesher splits each flat quad (and each
-/// planar patch) into a pair of triangles lying in one plane, and any vertex
-/// noise destroys that. A mesh whose coplanar-pair share is this high was
-/// cleanly tessellated, so the noise estimate it yields is the tessellation's
-/// own chord residual, not sensor noise, and growth must keep its clean
-/// behaviour.
-const CLEAN_COPLANAR_FRACTION: f64 = 0.01;
+/// A tessellated surface that carries no vertex noise keeps every quad it was
+/// split into exactly coplanar: two triangles of one flat quad lie in one
+/// plane, and any vertex noise destroys that. Measuring the share over whole
+/// *patches* fails when a mesh carries large exactly-flat plateaus (a snapped
+/// base, a quantized scan) beside its noise, because those dominate the
+/// average; measuring it on the *small* coplanar patches (the quad splits)
+/// separates a clean tessellation, whose splits survive, from a noisy one,
+/// whose are broken. A clean mesh keeps its clean growth; a noisy one gets the
+/// noise-aware thresholds.
+const CLEAN_COPLANAR_SHARE: f64 = 0.5;
+/// A coplanar component of at least this many faces is a flat patch, not a
+/// quad split, and is left out of the share above.
+const CLEAN_PATCH_FACES: usize = 8;
 const COPLANAR_EPS: f64 = 1e-12;
 
-/// The share of interior face pairs whose normals are parallel to within
-/// `COPLANAR_EPS`, the signature of a noise-free tessellation (see
-/// `CLEAN_COPLANAR_FRACTION`).
-fn coplanar_fraction(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
-    let (mut coplanar, mut total) = (0u32, 0u32);
+/// The area-weighted share of interior face pairs that are exactly coplanar
+/// (`COPLANAR_EPS`) and lie in a coplanar component smaller than
+/// `CLEAN_PATCH_FACES` (see `CLEAN_COPLANAR_SHARE`). Weighting by the smaller
+/// face area keeps a quad split on a large flat face from being buried under
+/// the many tiny triangles beside it.
+fn coplanar_share(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
+    let n = info.len();
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            parent[x as usize] = parent[parent[x as usize] as usize];
+            x = parent[x as usize];
+        }
+        x
+    }
+    let mut pairs: Vec<(u32, u32, bool)> = Vec::new();
     for (f, ns) in nbr.iter().enumerate() {
         for &g in ns {
             let g = g as usize;
-            if g >= info.len() || g <= f {
+            if g >= n || g <= f {
                 continue;
             }
-            total += 1;
-            if 1.0 - dot(info[f].normal, info[g].normal).abs() < COPLANAR_EPS {
-                coplanar += 1;
+            let coplanar = 1.0 - dot(info[f].normal, info[g].normal).abs() < COPLANAR_EPS;
+            if coplanar {
+                let (a, b) = (find(&mut parent, f as u32), find(&mut parent, g as u32));
+                if a != b {
+                    parent[a as usize] = b;
+                }
             }
+            pairs.push((f as u32, g as u32, coplanar));
         }
     }
-    if total == 0 {
-        0.0
-    } else {
-        coplanar as f64 / total as f64
+    let mut size = vec![0u32; n];
+    for i in 0..n {
+        let r = find(&mut parent, i as u32) as usize;
+        size[r] += 1;
     }
+    let (mut num, mut den) = (0.0, 0.0);
+    for &(f, g, coplanar) in &pairs {
+        let r = find(&mut parent, f) as usize;
+        if size[r] >= CLEAN_PATCH_FACES as u32 {
+            continue;
+        }
+        let w = info[f as usize].area.min(info[g as usize].area);
+        den += w;
+        if coplanar {
+            num += w;
+        }
+    }
+    if den <= 0.0 { 1.0 } else { num / den }
 }
 
 fn floor(diag: f64, max_abs: f64) -> f64 {
@@ -265,8 +298,8 @@ fn finish(
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
-            let clean = coplanar_fraction(&shells.topo.nbr, info) >= CLEAN_COPLANAR_FRACTION;
-            noisy = !clean && NOISE_FACTOR * est > fl && NOISE_FACTOR * est < tol;
+            let clean = coplanar_share(&shells.topo.nbr, info) >= CLEAN_COPLANAR_SHARE;
+            noisy = !clean && NOISE_FACTOR * est > fl;
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
@@ -286,7 +319,14 @@ fn finish(
     timing::lap("snap");
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
-    let (mut finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
+    let (mut finals, flabel) = fit::finalize(
+        &regions,
+        &pairs,
+        &shells.comp_of,
+        &shells.topo,
+        tol,
+        w.diag,
+    );
     warnings.extend(tangency::snap(
         tangency::Args {
             vc: &w.vc,

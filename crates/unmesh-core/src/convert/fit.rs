@@ -674,16 +674,49 @@ fn merge_and_rebuild(
     (label2, regions)
 }
 
+/// A fitted surface that is geometrically impossible for the part: a cone
+/// that has flattened to a plane (half-angle within `CONE_MAX_HALF_ANGLE_DEG`
+/// of a right angle), a radius beyond the part's own diagonal, or a residual
+/// beyond it. A growth that admits chords turning too far fits one of these;
+/// it carries a huge residual and must not be emitted as analytic.
+fn degenerate(surface: &Surface, max: f64, sag: f64, scale: f64) -> bool {
+    let scale = scale.max(f64::MIN_POSITIVE);
+    if !max.is_finite() || max > scale || sag > scale {
+        return true;
+    }
+    let bad = |x: f64| !x.is_finite() || x <= 0.0;
+    // A legitimate fit's residual is the tessellation deflection, far below
+    // the feature's own size; a residual at or beyond it means the surface
+    // passed through (or beside) the region instead of along it.
+    let swollen = |feature: f64| max >= feature || sag >= feature;
+    match *surface {
+        Surface::Cylinder { radius, .. } => {
+            bad(radius) || radius > scale || swollen(radius)
+        }
+        Surface::Cone { half_angle, .. } => {
+            bad(half_angle) || half_angle >= CONE_MAX_HALF_ANGLE_DEG.to_radians()
+        }
+        Surface::Sphere { radius, .. } => bad(radius) || radius > scale || swollen(radius),
+        Surface::Torus { major, minor, .. } => {
+            bad(major) || bad(minor) || major > scale || minor > scale || swollen(minor)
+        }
+        Surface::Plane { .. } | Surface::Facets => false,
+    }
+}
+
+const CONE_MAX_HALF_ANGLE_DEG: f64 = 88.0;
+
 pub fn finalize(
     regions: &[Region],
     pairs: &[(u32, u32)],
     comp_of: &[u32],
     topo: &Topology,
     tol: f64,
+    scale: f64,
 ) -> (Vec<Final>, Vec<u32>) {
     let is_analytic: Vec<bool> = regions
         .iter()
-        .map(|r| r.area > 0.0 && r.max <= tol)
+        .map(|r| r.area > 0.0 && r.max <= tol && !degenerate(&r.surface, r.max, r.sag, scale))
         .collect();
     let mut fdsu = Dsu::new(regions.len());
     for &(a, b) in pairs {
