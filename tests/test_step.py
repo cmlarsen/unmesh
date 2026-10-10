@@ -112,6 +112,50 @@ def test_open_shell_written_as_shell(tmp_path):
     assert occ.count_solids(shape) == 0
 
 
+def test_coincident_bodies_write_two_solids(tmp_path):
+    tris = np.concatenate([box_tris(size=2.0), box_tris(size=2.0)])
+    ir, _ = unmesh.convert(tris)
+    assert len(ir.shells) == 2
+    report = step.write(ir, tmp_path / "d.step", mesh=tris)
+    assert report.valid and report.solids == 2
+    assert report.open_shells == []
+    shape = occ.read_step(tmp_path / "d.step")
+    assert occ.count_solids(shape) == 2 and occ.shell_count(shape) == 2
+
+
+def test_holey_mesh_reports_its_open_boundary(tmp_path):
+    tris = box_tris(size=2.0)[:-1]
+    ir, _ = unmesh.convert(tris)
+    report = step.write(ir, tmp_path / "h.step", mesh=tris)
+    assert report.open_shells == [0]
+    assert report.open_edges == 3
+    assert report.open_boundary_length == pytest.approx(2.0 + 2.0 + math.sqrt(8.0), rel=1e-9)
+    assert report.non_manifold_edges == 0
+    assert report.shells[0].open_edges == 3
+    assert report.shells[0].open_boundary_length == pytest.approx(
+        2.0 + 2.0 + math.sqrt(8.0), rel=1e-9
+    )
+    assert report.shells[0].non_manifold_edges == 0
+
+
+def test_non_manifold_open_shell_reports_its_edges(tmp_path):
+    a = np.array([0.0, 0.0, 0.0])
+    b = np.array([2.0, 0.0, 0.0])
+    tris = np.array(
+        [
+            [a, b, [0.0, 1.0, 0.0]],
+            [a, b, [0.0, 0.0, 1.0]],
+            [a, b, [0.0, -1.0, 0.0]],
+        ]
+    )
+    ir, _ = unmesh.convert(tris)
+    assert not ir.shells[0].closed
+    report = step.write(ir, tmp_path / "nm.step", mesh=tris)
+    assert report.open_shells == [0]
+    assert report.non_manifold_edges > 0
+    assert report.shells[0].non_manifold_edges > 0
+
+
 def test_mixed_facets_seam_gaps_recorded(tmp_path):
     report = step.write(load("mixed_facets"), tmp_path / "m.step")
     assert report.valid

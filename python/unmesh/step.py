@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from unmesh.ir import Ir
+from unmesh.ir import Facets, Ir
 
 READBACK_RELATIVE = 1e-9
 INPUT_VOLUME_RELATIVE = 1e-6
@@ -84,6 +84,9 @@ class ShellReport:
     issues: list[str] = field(default_factory=list)
     max_vertex_displacement: float = 0.0
     max_boundary_deviation: float = 0.0
+    open_edges: int = 0
+    open_boundary_length: float = 0.0
+    non_manifold_edges: int = 0
 
 
 @dataclass
@@ -119,6 +122,9 @@ class WriteReport:
     edge_fallbacks: list[EdgeFallback] = field(default_factory=list)
     tangent_edges: list[TangentEdge] = field(default_factory=list)
     open_shells: list[int] = field(default_factory=list)
+    open_edges: int = 0
+    open_boundary_length: float = 0.0
+    non_manifold_edges: int = 0
     readback: ReadBack | None = None
     verified: bool = False
     verified_by: Literal["occt", "text", "occt+text"] | None = None
@@ -540,6 +546,49 @@ def _area(t: np.ndarray) -> float:
     return float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
 
 
+def _open_boundary(ir: Ir, shell: int) -> tuple[int, float, int]:
+    used: dict[tuple[int, int], int] = {}
+    points: list[tuple[float, float, float]] = []
+    for region in ir.shells[shell].regions:
+        surface = ir.regions[region].surface
+        if not isinstance(surface, Facets):
+            continue
+        offset = len(points)
+        points.extend((float(p[0]), float(p[1]), float(p[2])) for p in surface.vertices)
+        for face in surface.faces:
+            a, b, c = (offset + int(face[0]), offset + int(face[1]), offset + int(face[2]))
+            for u, v in ((a, b), (b, c), (c, a)):
+                key = (min(u, v), max(u, v))
+                used[key] = used.get(key, 0) + 1
+    boundary = [edge for edge, count in used.items() if count == 1]
+    non_manifold = sum(1 for count in used.values() if count >= 3)
+    length = 0.0
+    for u, v in boundary:
+        a = np.asarray(points[u], dtype=float)
+        b = np.asarray(points[v], dtype=float)
+        length += float(np.linalg.norm(a - b))
+    return len(boundary), length, non_manifold
+
+
+def _shell_report(ir: Ir, g: _Group) -> ShellReport:
+    open_edges = open_boundary_length = non_manifold = 0.0
+    if g.kind == "shell":
+        open_edges, open_boundary_length, non_manifold = _open_boundary(ir, g.outer)
+    return ShellReport(
+        shell=g.outer,
+        kind=g.kind,
+        valid=g.valid,
+        volume=g.volume,
+        max_shape_tolerance=g.tolerance,
+        issues=g.issues,
+        max_vertex_displacement=g.moved,
+        max_boundary_deviation=g.deviation,
+        open_edges=int(open_edges),
+        open_boundary_length=float(open_boundary_length),
+        non_manifold_edges=int(non_manifold),
+    )
+
+
 @dataclass
 class _Verification:
     readback: ReadBack | None = None
@@ -755,6 +804,9 @@ def write(
     faces = [f for g in written for f in g.faces] if fallback is None else []
     if fallback is None and not complete and reason is not None:
         issues.append(reason)
+    shell_reports = [_shell_report(ir, g) for g in groups]
+    open_ids = {g.outer for g in written if g.kind == "shell"}
+    open_reports = [s for s in shell_reports if s.shell in open_ids]
     return WriteReport(
         valid=complete and len(written) == n_outer and (not verify or checked.ok),
         solids=_solid_count(written, occ, fallback, checked),
@@ -762,12 +814,7 @@ def write(
         faces=faces,
         fallback=fallback,
         fallback_reason=reason if fallback else None,
-        shells=[
-            ShellReport(
-                g.outer, g.kind, g.valid, g.volume, g.tolerance, g.issues, g.moved, g.deviation
-            )
-            for g in groups
-        ],
+        shells=shell_reports,
         seams=seams,
         issues=issues,
         faceted_regions=_faceted_regions(ir, written, fallback),
@@ -779,6 +826,9 @@ def write(
         edge_fallbacks=[e for g in written for e in g.edge_fallbacks] if fallback is None else [],
         tangent_edges=[e for g in written for e in g.tangent_edges] if fallback is None else [],
         open_shells=[g.outer for g in written if g.kind == "shell"],
+        open_edges=sum(s.open_edges for s in open_reports),
+        open_boundary_length=sum(s.open_boundary_length for s in open_reports),
+        non_manifold_edges=sum(s.non_manifold_edges for s in open_reports),
         readback=checked.readback,
         verified=checked.by is not None,
         verified_by=checked.by,

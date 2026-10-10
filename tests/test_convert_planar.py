@@ -137,6 +137,25 @@ def test_degenerate_and_duplicate_triangles_are_dropped():
     assert used == list(range(12))
 
 
+def test_coincident_closed_bodies_are_kept_and_reported():
+    v, f = box((0, 0, 0), (1, 1, 1))
+    ir, report = unmesh.convert(np.concatenate([v[f], v[f]]))
+    assert len(ir.shells) == 2
+    codes = [w.code for w in report.warnings]
+    assert codes.count("coincident_shells") == 1
+    assert "degenerate_triangles" not in codes
+
+
+def test_coincident_open_patch_is_dropped_not_stacked():
+    v, f = box((0, 0, 0), (1, 1, 1))
+    patch = v[f[:2]]
+    ir, report = unmesh.convert(np.concatenate([patch, patch]))
+    assert len(ir.shells) == 1 and not ir.shells[0].closed
+    codes = [w.code for w in report.warnings]
+    assert "coincident_shells" not in codes
+    assert "degenerate_triangles" in codes
+
+
 def grid_box(div, size=(100.0, 60.0, 40.0)):
     hi = np.array(size)
     g = np.arange(div) / div
