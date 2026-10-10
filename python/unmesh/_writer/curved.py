@@ -1267,16 +1267,41 @@ class _Builder:
         chords = list(zip(nodes, nodes[1:] + nodes[:1] if e.closed else nodes[1:], strict=False))
         cuts: dict[int, np.ndarray] = {}
         if e.closed and e.seam_point is not None:
+            snap = max(KINK_JOIN, self.ir.tolerances.vertex_merge)
+            count = len(nodes)
             k = min(range(len(chords)), key=lambda i: _segment_distance(e.seam_point, *chords[i]))
             p, q = chords[k]
+            moved_node = False
             if float(np.linalg.norm(e.seam_point - p)) <= KINK_JOIN:
                 e.seam_point = p
+                rotate = k
             elif float(np.linalg.norm(e.seam_point - q)) <= KINK_JOIN:
-                k, e.seam_point = (k + 1) % len(chords), q
+                e.seam_point = q
+                rotate = (k + 1) % count
+            elif float(np.linalg.norm(e.seam_point - p)) <= snap:
+                nodes[k] = e.seam_point
+                self.patch[_key(e.points[k])] = e.seam_point
+                moved = max(moved, float(np.linalg.norm(e.seam_point - e.points[k])))
+                rotate, moved_node = k, True
+            elif float(np.linalg.norm(e.seam_point - q)) <= snap:
+                j = (k + 1) % count
+                nodes[j] = e.seam_point
+                self.patch[_key(e.points[j])] = e.seam_point
+                moved = max(moved, float(np.linalg.norm(e.seam_point - e.points[j])))
+                rotate, moved_node = j, True
             else:
                 cuts[k] = e.seam_point
-            chords = chords[k:] + chords[:k]
-            cuts = {(i - k) % len(chords): x for i, x in cuts.items()}
+                rotate = k
+            if moved_node and moved > self.limit:
+                raise BuildError(
+                    f"regions {e.a}/{e.b}: a seam point is {moved:.3g} off the {s.type},"
+                    f" over the {self.limit:.3g} limit"
+                )
+            chords = list(
+                zip(nodes, nodes[1:] + nodes[:1] if e.closed else nodes[1:], strict=False)
+            )
+            chords = chords[rotate:] + chords[:rotate]
+            cuts = {(i - rotate) % len(chords): x for i, x in cuts.items()}
         planes = self.patch_planes(self.surface(patch))
         axis = geo.axis_of(s)
         plan = None

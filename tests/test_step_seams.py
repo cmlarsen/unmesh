@@ -23,10 +23,11 @@ from OCP.BRepBuilderAPI import (  # noqa: E402
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakeWire,
 )
+from OCP.Geom import Geom_Circle  # noqa: E402
 from OCP.GeomAPI import GeomAPI_Interpolate  # noqa: E402
-from OCP.gp import gp_Dir, gp_Pln, gp_Pnt  # noqa: E402
+from OCP.gp import gp_Ax2, gp_Dir, gp_Pln, gp_Pnt  # noqa: E402
 from OCP.TColgp import TColgp_HArray1OfPnt  # noqa: E402
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE  # noqa: E402
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED  # noqa: E402
 from OCP.TopExp import TopExp  # noqa: E402
 from OCP.TopoDS import TopoDS  # noqa: E402
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape  # noqa: E402
@@ -391,6 +392,27 @@ def test_a_planar_face_with_a_curved_edge_still_has_a_finite_flux():
     flux = occ.face_fluxes(face, [(0, face)], None, {0: origin}, 1e-3, frozenset({0}))[0]
     assert flux.triangulated
     assert math.isfinite(flux.flux) and flux.area > 0.0
+
+
+def test_a_closed_edge_polyline_follows_the_edge_orientation():
+    circle = Geom_Circle(
+        gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0), gp_Dir(1.0, 0.0, 0.0)), 5.0
+    )
+    edge = BRepBuilderAPI_MakeEdge(circle).Edge()
+    reversed_edge = TopoDS.Edge_s(edge.Reversed())
+    forward_pts = circle.Value(circle.FirstParameter())
+    reversed_pts = circle.Value(circle.LastParameter())
+    first, last = BRep_Tool.Range_s(edge)
+    assert np.linalg.norm(np.array(forward_pts.Coord()) - np.array(reversed_pts.Coord())) < 1e-9
+    assert edge.Orientation() != TopAbs_REVERSED
+    assert reversed_edge.Orientation() == TopAbs_REVERSED
+    forward = occ._edge_polyline(circle, first, last, edge.Orientation() == TopAbs_REVERSED)
+    backward = occ._edge_polyline(
+        circle, first, last, reversed_edge.Orientation() == TopAbs_REVERSED
+    )
+    assert np.linalg.norm(forward[0] - backward[0]) < 1e-9
+    assert forward[1][1] > 0.0
+    assert backward[1][1] < 0.0
 
 
 def _curve_seam_edge_ratio(path):
