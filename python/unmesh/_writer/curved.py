@@ -75,6 +75,8 @@ SEAM_SAMPLES = 9
 SEAM_DEPTH = 16
 SEAM_SLACK = 1.01
 SEAM_PLANE_COS = 0.999
+SEAM_CURVE_SLACK = 1.5
+SEAM_CURVE_SAMPLES = 256
 
 
 @dataclass
@@ -741,12 +743,50 @@ def _subdivide(surface, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
     ]
 
 
+def _subdivide_curve(surface, plane, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
+    if _chord_gap(surface, p, q) <= gap:
+        return []
+    if depth >= SEAM_DEPTH:
+        raise BuildError(f"a facets seam on a {surface.type} needs over {2**SEAM_DEPTH} pieces")
+    mid = 0.5 * (p + q)
+    if plane is None:
+        m = geo.closest(surface, mid)[0]
+    else:
+        m = geo.refine([surface, Plane(tuple(plane[0]), tuple(plane[1]))], mid)
+    return [
+        *_subdivide_curve(surface, plane, p, m, gap, depth + 1),
+        m,
+        *_subdivide_curve(surface, plane, m, q, gap, depth + 1),
+    ]
+
+
+def _curve_offsets(curve, surface, plane, count: int) -> tuple[float, float]:
+    first, last = curve.FirstParameter(), curve.LastParameter()
+    surf_off = plane_off = 0.0
+    for t in np.linspace(first, last, max(SEAM_CURVE_SAMPLES, count)):
+        q = _xyz(curve.Value(float(t)))
+        surf_off = max(surf_off, geo.distance(surface, q))
+        if plane is not None:
+            plane_off = max(plane_off, abs(float((q - plane[0]) @ plane[1])))
+    return surf_off, plane_off
+
+
 class _Builder:
     def __init__(
-        self, ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool, seam_gap=SEAM_GAP
+        self,
+        ir: Ir,
+        index: int,
+        vpos,
+        vmoved,
+        bad,
+        limit: float,
+        pool,
+        seam_gap=SEAM_GAP,
+        tolerance_cap=1e-3,
     ):
         self.ir = ir
         self.seam_gap = seam_gap
+        self.tolerance_cap = tolerance_cap
         self.patch: dict[tuple, np.ndarray] = {}
         self.splits: dict[tuple, list[np.ndarray]] = {}
         self.split_region: dict[tuple, int] = {}
@@ -1239,60 +1279,76 @@ class _Builder:
             cuts = {(i - k) % len(chords): x for i, x in cuts.items()}
         planes = self.patch_planes(self.surface(patch))
         axis = geo.axis_of(s)
-        use_curve = (
+        plan = None
+        if (
             isinstance(s, Cylinder)
             and axis is not None
-            and bool(planes)
+            and planes
             and all(abs(float(n @ axis)) >= SEAM_PLANE_COS for _, n in planes.values())
-        )
-        if not use_curve:
+        ):
+            plan = self.curve_seam_plan(s, chords, cuts, planes)
+        if plan is None:
             self.seam_straight(e, s, patch, chords, cuts, moved)
             return
-        chord_gap = gap = deviation = tolerance = 0.0
+        self.commit_curve_seam(e, s, patch, chords, cuts, moved, plan)
+
+    def curve_seam_plan(self, s, chords, cuts, planes):
+        chord_gap = 0.0
         inserted = 0
         runs = []
         for i, (p, q) in enumerate(chords):
             chord_gap = max(chord_gap, _chord_gap(s, p, q))
             plane = planes.get(frozenset((_key(p), _key(q))))
             if i in cuts:
-                left = _subdivide(s, p, cuts[i], self.seam_gap)
+                left = _subdivide_curve(s, plane, p, cuts[i], self.seam_gap)
                 at = len(left)
-                inner = [*left, cuts[i], *_subdivide(s, cuts[i], q, self.seam_gap)]
+                inner = [*left, cuts[i], *_subdivide_curve(s, plane, cuts[i], q, self.seam_gap)]
             else:
-                inner = _subdivide(s, p, q, self.seam_gap)
+                inner = _subdivide_curve(s, plane, p, q, self.seam_gap)
                 at = 0
-            self.splits[(_key(p), _key(q))] = inner
-            self.split_region[(_key(p), _key(q))] = e.seam
             inserted += len(inner)
-            if i in cuts:
-                self.seam_cuts[(_key(p), _key(q))] = [cuts[i]]
-                self.split_region[(_key(p), _key(cuts[i]))] = e.seam
-                self.split_region[(_key(cuts[i]), _key(q))] = e.seam
-            runs.append((inner, at))
-        loop: list[tuple[list, object]] = []
-        tail: list[tuple[list, object]] = []
-        for i, (p, q) in enumerate(chords):
-            inner, at = runs[i]
-            plane = planes.get(frozenset((_key(p), _key(q))))
             if i in cuts:
                 pieces = [[p, *inner[:at], inner[at]], [inner[at], *inner[at + 1 :], q]]
             else:
                 pieces = [[p, *inner, q]]
             built = []
             for pts in pieces:
-                edge, surf_off, plane_off = self.seam_curve(s, pts, plane)
+                curve = _interpolate(pts, False)
+                surf_off, plane_off = _curve_offsets(curve, s, plane, 8 * len(pts) + 1)
+                tol = max(EDGE_TOLERANCE, SEAM_CURVE_SLACK * max(surf_off, plane_off))
+                if tol > self.tolerance_cap:
+                    return None
+                built.append((pts, curve, surf_off, plane_off, tol))
+            runs.append((inner, at, built))
+        return chord_gap, inserted, runs
+
+    def commit_curve_seam(self, e, s, patch, chords, cuts, moved, plan):
+        chord_gap, inserted, runs = plan
+        gap = deviation = tolerance = 0.0
+        loop: list[tuple[list, object]] = []
+        tail: list[tuple[list, object]] = []
+        for i, (p, q) in enumerate(chords):
+            inner, at, built = runs[i]
+            self.splits[(_key(p), _key(q))] = inner
+            self.split_region[(_key(p), _key(q))] = e.seam
+            if i in cuts:
+                self.seam_cuts[(_key(p), _key(q))] = [cuts[i]]
+                self.split_region[(_key(p), _key(cuts[i]))] = e.seam
+                self.split_region[(_key(cuts[i]), _key(q))] = e.seam
+            edges = []
+            for pts, curve, surf_off, plane_off, tol in built:
+                edge, v0, v1 = self.make_seam_edge(pts, curve)
+                self.seam_tolerance(edge, v0, v1, tol)
                 gap = max(gap, surf_off)
                 deviation = max(deviation, plane_off)
-                tolerance = max(
-                    tolerance, max(EDGE_TOLERANCE, SEAM_SLACK * max(surf_off, plane_off))
-                )
+                tolerance = max(tolerance, tol)
                 self.seam_edges[(_key(pts[0]), _key(pts[-1]))] = (pts, [edge])
-                built.append((pts, edge))
+                edges.append((pts, edge))
             if i in cuts:
-                loop.append(built[1])
-                tail.append(built[0])
+                loop.append(edges[1])
+                tail.append(edges[0])
             else:
-                loop.extend(built)
+                loop.extend(edges)
         loop.extend(tail)
         e.edges = [edge for _, edge in loop]
         self.seam_loop_edges.update(hash(edge) for edge in e.edges)
@@ -1302,7 +1358,16 @@ class _Builder:
         e.nodes = nodes
         e.deviation = max(moved, gap, deviation, chord_gap)
         self.out.vertex_displacement[patch] = max(self.out.vertex_displacement[patch], moved)
-        record = SeamGap((e.a, e.b), s.type, len(e.points), gap, chord_gap, inserted, tolerance)
+        record = SeamGap(
+            (e.a, e.b),
+            s.type,
+            len(e.points),
+            gap,
+            chord_gap,
+            inserted,
+            tolerance,
+            plane_gap=deviation,
+        )
         self.out.seams.append(record)
         self.seam_records.append((record, e.edges))
 
@@ -1374,25 +1439,15 @@ class _Builder:
             return None
         return [TopoDS.Edge_s(e.Reversed()) for e in reversed(got[1])]
 
-    def seam_curve(self, surface, pts, plane=None) -> tuple:
-        curve = _interpolate(pts, False)
+    def make_seam_edge(self, pts, curve) -> tuple:
         v0 = self.pool.vertex(pts[0])
         v1 = self.pool.vertex(pts[-1])
         mk = BRepBuilderAPI_MakeEdge(curve, v0, v1, curve.FirstParameter(), curve.LastParameter())
         if not mk.IsDone():
             raise BuildError("a seam curve could not be built")
-        edge = mk.Edge()
-        surf_off = plane_off = 0.0
-        for t in np.linspace(curve.FirstParameter(), curve.LastParameter(), 4 * len(pts) + 1):
-            q = _xyz(curve.Value(float(t)))
-            surf_off = max(surf_off, geo.distance(surface, q))
-            if plane is not None:
-                plane_off = max(plane_off, abs(float((q - plane[0]) @ plane[1])))
-        self.seam_tolerance(edge, v0, v1, max(surf_off, plane_off))
-        return edge, surf_off, plane_off
+        return mk.Edge(), v0, v1
 
-    def seam_tolerance(self, edge, v0, v1, off: float) -> None:
-        tol = max(EDGE_TOLERANCE, SEAM_SLACK * off)
+    def seam_tolerance(self, edge, v0, v1, tol: float) -> None:
         self.builder.UpdateEdge(edge, tol)
         self.builder.SameParameter(edge, False)
         self.loose.append((edge, tol))
@@ -2106,9 +2161,17 @@ class _UVLoop:
 
 
 def build_shell(
-    ir: Ir, index: int, vpos, vmoved, bad, limit: float, pool, seam_gap: float = SEAM_GAP
+    ir: Ir,
+    index: int,
+    vpos,
+    vmoved,
+    bad,
+    limit: float,
+    pool,
+    seam_gap: float = SEAM_GAP,
+    tolerance_cap: float = 1e-3,
 ) -> CurvedShell:
-    out = _Builder(ir, index, vpos, vmoved, bad, limit, pool, seam_gap).run()
+    out = _Builder(ir, index, vpos, vmoved, bad, limit, pool, seam_gap, tolerance_cap).run()
     analyzer = BRepCheck_Analyzer(out.shell)
     if not analyzer.IsValid():
         raise BuildError(f"shell {index}: the assembled curved shell is invalid")

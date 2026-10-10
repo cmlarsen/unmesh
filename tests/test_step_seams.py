@@ -1,9 +1,22 @@
+import math
+
 import numpy as np
 import pytest
 
 pytest.importorskip("OCP")
 
-from build123d import Box, Cone, Cylinder, Pos, Sphere, Torus, fillet  # noqa: E402
+from build123d import (  # noqa: E402
+    Box,
+    Cone,
+    Cylinder,
+    Keep,
+    Plane,
+    Pos,
+    Sphere,
+    Torus,
+    fillet,
+    split,
+)
 from OCP.BRep import BRep_Tool  # noqa: E402
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE  # noqa: E402
 from OCP.TopExp import TopExp  # noqa: E402
@@ -97,20 +110,25 @@ def test_a_facets_patch_shares_its_seam_with_the_analytic_face(name, tmp_path):
         assert all(s.max_gap <= 1e-4 and s.tolerance <= 1e-3 for s in seams)
         assert all((s.inserted > 0) == (s.chord_gap > 1e-4) for s in seams)
         split = any(s.inserted for s in seams)
-        assert split == (name != "torus_tangent")
-        assert (report.faceted_faces > len(ir.regions[region].triangles)) == split
+        if name == "cylinder":
+            assert report.faceted_faces == len(ir.regions[region].triangles)
+        else:
+            assert split == (name != "torus_tangent")
+            assert (report.faceted_faces > len(ir.regions[region].triangles)) == split
     assert report.shells[0].volume == pytest.approx(shape.volume, rel=2e-3)
     assert _faces_per_edge(occ.read_step(path)) == {2}
 
 
 def test_a_coarser_seam_gap_inserts_fewer_points(tmp_path):
-    _, ir, tris, _ = _forced("cylinder")
+    _, ir, tris, region = _forced("cylinder")
     fine = step.write(ir, tmp_path / "f.step", mesh=tris)
     coarse = step.write(ir, tmp_path / "c.step", step.WriteOptions(max_seam_gap=1e-3), mesh=tris)
     assert fine.valid and coarse.valid and coarse.fallback is None
-    gap = max(s.max_gap for s in coarse.seams if s.surface_type == "cylinder")
-    assert 1e-4 < gap <= 1e-3
-    assert sum(s.inserted for s in coarse.seams) < sum(s.inserted for s in fine.seams)
+    fine_seams = [s for s in fine.seams if s.surface_type == "cylinder"]
+    coarse_seams = [s for s in coarse.seams if s.surface_type == "cylinder"]
+    assert all(s.max_gap <= 1e-3 for s in coarse_seams)
+    assert sum(s.inserted for s in coarse_seams) < sum(s.inserted for s in fine_seams)
+    assert fine.faceted_faces == coarse.faceted_faces == len(ir.regions[region].triangles)
 
 
 def test_a_flipped_facets_patch_falls_back(tmp_path):
@@ -228,15 +246,22 @@ def test_patches_over_half_the_triangles_write_the_faceted_solid(tmp_path):
 
 def test_a_seam_split_never_folds_a_triangle(tmp_path, monkeypatch):
     _, ir, tris, _ = _forced("cylinder")
-    original = curved._subdivide
+    straight = curved._subdivide
+    curve = curved._subdivide_curve
 
-    def outward(surface, p, q, gap, depth=0):
-        pts = original(surface, p, q, gap, depth)
+    def push(pts, surface):
         if isinstance(surface, IrCylinder) and pts:
             pts[0] = pts[0] + 50.0 * geo.closest(surface, pts[0])[1]
         return pts
 
+    def outward(surface, p, q, gap, depth=0):
+        return push(straight(surface, p, q, gap, depth), surface)
+
+    def outward_curve(surface, plane, p, q, gap, depth=0):
+        return push(curve(surface, plane, p, q, gap, depth), surface)
+
     monkeypatch.setattr(curved, "_subdivide", outward)
+    monkeypatch.setattr(curved, "_subdivide_curve", outward_curve)
     report = step.write(ir, tmp_path / "fold.step", mesh=tris)
     assert report.fallback == "faceted"
     assert "folds a facets triangle" in report.fallback_reason
@@ -303,3 +328,71 @@ def test_a_move_the_ir_claims_beyond_ten_times_tolerance_falls_back(tmp_path, mo
     ir, tris, _ = _forged_boundary_move()
     monkeypatch.setattr(topology, "RECORDED_MOVE_FACTOR", 1e9)
     assert step.write(ir, tmp_path / "unclamped.step", mesh=tris).fallback is None
+
+
+def _tilted_cap(tilt_deg, radius=30.0, height=20.0, cut=7.0):
+    body = Cylinder(radius, height)
+    plane = Plane(
+        origin=(0.0, 0.0, cut),
+        z_dir=(math.sin(math.radians(tilt_deg)), 0.0, math.cos(math.radians(tilt_deg))),
+    )
+    return split(body, bisect_by=plane, keep=Keep.BOTTOM)
+
+
+def test_a_25_degree_tilted_cap_on_a_cylinder_writes_a_valid_mixed_solid(tmp_path):
+    shape = _tilted_cap(2.5)
+    mesh = tessellate(shape, 0.05, 0.2)
+    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
+    ir = build_oracle_ir(mesh)
+    planes = [r for r in ir.regions if r.surface.type == "plane"]
+    cap = max(planes, key=lambda r: r.surface.normal[2])
+    ir = force_facets(ir, cap.id, tris)
+    report = step.write(ir, tmp_path / "tilted.step", mesh=tris)
+    assert report.valid and report.verified and report.readback.ok, report.issues
+    assert report.fallback is None, report.fallback_reason
+    assert report.faceted_regions == 1
+    assert report.max_shape_tolerance <= 1e-3
+    assert any(s.surface_type == "cylinder" for s in report.seams)
+
+
+def _curve_seam_edge_ratio(path):
+    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cylinder
+    from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
+
+    shape = occ.read_step(path)
+    edges = TopTools_IndexedDataMapOfShapeListOfShape()
+    TopExp.MapShapesAndAncestors_s(shape, TopAbs_EDGE, TopAbs_FACE, edges)
+    worst = 0.0
+    for i in range(1, edges.Extent() + 1):
+        edge = TopoDS.Edge_s(edges.FindKey(i))
+        tolerance = BRep_Tool.Tolerance_s(edge)
+        faces = edges.FindFromIndex(i)
+        adjacent = [TopoDS.Face_s(faces.First())]
+        if faces.Size() > 1:
+            adjacent.append(TopoDS.Face_s(faces.Last()))
+        if not any(BRepAdaptor_Surface(f).GetType() == GeomAbs_Cylinder for f in adjacent):
+            continue
+        curve = BRepAdaptor_Curve(edge)
+        first, last = BRep_Tool.Range_s(edge)
+        for j in range(257):
+            point = curve.Value(first + (last - first) * j / 256)
+            for face in adjacent:
+                surface = BRep_Tool.Surface_s(face)
+                distance = GeomAPI_ProjectPointOnSurf(point, surface).LowerDistance()
+                worst = max(worst, distance / tolerance)
+    return worst
+
+
+def test_curve_seam_edge_tolerance_covers_both_adjacent_surfaces(tmp_path):
+    shape = _tilted_cap(2.5)
+    mesh = tessellate(shape, 0.05, 0.2)
+    tris = np.asarray(mesh.tris).reshape(-1, 3, 3)
+    ir = build_oracle_ir(mesh)
+    planes = [r for r in ir.regions if r.surface.type == "plane"]
+    cap = max(planes, key=lambda r: r.surface.normal[2])
+    ir = force_facets(ir, cap.id, tris)
+    path = tmp_path / "tolerance.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.valid and report.fallback is None, report.fallback_reason
+    assert _curve_seam_edge_ratio(path) <= 1.0

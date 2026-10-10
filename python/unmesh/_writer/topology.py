@@ -43,6 +43,7 @@ class SeamGap:
     chord_gap: float = 0.0
     inserted: int = 0
     tolerance: float = 0.0
+    plane_gap: float = 0.0
 
 
 @dataclass

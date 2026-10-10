@@ -169,23 +169,40 @@ the shell is assembled from shared edges, without sewing or ShapeFix.
   face closes there with a degenerate edge, as OCCT's own fillets do. Tangent circles on a sphere
   are moved onto it (onto a great circle when within the deviation limit of one), the pole is the
   exact intersection of the two meridians, and tangent edges ending there are refitted to it.
-- **`facets` regions next to a curved region** share straight seam edges with it. The interior
+- **`facets` regions next to a curved region** share their seam edges with it. The interior
   boundary points are moved onto the curved surface (the patch vertices with them; a vertex where
-  only one analytic surface meets is moved onto it), and every chord of the boundary is split at
-  the surface point nearest its midpoint, recursively, until each piece is within `max_seam_gap` of
-  the surface (sampled at seven interior points). A closed boundary that winds around the surface
-  also gets a point where the surface's seam crosses it. The patch triangle on a split chord is
-  fanned from its opposite corner (from its centroid when more than one of its sides is split), and
-  a fan triangle that folds over fails the shell. The curved face and the triangles use the same
-  edges, so there is no gap and no T-junction; each edge's tolerance covers its distance from the
-  curved surface (1.01 times the sampled distance, at least `1e-7`). Each seam is reported in `seams`.
+  only one analytic surface meets is moved onto it). Two seam paths are written, chosen per seam:
+  - **Straight seam** (every case except a cylinder cap): every chord of the boundary is split at
+    the surface point nearest its midpoint, recursively, until each piece is within `max_seam_gap` of
+    the surface (sampled at seven interior points). A closed boundary that winds around the surface
+    also gets a point where the surface's seam crosses it. The patch triangle on a split chord is
+    fanned from its opposite corner (from its centroid when more than one of its sides is split), and
+    a fan triangle that folds over fails the shell. Each straight edge's tolerance covers its
+    distance from the curved surface (1.01 times the sampled distance, at least `1e-7`).
+  - **Curve seam** (a cylinder whose cap facet planes are within about 2.6 degrees of perpendicular
+    to its axis, `SEAM_PLANE_COS = 0.999`): one interpolated B-spline edge per boundary chord,
+    replacing the fan of straight edges. Each chord is recursively subdivided at its midpoint and
+    the midpoint is moved onto *both* the cylinder and the facet triangle's plane, so the knots lie
+    on their intersection and the curve hugs it; `max_seam_gap` sets the knot spacing (the chord
+    gap) but not the curve's offset. Each curve edge's tolerance is 1.5 times the largest distance
+    from the curve to the nearest of the two surfaces, sampled at no fewer than 256 points (and 8
+    per knot span), at least `1e-7`; each endpoint vertex gets at least the edge tolerance. When
+    that tolerance would exceed `max_shape_tolerance`, the seam falls back to the straight path
+    instead of failing the whole part, which is what keeps a cap tilted more than the curve seam
+    can cover (for example 2.5 degrees at a 0.05 deflection) written analytic.
+  The curved face and the triangles use the same edges, so there is no gap and no T-junction. Each
+  seam is reported in `seams`, with `max_gap` the largest distance of its written edges to the
+  curved surface and `plane_gap` the largest distance to the cap plane.
   Two alternatives were measured and rejected (#34), on the oracle IRs of five seeds of every
   curved and chamfer_fillet family with one seeded non-planar region forced to `facets` (75 parts,
   deflection (0.01, 0.2)): keeping the mesh chords as edges with their tolerance loosened to cover
   the gap, and trimming the curved face by the chord polyline projected onto it (the triangles then
   share the projected curves). Both need tolerances up to 5e-3, so 29 of the 75 parts exceed the
   `1e-3` cap and fall back whole; subdividing needs at most 8.8e-5, writes all 75 mixed, and adds
-  13% more triangle faces.
+  13% more triangle faces. The curve seam is a third design (#147): it keeps the straight path's
+  subdivision as interpolation knots but replaces the fan of straight edges with one B-spline edge
+  per chord, so the seam-edge count drops from thousands to one per chord and the write no longer
+  scales with the subdivision.
 - **Faces** lie on the IR surface, oriented by the IR (`reversed` faces are built on the natural
   surface and reversed), with explicit pcurves. A pcurve is OCCT's projection of the edge, re-anchored
   on exact surface parameters; where that projection is not exact, the pcurve interpolates the exact
@@ -350,7 +367,7 @@ construction only.
 | `fallback` | `None`, or `"faceted"` when the whole part fell back. |
 | `fallback_reason` | Why, when `fallback` is set. |
 | `shells` | `ShellReport(shell, kind, valid, volume, max_shape_tolerance, issues, max_vertex_displacement, max_boundary_deviation)` per outer shell; `kind` is `"solid"` or `"shell"`. |
-| `seams` | `SeamReport(regions, surface_type, points, max_gap, chord_gap, inserted, tolerance)` for each facets/analytic boundary. Next to a plane, `max_gap` is the largest distance from the boundary points to the plane and the rest are 0. Next to a curved surface, `max_gap` is the largest distance from the written seam edges to the surface, `chord_gap` the same for the unsplit boundary chords (the gap the subdivision closed), `inserted` the number of points added, and `tolerance` the largest tolerance of the seam's edges. |
+| `seams` | `SeamReport(regions, surface_type, points, max_gap, chord_gap, inserted, tolerance, plane_gap)` for each facets/analytic boundary. Next to a plane, `max_gap` is the largest distance from the boundary points to the plane and the rest are 0. Next to a curved surface, `max_gap` is the largest distance from the written seam edges to the curved surface, `plane_gap` the largest distance to the facets cap plane (0 on the straight seam path), `chord_gap` the same as `max_gap` for the unsplit boundary chords (the gap the subdivision closed), `inserted` the number of points added, and `tolerance` the largest tolerance of the seam's edges. |
 | `faceted_regions` | Number of regions written as triangle faces: the `facets` regions of a mixed solid, or every region after a faceted fallback. |
 | `faceted_faces` | Number of triangle faces written for `facets` regions, after seam splits (0 after a faceted fallback). |
 | `issues` | Reasons something was not written, including the failure when there was no mesh to fall back on, any read-back or text-check mismatch, and a write that could not be verified. |
