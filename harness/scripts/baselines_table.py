@@ -7,11 +7,29 @@ markdown table per converter: one row per family, with the mean F1 over the ok
 cells, the rate at which the output has no analytic faces (the writer fell back
 to faceted, or every written region is faceted — a ``facets`` patch, or a surface
 that does not match the area-weighted majority true surface type of its input
-triangles), and the failure rate.
+triangles), the failure rate and the timeout count.
 Cells whose operator names a noise step are split into their own section so they
 do not dilute the clean signal::
 
     uv run --locked harness/scripts/baselines_table.py RUNS/smoke.jsonl
+
+The family is derived from the part id (``complex_void-0003`` -> ``complex_void``,
+``imported-0225`` -> ``imported``); failed and skipped records carry no ``family``
+field, so grouping on the record field used to hide every failure in a ``?`` row.
+
+Statuses are counted separately:
+
+- ``ok`` cells are the F1 / no-analytic sample and the numerator of the table.
+- a converter ``failure`` (an error or a timeout raised by the converter, its
+  external tool, or the write/score stages) and a harness ``timeout`` both count
+  against the family; ``timeout`` is also shown in its own column.
+- ``skipped`` cells (an inapplicable operator) are excluded from the denominator
+  and reported on the ``skipped as inapplicable`` line.
+- a ground-truth preparation failure or a degradation (operator) failure is a
+  harness failure, not a converter failure: it is reported on its own line and
+  excluded from the failure rate.
+
+Each section also carries an ``all families`` total row.
 
 The default converters are unmesh and the three baselines of #12; pass
 ``--converter`` (repeatable or comma separated) to override.
@@ -20,15 +38,28 @@ The default converters are unmesh and the three baselines of #12; pass
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 DEFAULT_CONVERTERS = ("unmesh", "faceted", "freecad-refine", "stl2step")
 NOISE_MARKERS = ("noise",)
+PREP_FAILURE = "preparation failed"
 
 
 def is_noise(operator: str) -> bool:
     return any(marker in operator for marker in NOISE_MARKERS)
+
+
+def family(record: dict[str, Any]) -> str:
+    """The corpus family of a record, derived from its part id.
+
+    Reuses the harness's own reverse of ``corpus.entry_id`` so failure and
+    timeout records — which carry no ``family`` field — group with their family.
+    """
+    from unmesh_harness.acceptance import family as _family
+
+    return _family(record)
 
 
 def no_analytic(record: dict[str, Any]) -> bool:
@@ -48,6 +79,35 @@ def _fmt(value: float | None, spec: str = ".3f") -> str:
     return "-" if value is None else format(value, spec)
 
 
+def is_harness_failure(record: dict[str, Any]) -> bool:
+    """True for errors raised before the converter: prep or the degrade chain."""
+    if record.get("status") != "error":
+        return False
+    if PREP_FAILURE in str(record.get("error", "")):
+        return True
+    tail = "\n".join(record.get("traceback") or [])
+    return "unmesh_harness.degrade" in tail or "unmesh_harness/degrade" in tail
+
+
+def is_timeout(record: dict[str, Any]) -> bool:
+    if record.get("status") == "timeout":
+        return True
+    return str(record.get("error", "")).startswith("TimeoutError")
+
+
+def classify(record: dict[str, Any]) -> str:
+    status = record.get("status")
+    if status == "ok":
+        return "ok"
+    if status == "skipped":
+        return "skipped"
+    if is_harness_failure(record):
+        return "harness"
+    if is_timeout(record):
+        return "timeout"
+    return "failure"
+
+
 def load_records(paths: list[Path]) -> list[dict[str, Any]]:
     from unmesh_harness.runner.results import read_results
 
@@ -65,14 +125,42 @@ def load_records(paths: list[Path]) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
-def _metrics(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    kinds = Counter(classify(r) for r in rows)
     ok = [r for r in rows if r.get("status") == "ok"]
+    considered = len(rows) - kinds["skipped"] - kinds["harness"]
+    failures = kinds["timeout"] + kinds["failure"]
+    harness = [r for r in rows if classify(r) == "harness"]
     return {
-        "cells": float(len(rows)),
+        "cells": considered,
         "f1": _mean([float(r["f1"]) for r in ok if r.get("f1") is not None]),
         "no_analytic": _mean([1.0 if no_analytic(r) else 0.0 for r in ok]),
-        "failure": (len(rows) - len(ok)) / len(rows) if rows else None,
+        "failure": failures / considered if considered else None,
+        "timeout": kinds["timeout"],
+        "skipped": kinds["skipped"],
+        "harness": len(harness),
+        "harness_prep": sum(1 for r in harness if PREP_FAILURE in str(r.get("error", ""))),
     }
+
+
+def _row(name: str, metrics: dict[str, Any]) -> str:
+    return (
+        f"| {name} | {int(metrics['cells'])} | {_fmt(metrics['f1'])} | "
+        f"{_fmt(metrics['no_analytic'], '.0%')} | {_fmt(metrics['failure'], '.0%')} | "
+        f"{int(metrics['timeout'])} |"
+    )
+
+
+def _footer(metrics: dict[str, Any]) -> list[str]:
+    lines = [f"skipped as inapplicable: {int(metrics['skipped'])}"]
+    if metrics["harness"]:
+        operator = metrics["harness"] - metrics["harness_prep"]
+        lines.append(
+            f"harness failures (excluded): {int(metrics['harness'])} "
+            f"({int(metrics['harness_prep'])} ground-truth preparation, "
+            f"{int(operator)} degradation)"
+        )
+    return lines
 
 
 def render(records: list[dict[str, Any]], converters: list[str]) -> str:
@@ -81,34 +169,25 @@ def render(records: list[dict[str, Any]], converters: list[str]) -> str:
     for noise in (False, True):
         lines += [f"## {'Noise rows' if noise else 'Clean rows'}", ""]
         for converter in present:
-            families = sorted(
-                {
-                    r.get("family", "?")
-                    for r in records
-                    if r["converter"] == converter and is_noise(r["operator"]) == noise
-                }
-            )
-            if not families:
+            rows = [
+                r
+                for r in records
+                if r["converter"] == converter and is_noise(r["operator"]) == noise
+            ]
+            if not rows:
                 continue
             lines += [
                 f"### {converter}",
                 "",
-                "| family | cells | mean F1 | no-analytic | failure |",
-                "|---|---|---|---|---|",
+                "| family | cells | mean F1 | no-analytic | failure | timeout |",
+                "|---|---|---|---|---|---|",
             ]
-            for family in families:
-                rows = [
-                    r
-                    for r in records
-                    if r["converter"] == converter
-                    and is_noise(r["operator"]) == noise
-                    and r.get("family", "?") == family
-                ]
-                m = _metrics(rows)
-                lines.append(
-                    f"| {family} | {int(m['cells'])} | {_fmt(m['f1'])} | "
-                    f"{_fmt(m['no_analytic'], '.0%')} | {_fmt(m['failure'], '.0%')} |"
-                )
+            for fam in sorted({family(r) for r in rows}):
+                lines.append(_row(fam, _metrics([r for r in rows if family(r) == fam])))
+            total = _metrics(rows)
+            lines.append(_row("**all families**", total))
+            lines.append("")
+            lines += _footer(total)
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -133,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     if not records:
         print("error: no records found")
         return 2
-    shas = sorted({r.get("git_sha", "") for r in records})
+    shas = sorted({str(r.get("git_sha", "")).split("+", 1)[0] for r in records})
     if len(shas) > 1:
         print(f"warning: records carry {len(shas)} git shas {shas}")
     print(render(records, converters))
