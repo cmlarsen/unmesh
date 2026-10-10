@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -37,6 +36,7 @@ from .topology import BuildError, FacePlan, ShellPlan
 SEW_TOLERANCE = 1e-6
 PRECISE_VOLUME = 1e-9
 KEY_SCALE = 1e7
+POLYGON_SAMPLES = 8
 
 
 def _key(p) -> tuple[int, int, int]:
@@ -238,6 +238,16 @@ class FaceFlux:
     area: float = 0.0
     perimeter: float = 0.0
     reach: float = 0.0
+    triangulated: bool = True
+
+
+def _edge_polyline(curve, first: float, last: float, start) -> list[np.ndarray]:
+    ts = np.linspace(first, last, POLYGON_SAMPLES)
+    a = np.asarray(curve.Value(float(first)).Coord(), dtype=float)
+    b = np.asarray(curve.Value(float(last)).Coord(), dtype=float)
+    if np.linalg.norm(a - start) > np.linalg.norm(b - start):
+        ts = ts[::-1]
+    return [np.asarray(curve.Value(float(t)).Coord(), dtype=float) for t in ts]
 
 
 def _polygon(face) -> np.ndarray | None:
@@ -249,15 +259,25 @@ def _polygon(face) -> np.ndarray | None:
     wires.Next()
     if wires.More():
         return None
-    pts = []
+    pts: list[np.ndarray] = []
     walk = BRepTools_WireExplorer(wire, face)
     while walk.More():
         edge = walk.Current()
         curve = BRep_Tool.Curve_s(edge, 0.0, 0.0)
-        if curve is None or not isinstance(curve, Geom_Line):
+        if curve is None:
             return None
-        pts.append(BRep_Tool.Pnt_s(walk.CurrentVertex()).Coord())
+        start = np.asarray(BRep_Tool.Pnt_s(walk.CurrentVertex()).Coord(), dtype=float)
+        if isinstance(curve, Geom_Line):
+            poly = [start]
+        else:
+            first, last = BRep_Tool.Range_s(edge)
+            poly = _edge_polyline(curve, first, last, start)
+        for p in poly:
+            if not pts or float(np.linalg.norm(p - pts[-1])) > 0.0:
+                pts.append(p)
         walk.Next()
+    while len(pts) > 1 and float(np.linalg.norm(pts[0] - pts[-1])) == 0.0:
+        pts.pop()
     if len(pts) < 3:
         return None
     pts = np.array(pts)
@@ -295,7 +315,7 @@ def face_fluxes(
         tri = BRep_Tool.Triangulation_s(copy, loc)
         f = out.setdefault(region, FaceFlux())
         if tri is None:
-            f.flux = math.nan
+            f.triangulated = False
             continue
         trsf = loc.Transformation()
         pts = (
