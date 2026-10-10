@@ -51,11 +51,16 @@ const CLEAN_COPLANAR_SHARE: f64 = 0.08;
 /// quad split, and is left out of the share above.
 const CLEAN_PATCH_FACES: usize = 8;
 /// Even a mesh whose coplanar share clears `CLEAN_COPLANAR_SHARE` is noisy
-/// when the noise estimate so far exceeds the floor that the coplanarity must
-/// be an artefact (an exactly flat base or a quantized scan leaves the flat
-/// parts coplanar while the rest keeps the noise). A quantized noisy scan has
-/// `5 sigma / floor` above this while the cleanest curved tessellation
-/// (`revolved_torus float32`) sits near 110.
+/// when the noise estimate so far exceeds the *part's own size* that the
+/// coplanarity must be an artefact (an exactly flat base or a quantized scan
+/// leaves the flat parts coplanar while the rest keeps the noise). Measured
+/// against `MIN_TOL_REL * diag`, never the `max_abs` term of the floor, which
+/// would make the decision move with translation: on the held-out parts a
+/// clean low-share tessellation sits at most at 14x (`revolved_dome`
+/// re-chorded), while the flat-based and quantized noisy scans the share
+/// misses start at 131x (`blind_bore` nn@0.1+flatbottom); 130 sits in that
+/// gap. Near the origin the floor *is* `MIN_TOL_REL * diag`, so this is the
+/// same threshold the `5 sigma / floor` form used.
 const NOISY_EST_RATIO: f64 = 130.0;
 /// A mesh whose estimate barely clears the floor is clean however its
 /// coplanarity reads: a clean re-chorded or refined surface has only the
@@ -123,14 +128,18 @@ fn floor(diag: f64, max_abs: f64) -> f64 {
 
 /// Whether the input carries vertex noise: its estimate `est` must clear the
 /// tolerance floor `fl`, and either its small-patch coplanar `share` is too
-/// low for a clean tessellation or the estimate is so far above the floor that
-/// any coplanarity must be an artefact (see `CLEAN_COPLANAR_SHARE` and
-/// `NOISY_EST_RATIO`). A mesh whose estimate is within `CLEAN_EST_RATIO` of
-/// the floor is clean however its coplanarity reads.
-fn noisy_mesh(share: f64, est: f64, fl: f64) -> bool {
+/// low for a clean tessellation or the estimate is so far above the *part's
+/// own size* (`MIN_TOL_REL * diag`, see `NOISY_EST_RATIO`) that any
+/// coplanarity must be an artefact. A mesh whose estimate is within
+/// `CLEAN_EST_RATIO` of the floor is clean however its coplanarity reads.
+/// The override is measured against the diagonal, not the floor: the floor
+/// carries the `max_abs` term (float precision for a part far from the
+/// origin), so tying the override to it would make the clean/noisy decision
+/// move with translation.
+fn noisy_mesh(share: f64, est: f64, fl: f64, diag: f64) -> bool {
     let est5 = NOISE_FACTOR * est;
     let clean = share >= CLEAN_COPLANAR_SHARE || est5 <= CLEAN_EST_RATIO * fl;
-    est5 > fl && (!clean || est5 > NOISY_EST_RATIO * fl)
+    est5 > fl && (!clean || est5 > NOISY_EST_RATIO * MIN_TOL_REL * diag)
 }
 
 pub fn convert_soup(
@@ -324,7 +333,7 @@ fn finish(
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
-            noisy = noisy_mesh(coplanar_share(&shells.topo.nbr, info), est, fl);
+            noisy = noisy_mesh(coplanar_share(&shells.topo.nbr, info), est, fl, w.diag);
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
@@ -345,7 +354,7 @@ fn finish(
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
     let (mut finals, flabel) =
-        fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol, w.diag);
+        fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol, &w.vc);
     warnings.extend(tangency::snap(
         tangency::Args {
             vc: &w.vc,
@@ -574,7 +583,7 @@ mod tests {
         let clean: Vec<[V3; 3]> = faces.iter().map(|f| f.map(|k| verts[k])).collect();
         let s = share_of(clean.clone());
         assert!(s > 0.9, "clean grid share {s}");
-        assert!(!noisy_mesh(s, 0.0, 1e-4));
+        assert!(!noisy_mesh(s, 0.0, 1e-4, 1e-4 / MIN_TOL_REL));
 
         let mut rng = Lcg(7);
         let mut jv = verts.clone();
@@ -584,7 +593,7 @@ mod tests {
         let jittered: Vec<[V3; 3]> = faces.iter().map(|f| f.map(|k| jv[k])).collect();
         let sj = share_of(jittered);
         assert!(sj < 0.1, "jittered grid share {sj}");
-        assert!(noisy_mesh(sj, 1e-2, 1e-4));
+        assert!(noisy_mesh(sj, 1e-2, 1e-4, 1e-4 / MIN_TOL_REL));
     }
 
     /// A single coplanar pair reads clean and a single tilted pair reads
@@ -624,19 +633,44 @@ mod tests {
             .collect();
         let s = share_of(jittered);
         assert!(s < 0.08, "flat-based noisy share {s}");
-        assert!(noisy_mesh(s, 1e-2, 1e-4));
+        assert!(noisy_mesh(s, 1e-2, 1e-4, 1e-4 / MIN_TOL_REL));
     }
 
     #[test]
     fn strong_estimate_overrides_coplanar_share() {
-        assert!(noisy_mesh(0.01, 1e-3, 1e-4));
-        assert!(!noisy_mesh(0.9, 1e-3, 1e-4));
-        assert!(noisy_mesh(0.9, 1e-3, 1e-6));
-        assert!(!noisy_mesh(0.9, 1e-7, 1e-4));
+        let d = |fl| fl / MIN_TOL_REL;
+        assert!(noisy_mesh(0.01, 1e-3, 1e-4, d(1e-4)));
+        assert!(!noisy_mesh(0.9, 1e-3, 1e-4, d(1e-4)));
+        assert!(noisy_mesh(0.9, 1e-3, 1e-6, d(1e-6)));
+        assert!(!noisy_mesh(0.9, 1e-7, 1e-4, d(1e-4)));
         // A low estimate reads clean even when the share is low (a refined
         // clean surface has no exact quad splits left but no noise either).
-        assert!(!noisy_mesh(0.0, 2e-5, 1e-4));
-        assert!(noisy_mesh(0.0, 1e-2, 1e-4));
+        assert!(!noisy_mesh(0.0, 2e-5, 1e-4, d(1e-4)));
+        assert!(noisy_mesh(0.0, 1e-2, 1e-4, d(1e-4)));
+    }
+
+    /// The clean/noisy decision must not move when the part is translated:
+    /// the strong-estimate override compares the estimate to the part's own
+    /// diagonal, not to the `max_abs` term of the floor. The near and far
+    /// floors straddle the estimate so the old `NOISY_EST_RATIO * fl` form
+    /// flips; the diagonal form does not.
+    #[test]
+    fn noisy_decision_is_translation_invariant() {
+        let diag = 20.0;
+        let near_floor = 1e-6 * diag;
+        let far_floor = 5e-7 * 1000.0;
+        assert!(near_floor < far_floor);
+        // A high-share mesh whose estimate is 500x the diagonal floor is
+        // noisy at either position; tied to the floor it would read clean far
+        // away, where the floor has risen above it.
+        let est = 2e-3;
+        assert!(noisy_mesh(0.9, est, near_floor, diag));
+        assert!(noisy_mesh(0.9, est, far_floor, diag));
+        // An estimate within the override multiple of the diagonal floor with
+        // the same share stays clean at either position.
+        let est = 1e-4;
+        assert!(!noisy_mesh(0.9, est, near_floor, diag));
+        assert!(!noisy_mesh(0.9, est, far_floor, diag));
     }
 
     #[test]

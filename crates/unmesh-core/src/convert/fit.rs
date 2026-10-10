@@ -674,35 +674,46 @@ fn merge_and_rebuild(
     (label2, regions)
 }
 
-/// A fitted surface that is geometrically impossible for the part: a cone
-/// that has flattened to a plane (half-angle within `CONE_MAX_HALF_ANGLE_DEG`
-/// of a right angle), a radius beyond the part's own diagonal, or a residual
-/// beyond it. A growth that admits chords turning too far fits one of these;
-/// it carries a huge residual and must not be emitted as analytic.
-fn degenerate(surface: &Surface, max: f64, sag: f64, scale: f64) -> bool {
-    let scale = scale.max(f64::MIN_POSITIVE);
-    if !max.is_finite() || max > scale || sag > scale {
+/// A fitted curved surface that the region does not actually support, judged
+/// on fit quality rather than on the size of its parameters: a legitimate
+/// 500 mm arc or 31.7 m cylinder is distinguished from a plane by its
+/// residual, never by its radius. Rejected when its own residual exceeds
+/// `tol`, when it is not a valid surface, or when a plane already fits the
+/// same vertices within `tol` of the curved fit (`plane_max <= max + tol`):
+/// the curved surface is then a plane in disguise, and a growth that admits
+/// chords turning too far fits exactly this, carrying a huge residual against
+/// the region it swallowed. The chord sagitta is deliberately not tested
+/// against `tol`: a legible coarse tessellation's facets bow by several times
+/// the auto linear tolerance while still fitting the surface exactly.
+fn degenerate(surface: &Surface, max: f64, sag: f64, tol: f64, plane_max: f64) -> bool {
+    if !max.is_finite() || !sag.is_finite() || max > tol {
+        return true;
+    }
+    if plane_max <= max + tol {
         return true;
     }
     let bad = |x: f64| !x.is_finite() || x <= 0.0;
-    // A legitimate fit's residual is the tessellation deflection, far below
-    // the feature's own size; a residual at or beyond it means the surface
-    // passed through (or beside) the region instead of along it.
-    let swollen = |feature: f64| max >= feature || sag >= feature;
     match *surface {
-        Surface::Cylinder { radius, .. } => bad(radius) || radius > scale || swollen(radius),
+        Surface::Cylinder { radius, .. } => bad(radius),
         Surface::Cone { half_angle, .. } => {
-            bad(half_angle) || half_angle >= CONE_MAX_HALF_ANGLE_DEG.to_radians()
+            bad(half_angle) || half_angle >= std::f64::consts::FRAC_PI_2
         }
-        Surface::Sphere { radius, .. } => bad(radius) || radius > scale || swollen(radius),
-        Surface::Torus { major, minor, .. } => {
-            bad(major) || bad(minor) || major > scale || minor > scale || swollen(minor)
-        }
+        Surface::Sphere { radius, .. } => bad(radius),
+        Surface::Torus { major, minor, .. } => bad(major) || bad(minor) || major <= minor,
         Surface::Plane { .. } | Surface::Facets => false,
     }
 }
 
-const CONE_MAX_HALF_ANGLE_DEG: f64 = 88.0;
+/// Largest distance from a region's vertices to its own best-fit plane, on
+/// the same weighted vertex sample `build_region` uses: a curved region whose
+/// plane fit is already within `tol` of the curved fit is planar in disguise.
+fn plane_fit_max(vc: &[V3], r: &Region, tol: f64) -> f64 {
+    if r.verts.is_empty() {
+        return f64::INFINITY;
+    }
+    let (n, d, _) = irls_plane(vc, &r.verts, [0.0, 0.0, 1.0], tol);
+    residual(vc, &r.verts, n, d).1
+}
 
 pub fn finalize(
     regions: &[Region],
@@ -710,11 +721,19 @@ pub fn finalize(
     comp_of: &[u32],
     topo: &Topology,
     tol: f64,
-    scale: f64,
+    vc: &[V3],
 ) -> (Vec<Final>, Vec<u32>) {
     let is_analytic: Vec<bool> = regions
         .iter()
-        .map(|r| r.area > 0.0 && r.max <= tol && !degenerate(&r.surface, r.max, r.sag, scale))
+        .map(|r| {
+            let curved = r.surface.is_analytic() && r.surface.as_plane().is_none();
+            let plane_max = if curved {
+                plane_fit_max(vc, r, tol)
+            } else {
+                f64::INFINITY
+            };
+            r.area > 0.0 && r.max <= tol && !degenerate(&r.surface, r.max, r.sag, tol, plane_max)
+        })
         .collect();
     let mut fdsu = Dsu::new(regions.len());
     for &(a, b) in pairs {
@@ -883,6 +902,52 @@ mod tests {
         ];
         let nbr = vec![[1, NONE, NONE], [0, NONE, NONE]];
         (v, f, nbr)
+    }
+
+    fn cyl(radius: f64) -> Surface {
+        Surface::Cylinder {
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius,
+            reversed: false,
+        }
+    }
+
+    fn cone(half_angle: f64) -> Surface {
+        Surface::Cone {
+            apex: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            half_angle,
+            reversed: false,
+        }
+    }
+
+    /// A fit is judged by its residual and by whether a plane already
+    /// explains the region, never by the size of its parameters: a radius far
+    /// beyond the part diagonal and a cone a degree off a plane are kept when
+    /// they fit, while the degenerate fits the growth can land on are
+    /// rejected.
+    #[test]
+    fn degenerate_rejects_on_quality_not_size() {
+        let tol = 1e-2;
+        assert!(!degenerate(&cyl(1e6), 1e-3, 1e-3, tol, 1.0));
+        assert!(!degenerate(&cone(1f64.to_radians()), 1e-3, 1e-3, tol, 1.0));
+        assert!(!degenerate(
+            &cone(89.0f64.to_radians()),
+            1e-3,
+            1e-3,
+            tol,
+            1.0
+        ));
+        assert!(degenerate(
+            &cone(89.98f64.to_radians()),
+            35.0,
+            0.0,
+            tol,
+            0.0
+        ));
+        assert!(degenerate(&cyl(31700.0), 31700.0, 0.0, tol, 0.0));
+        assert!(degenerate(&cyl(1e6), 1e-3, 1e-3, tol, 1.1e-2));
     }
 
     #[test]
