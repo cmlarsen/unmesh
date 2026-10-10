@@ -20,7 +20,13 @@ const REWEIGHT_STEPS: usize = 10;
 const CHOLESKY_FLOOR: f64 = 1e-6;
 const NEAR_RANK: usize = 6;
 const NEAR_FACTOR: f64 = 3.0;
+const BLIND_RATIO: f64 = 10.0;
+const EVIDENCE_RATIO: f64 = 1.1;
+const OUTLIER_RATIO: f64 = 15.0;
+const CURVE_SPREAD: f64 = 0.02;
+const FLAT_F_CRIT: f64 = 10.0;
 
+#[derive(Clone, Copy)]
 struct Sample {
     var: f64,
     dof: usize,
@@ -32,6 +38,23 @@ impl Sample {
     fn median_unbiased(&self) -> f64 {
         self.var.sqrt() / chi2_quantile(self.dof, 0.0).sqrt()
     }
+}
+
+struct Entry {
+    plain: Sample,
+    r2: Option<f64>,
+    weight: f64,
+}
+
+fn aggregate(samples: &mut [(f64, f64, Sample)]) -> Option<f64> {
+    let median = weighted_median(samples)?;
+    let info: f64 = samples
+        .iter()
+        .map(|(_, _, fit)| fit.pool.1 as f64 / fit.points as f64)
+        .sum();
+    let pooled = pooled_sigma(samples, median);
+    let shrink = POOL_INFO * POOL_INFO / (POOL_INFO * POOL_INFO + info * info);
+    Some((shrink * pooled * pooled + (1.0 - shrink) * median * median).sqrt())
 }
 
 fn chi2_quantile(dof: usize, z: f64) -> f64 {
@@ -112,7 +135,7 @@ pub fn estimate_sigma(
     let mut seen_face = Marks::new(faces.len());
     let mut ring = Marks::new(v.len());
     let mut seen_vert = Marks::new(v.len());
-    let mut samples: Vec<(f64, f64, Sample)> = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
     let mut pts: Vec<V3> = Vec::new();
     let mut dist: Vec<f64> = Vec::new();
     let mut queue: Vec<u32> = Vec::new();
@@ -142,6 +165,10 @@ pub fn estimate_sigma(
                 parent[a] = b;
             }
         }
+        let nsectors = (0..fan.len())
+            .filter(|&r| find(&mut parent, r) == r)
+            .count();
+        let multi = nsectors > 1;
         for root in 0..fan.len() {
             if find(&mut parent, root) != root {
                 continue;
@@ -210,19 +237,64 @@ pub fn estimate_sigma(
             if !near_points(v[vi], &mut pts, &mut dist) {
                 continue;
             }
-            if let Some(fit) = quadric_fit(v[vi], n, &pts) {
-                samples.push((fit.median_unbiased(), area / 3.0, fit));
+            if let Some((plain, r2)) = quadric_fit(v[vi], n, &pts, multi) {
+                entries.push(Entry {
+                    plain,
+                    r2,
+                    weight: area / 3.0,
+                });
             }
         }
     }
-    let median = weighted_median(&mut samples)?;
-    let info: f64 = samples
+    let mut base_in: Vec<(f64, f64, Sample)> = entries
         .iter()
-        .map(|(_, _, fit)| fit.pool.1 as f64 / fit.points as f64)
-        .sum();
-    let pooled = pooled_sigma(&samples, median);
-    let shrink = POOL_INFO * POOL_INFO / (POOL_INFO * POOL_INFO + info * info);
-    Some((shrink * pooled * pooled + (1.0 - shrink) * median * median).sqrt())
+        .map(|e| (e.plain.median_unbiased(), e.weight, e.plain))
+        .collect();
+    let base = aggregate(&mut base_in)?;
+    let mut large_plain: Vec<f64> = entries
+        .iter()
+        .filter(|e| e.plain.points >= NP)
+        .map(|e| e.plain.median_unbiased())
+        .collect();
+    large_plain.sort_by(f64::total_cmp);
+    let bulk = if large_plain.is_empty() {
+        base
+    } else {
+        large_plain[large_plain.len() / 2]
+    };
+    let r2_sample = |e: &Entry| match e.r2 {
+        Some(r2) => Sample {
+            var: r2 * chi2_quantile(1, 0.0),
+            dof: 1,
+            points: e.plain.points,
+            pool: (r2, 1),
+        },
+        None => e.plain,
+    };
+    let mut crease_in: Vec<(f64, f64, Sample)> = entries
+        .iter()
+        .filter(|e| e.plain.points >= NP)
+        .filter(|e| e.plain.median_unbiased() <= OUTLIER_RATIO * bulk)
+        .map(|e| {
+            let sample = r2_sample(e);
+            (sample.median_unbiased(), e.weight, sample)
+        })
+        .collect();
+    let crease = aggregate(&mut crease_in).unwrap_or(0.0);
+    let mut all_in: Vec<(f64, f64, Sample)> = entries
+        .iter()
+        .filter(|e| e.plain.median_unbiased() <= OUTLIER_RATIO * bulk)
+        .map(|e| {
+            let sample = r2_sample(e);
+            (sample.median_unbiased(), e.weight, sample)
+        })
+        .collect();
+    let all = aggregate(&mut all_in).unwrap_or(base);
+    if base > 0.0 && all > EVIDENCE_RATIO * base {
+        Some(base.max(all).max(crease))
+    } else {
+        Some(base)
+    }
 }
 
 fn near_points(center: V3, pts: &mut Vec<V3>, dist: &mut Vec<f64>) -> bool {
@@ -292,7 +364,7 @@ fn frame(n: V3) -> (V3, V3) {
     (t1, cross(n, t1))
 }
 
-fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
+fn quadric_fit(center: V3, n: V3, pts: &[V3], multi: bool) -> Option<(Sample, Option<f64>)> {
     let (t1, t2) = frame(n);
     let mut local: Vec<(f64, f64, f64)> = pts
         .iter()
@@ -312,9 +384,11 @@ fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
         p.0 /= s;
         p.1 /= s;
     }
+    let pair = |sample: Sample| (sample, unseen_center(sample, &local, multi));
+    let empty = Nulls::empty();
     let all: Vec<usize> = (0..local.len()).collect();
-    let (mut coef, mut rank) = solve(&local, &all, NP)?;
-    let (plane, plane_rank) = solve(&local, &all, 3)?;
+    let (mut coef, mut rank) = solve(&local, &all, NP, &empty)?;
+    let (plane, plane_rank) = solve(&local, &all, 3, &empty)?;
     let plane_ss: f64 = local.iter().map(|p| resid(&plane, *p).powi(2)).sum();
     let plane_fit = || {
         let dof = local.len().checked_sub(plane_rank).filter(|&d| d > 0)?;
@@ -326,7 +400,7 @@ fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
         })
     };
     if local.len() < rank + MIN_DOF {
-        return plane_fit();
+        return plane_fit().map(pair);
     }
     let quad_ss: f64 = local.iter().map(|p| resid(&coef, *p).powi(2)).sum();
     let extra = rank.saturating_sub(plane_rank);
@@ -334,7 +408,7 @@ fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
         || (plane_ss - quad_ss) * ((local.len() - rank) as f64)
             <= PLANE_F_CRIT * extra as f64 * quad_ss;
     if plane_suffices && local.len() < LTS_MIN_POINTS {
-        return plane_fit();
+        return plane_fit().map(pair);
     }
     let plane_pool = plane_suffices
         .then(|| plane_fit().map(|p| p.pool))
@@ -359,19 +433,55 @@ fn quadric_fit(center: V3, n: V3, pts: &[V3]) -> Option<Sample> {
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         subset.clear();
         subset.extend(order[..keep].iter().map(|x| x.1));
-        (coef, rank) = solve(&local, &subset, NP)?;
+        (coef, rank) = solve(&local, &subset, NP, &empty)?;
     }
     let mut res: Vec<f64> = local.iter().map(|p| resid(&coef, *p).powi(2)).collect();
     res.sort_by(f64::total_cmp);
     let ss: f64 = res[..keep].iter().sum();
     let dof = keep.checked_sub(rank).filter(|&d| d >= MIN_DOF)?;
     let var = ss / dof as f64 / trimmed_variance(keep, local.len());
-    Some(Sample {
+    let sample = Sample {
         var,
         dof,
         points: local.len(),
         pool: plane_pool.unwrap_or((var, dof)),
-    })
+    };
+    Some(pair(sample))
+}
+
+fn unseen_center(sample: Sample, local: &[(f64, f64, f64)], multi: bool) -> Option<f64> {
+    if !multi {
+        return None;
+    }
+    let others: Vec<usize> = (0..local.len())
+        .filter(|&i| local[i] != (0.0, 0.0, 0.0))
+        .collect();
+    let (plane, plane_rank) = solve(local, &others, 3, &Nulls::empty())?;
+    if others.len() < plane_rank + MIN_DOF {
+        return None;
+    }
+    let r2 = plane[0] * plane[0];
+    if r2 <= BLIND_RATIO * sample.var {
+        return None;
+    }
+    let qnulls = Nulls::of(local, NP);
+    let (quad, rank) = solve(local, &others, NP, &qnulls)?;
+    if others.len() < rank + MIN_DOF {
+        return None;
+    }
+    let plane_ss: f64 = others
+        .iter()
+        .map(|&i| resid(&plane, local[i]).powi(2))
+        .sum();
+    let quad_ss: f64 = others.iter().map(|&i| resid(&quad, local[i]).powi(2)).sum();
+    let extra = rank.saturating_sub(plane_rank);
+    let flat = extra == 0
+        || (plane_ss - quad_ss) * ((others.len() - rank) as f64)
+            <= FLAT_F_CRIT * extra as f64 * quad_ss;
+    if !flat {
+        return None;
+    }
+    Some(r2)
 }
 
 fn basis(x: f64, y: f64) -> [f64; NP] {
@@ -383,7 +493,108 @@ fn resid(c: &[f64; NP], p: (f64, f64, f64)) -> f64 {
     p.2 - (0..NP).map(|k| c[k] * b[k]).sum::<f64>()
 }
 
-fn solve(local: &[(f64, f64, f64)], idx: &[usize], np: usize) -> Option<([f64; NP], usize)> {
+struct Nulls {
+    quad: Vec<[f64; NP]>,
+    plane: Vec<[f64; NP]>,
+}
+
+impl Nulls {
+    fn of(local: &[(f64, f64, f64)], np: usize) -> Self {
+        let spacing = local
+            .iter()
+            .map(|p| p.0.hypot(p.1))
+            .filter(|&d| d > 0.0)
+            .fold(f64::INFINITY, f64::min);
+        let reach = (CURVE_SPREAD * spacing).powi(2);
+        let dirs = unsupported(local, np, reach);
+        if np == NP {
+            Self {
+                quad: dirs,
+                plane: Vec::new(),
+            }
+        } else {
+            Self {
+                quad: Vec::new(),
+                plane: dirs,
+            }
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            quad: Vec::new(),
+            plane: Vec::new(),
+        }
+    }
+
+    fn get(&self, np: usize) -> &[[f64; NP]] {
+        if np == NP { &self.quad } else { &self.plane }
+    }
+}
+
+fn gradients(x: f64, y: f64) -> ([f64; NP], [f64; NP]) {
+    (
+        [0.0, 1.0, 0.0, 2.0 * x, y, 0.0],
+        [0.0, 0.0, 1.0, 0.0, x, 2.0 * y],
+    )
+}
+
+fn unsupported(local: &[(f64, f64, f64)], np: usize, reach: f64) -> Vec<[f64; NP]> {
+    let mut a = [[0.0; NP]; NP];
+    let mut g = [[0.0; NP]; NP];
+    for &(x, y, _) in local {
+        let b = basis(x, y);
+        let (gx, gy) = gradients(x, y);
+        for r in 0..np {
+            for c in 0..np {
+                a[r][c] += b[r] * b[c];
+                g[r][c] += gx[r] * gx[c] + gy[r] * gy[c];
+            }
+        }
+    }
+    let (vals, vecs) = jacobi(a);
+    let mut out = Vec::new();
+    for k in 0..NP {
+        let mut vk = [0.0; NP];
+        for r in 0..NP {
+            vk[r] = vecs[r][k];
+        }
+        if vk[np..].iter().any(|&c| c.abs() > 0.5) {
+            continue;
+        }
+        let den: f64 = (0..np)
+            .map(|r| (0..np).map(|c| vk[r] * g[r][c] * vk[c]).sum::<f64>())
+            .sum();
+        if den > 0.0 && vals[k].max(0.0) < reach * den {
+            out.push(vk);
+        }
+    }
+    out
+}
+
+fn solve(
+    local: &[(f64, f64, f64)],
+    idx: &[usize],
+    np: usize,
+    nulls: &Nulls,
+) -> Option<([f64; NP], usize)> {
+    let (mut a, rhs) = normal_equations(local, idx, np);
+    let nulls = nulls.get(np);
+    if !nulls.is_empty() {
+        let top = (0..np).map(|i| a[i][i]).fold(0.0, f64::max);
+        for n in nulls {
+            for r in 0..np {
+                for c in 0..np {
+                    a[r][c] += top * n[r] * n[c];
+                }
+            }
+        }
+    }
+    let (coef, rank) = solve_system(&a, &rhs, np)?;
+    Some((coef, rank.saturating_sub(nulls.len())))
+}
+
+fn normal_equations(local: &[(f64, f64, f64)], idx: &[usize], np: usize) -> (M6, [f64; NP]) {
     let mut a = [[0.0; NP]; NP];
     let mut rhs = [0.0; NP];
     for &i in idx {
@@ -396,10 +607,14 @@ fn solve(local: &[(f64, f64, f64)], idx: &[usize], np: usize) -> Option<([f64; N
             }
         }
     }
-    if let Some(coef) = cholesky(&a, &rhs, np) {
+    (a, rhs)
+}
+
+fn solve_system(a: &M6, rhs: &[f64; NP], np: usize) -> Option<([f64; NP], usize)> {
+    if let Some(coef) = cholesky(a, rhs, np) {
         return Some((coef, np));
     }
-    let (vals, vecs) = jacobi(a);
+    let (vals, vecs) = jacobi(*a);
     let top = vals.iter().cloned().fold(0.0, f64::max);
     if top <= 0.0 {
         return None;
@@ -737,5 +952,211 @@ pub(super) mod tests {
             false,
         ));
         assert_eq!(sigma_of(&v, faces), Some(0.0));
+    }
+
+    fn vertex_normals(v: &[V3], faces: &[[u32; 3]]) -> Vec<V3> {
+        let mut acc = vec![[0.0; 3]; v.len()];
+        for t in faces {
+            let (a, b, c) = (v[t[0] as usize], v[t[1] as usize], v[t[2] as usize]);
+            let n = cross(sub(b, a), sub(c, a));
+            for &u in t {
+                let r = &mut acc[u as usize];
+                for k in 0..3 {
+                    r[k] += n[k];
+                }
+            }
+        }
+        acc.iter()
+            .map(|&a| if norm(a) > 0.0 { unit(a) } else { a })
+            .collect()
+    }
+
+    fn normal_noise(v: &[V3], faces: &[[u32; 3]], amp: f64, seed: u64) -> Vec<V3> {
+        let n = vertex_normals(v, faces);
+        let mut rng = Lcg(seed);
+        v.iter()
+            .zip(n)
+            .map(|(p, m)| {
+                let d = amp * rng.uniform();
+                [p[0] + d * m[0], p[1] + d * m[1], p[2] + d * m[2]]
+            })
+            .collect()
+    }
+
+    fn isotropic_noise(v: &[V3], amp: f64, seed: u64) -> Vec<V3> {
+        let mut rng = Lcg(seed);
+        v.iter()
+            .map(|p| {
+                let d = [rng.uniform(), rng.uniform(), rng.uniform()];
+                let len = norm(d);
+                let r = amp * (0.5 * (rng.uniform() + 1.0)).cbrt();
+                [
+                    p[0] + r * d[0] / len,
+                    p[1] + r * d[1] / len,
+                    p[2] + r * d[2] / len,
+                ]
+            })
+            .collect()
+    }
+
+    fn grid_plane(nx: usize, ny: usize, step: f64) -> (Vec<V3>, Vec<[u32; 3]>) {
+        let mut v = Vec::with_capacity(nx * ny);
+        for i in 0..nx {
+            for j in 0..ny {
+                v.push([i as f64 * step, j as f64 * step, 0.0]);
+            }
+        }
+        (v, grid_faces(nx, ny))
+    }
+
+    fn fillet_strip() -> (Vec<V3>, Vec<[u32; 3]>) {
+        use std::f64::consts::FRAC_PI_2;
+        let mut profile = vec![(-3.0, 0.0)];
+        for k in 0..=4 {
+            let a = -FRAC_PI_2 + FRAC_PI_2 * k as f64 / 4.0;
+            profile.push((a.cos(), 1.0 + a.sin()));
+        }
+        profile.push((1.0, 3.0));
+        let m = profile.len();
+        let nz = 4;
+        let mut v = Vec::with_capacity(nz * m);
+        for iz in 0..nz {
+            for &(x, y) in &profile {
+                v.push([x, y, iz as f64]);
+            }
+        }
+        let id = |iz: usize, j: usize| (iz * m + j) as u32;
+        let mut faces = Vec::new();
+        for iz in 0..nz - 1 {
+            for j in 0..m - 1 {
+                let (a, b, c, d) = (id(iz, j), id(iz + 1, j), id(iz + 1, j + 1), id(iz, j + 1));
+                faces.push([a, b, c]);
+                faces.push([a, c, d]);
+            }
+        }
+        (v, faces)
+    }
+
+    fn assert_within_two(_v: &[V3], faces: Vec<[u32; 3]>, noisy: Vec<V3>, sd: f64, what: &str) {
+        let sigma = sigma_of(&noisy, faces).unwrap();
+        let ratio = sigma / sd;
+        assert!((0.5..2.0).contains(&ratio), "{what}: sigma/sd = {ratio}");
+    }
+
+    #[test]
+    fn plane_normal_and_isotropic_noise_are_within_two() {
+        let sd_n = 0.01 / 3f64.sqrt();
+        let sd_i = 0.01 / 5f64.sqrt();
+        let (v, faces) = grid_plane(24, 24, 1.0);
+        for seed in 0..4 {
+            let n = normal_noise(&v, &faces, 0.01, seed);
+            assert_within_two(&v, faces.clone(), n, sd_n, &format!("normal seed {seed}"));
+            let i = isotropic_noise(&v, 0.01, seed);
+            assert_within_two(
+                &v,
+                faces.clone(),
+                i,
+                sd_i,
+                &format!("isotropic seed {seed}"),
+            );
+        }
+    }
+
+    #[test]
+    fn cylinder_normal_and_isotropic_noise_are_within_two() {
+        let sd_n = 0.01 / 3f64.sqrt();
+        let sd_i = 0.01 / 5f64.sqrt();
+        for radius in [2.0, 8.0] {
+            let v = cylinder(radius, 32, 12, 0.0, 1);
+            let faces = grid_faces(32, 12);
+            for seed in 0..3 {
+                let n = normal_noise(&v, &faces, 0.01, seed);
+                assert_within_two(
+                    &v,
+                    faces.clone(),
+                    n,
+                    sd_n,
+                    &format!("radius {radius} normal seed {seed}"),
+                );
+                let i = isotropic_noise(&v, 0.01, seed);
+                assert_within_two(
+                    &v,
+                    faces.clone(),
+                    i,
+                    sd_i,
+                    &format!("radius {radius} isotropic seed {seed}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fillet_strip_normal_and_isotropic_noise_are_within_two() {
+        let sd_n = 0.01 / 3f64.sqrt();
+        let sd_i = 0.01 / 5f64.sqrt();
+        let (v, faces) = fillet_strip();
+        for seed in 0..4 {
+            let n = normal_noise(&v, &faces, 0.01, seed);
+            assert_within_two(&v, faces.clone(), n, sd_n, &format!("normal seed {seed}"));
+            let i = isotropic_noise(&v, 0.01, seed);
+            assert_within_two(
+                &v,
+                faces.clone(),
+                i,
+                sd_i,
+                &format!("isotropic seed {seed}"),
+            );
+        }
+    }
+
+    #[test]
+    fn coarse_box_normal_noise_reads_within_two() {
+        let sd = 0.002;
+        let (v, faces) = indexed(super::super::tests::grid_box(
+            [0.0; 3],
+            [40.0, 30.0, 20.0],
+            1,
+            false,
+        ));
+        for seed in 0..8 {
+            let noisy = normal_noise(&v, &faces, 3.0 * sd, seed);
+            assert_within_two(&v, faces.clone(), noisy, sd, &format!("seed {seed}"));
+        }
+    }
+
+    #[test]
+    fn clean_meshes_sit_below_the_floor() {
+        let (plane_v, plane_f) = grid_plane(20, 20, 1.0);
+        let (strip_v, strip_f) = fillet_strip();
+        let (box_v, box_f) = indexed(super::super::tests::grid_box(
+            [0.0; 3],
+            [20.0, 30.0, 10.0],
+            3,
+            false,
+        ));
+        for (name, v, faces) in [
+            ("plane", plane_v, plane_f),
+            ("fillet", strip_v, strip_f),
+            ("box", box_v, box_f),
+        ] {
+            let sigma = sigma_of(&v, faces).unwrap();
+            let mut lo = [f64::MAX; 3];
+            let mut hi = [f64::MIN; 3];
+            let mut max_abs = 0.0f64;
+            for p in &v {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                    max_abs = max_abs.max(p[k].abs());
+                }
+            }
+            let diag = norm(sub(hi, lo));
+            let floor = (1e-6 * diag).max(5e-7 * max_abs);
+            assert!(
+                5.0 * sigma < floor,
+                "{name}: 5 sigma {:.3e} not under floor {floor:.3e}",
+                5.0 * sigma
+            );
+        }
     }
 }

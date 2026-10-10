@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 
@@ -8,6 +10,7 @@ from unmesh_harness.judge import judge
 from unmesh_harness.labels import tessellate
 
 LIN, ANG = 0.01, 0.2
+MAX_AMPLITUDE = 0.05
 NOISE = [("noise_normal", 0.02)]
 FAMILIES = ("corner_fillet", "bore_chamfer")
 CASES = [(f, p, s) for f in FAMILIES for p in range(3) for s in range(3)]
@@ -39,6 +42,43 @@ def test_noisy_blends_keep_their_faces(family, part, seed):
 @pytest.mark.parametrize("family,part,seed", [c for c in CASES if c not in FAST])
 def test_noisy_blends_keep_their_faces_slow(family, part, seed):
     check_regions(family, part, seed)
+
+
+def draft_block(deg):
+    from build123d import Plane, Polyline, extrude, make_face
+
+    t = math.tan(math.radians(deg))
+    profile = Polyline((0, 0), (40, 0), (40, 10), (20, 10), (0, 10 - 20 * t), close=True)
+    return extrude(make_face(Plane.XZ * profile), amount=-30)
+
+
+def test_clean_shallow_draft_keeps_floor_and_regions():
+    tris = np.asarray(tessellate(draft_block(0.2), LIN, ANG).tris)
+    verts = tris.reshape(-1, 3)
+    diag = float(np.linalg.norm(verts.max(axis=0) - verts.min(axis=0)))
+    floor = max(1e-6 * diag, 5e-7 * float(np.abs(verts).max()))
+    ir, _ = unmesh.convert(tris)
+    assert len(ir.regions) == 7, len(ir.regions)
+    assert ir.tolerances.linear == floor, (ir.tolerances.linear, floor)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_noisy_shallow_draft_keeps_floor_and_regions(seed):
+    mesh = tessellate(draft_block(0.2), LIN, ANG)
+    deg = degrade.chain(mesh, [("noise_normal", 0.02)], seed)
+    ir, _ = unmesh.convert(np.asarray(deg.tris))
+    truth = 2.0 * 0.02 * MAX_AMPLITUDE / math.sqrt(3.0)
+    assert ir.tolerances.linear / 5.0 <= truth, (ir.tolerances.linear / 5.0, truth)
+    assert len(ir.regions) == 7, len(ir.regions)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_coarse_tangent_blend_isotropic_noise_within_two(seed):
+    mesh = tessellate(generate("straight_fillet", 0).solid, 0.3, 1.0)
+    deg = degrade.chain(mesh, [("noise_isotropic", 0.02)], seed)
+    ir, _ = unmesh.convert(np.asarray(deg.tris))
+    truth = 2.0 * 0.02 * MAX_AMPLITUDE / math.sqrt(5.0)
+    assert ir.tolerances.linear / 5.0 <= truth, (ir.tolerances.linear / 5.0, truth)
 
 
 @pytest.mark.slow
