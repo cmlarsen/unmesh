@@ -3,6 +3,8 @@ import math
 import numpy as np
 import pytest
 from build123d import (
+    Align,
+    Axis,
     Box,
     BuildLine,
     BuildPart,
@@ -187,6 +189,49 @@ def fillet_plane_defect(ir):
         sign = 1.0 if cyl.orientation == "same" else -1.0
         return abs(float(np.dot(n, np.array(cyl.origin))) + sign * cyl.radius - offset)
     return None
+
+
+def tangent_plane_cylinder_defects(ir):
+    defects = []
+    for adj in ir.adjacencies:
+        if adj.boundaries[0].kind != "tangent":
+            continue
+        a, b = adj.regions
+        sa, sb = ir.regions[a].surface, ir.regions[b].surface
+        if {sa.type, sb.type} != {"plane", "cylinder"}:
+            continue
+        plane = sa if sa.type == "plane" else sb
+        cyl = sb if sa.type == "plane" else sa
+        n = np.array(plane.normal)
+        offset = float(np.dot(n, np.array(plane.origin)))
+        sign = 1.0 if cyl.orientation == "same" else -1.0
+        defects.append(abs(float(np.dot(n, np.array(cyl.origin))) + sign * cyl.radius - offset))
+    return defects
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_clean_float32_fillet_snaps_exactly(seed):
+    mesh = tessellate(generate("straight_fillet", seed).solid, LIN, ANG)
+    cell = degrade.chain(mesh, [("float32", 1.0)], 0)
+    ir, _ = unmesh.convert(cell.tris)
+    defects = tangent_plane_cylinder_defects(ir)
+    assert defects, "the straight_fillet plane-cylinder fillet is missing from the IR"
+    assert max(defects) < 1e-9, defects
+
+
+def long_thin_fillet(radius=1.0, length=60.0, width=20.0, height=10.0):
+    solid = Box(width, length, height, align=(Align.MIN, Align.MIN, Align.MIN))
+    edge = solid.edges().filter_by(Axis.Y).group_by(Axis.Z)[-1].group_by(Axis.X)[-1]
+    return fillet(edge, radius)
+
+
+def test_long_thin_fillet_snaps_exactly_under_noise():
+    mesh = tessellate(long_thin_fillet(), LIN, ANG)
+    cell = degrade.chain(mesh, [("noise_normal", 0.02)], 2)
+    ir, _ = unmesh.convert(cell.tris)
+    defects = tangent_plane_cylinder_defects(ir)
+    assert defects, "the long fillet plane-cylinder tangency is missing from the IR"
+    assert max(defects) < 1e-9, defects
 
 
 @pytest.mark.parametrize("kind", ["noise_normal", "noise_isotropic"])

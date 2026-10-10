@@ -5,6 +5,7 @@ use super::fit::Final;
 use super::linalg::{V3, add, cross, dot, norm, scale, sub, unit};
 use super::refine::dihedral;
 use super::segment::TriInfo;
+use super::snap::NOISE_FACTOR;
 use super::surface::Surface;
 use super::topology::NONE;
 use crate::api::ConvertWarning;
@@ -662,7 +663,14 @@ pub fn solve(
     snap_axes(&mut s, rels, max_sin)?;
     let mut blocks = Vec::with_capacity(s.len());
     let mut n = 0;
-    let extent = bbox_diag(members.iter().flat_map(|m| m.pts.iter().map(|&(p, _)| p)));
+    // `extent` only scales the numerical epsilons below (`exact`, `improved`),
+    // not the accept/reject decision, which `snap` makes translation-invariantly
+    // before `solve` runs. Keep the origin-relative size so a clean fit lands on
+    // the same surfaces as before.
+    let extent = members
+        .iter()
+        .flat_map(|m| m.pts.iter().map(|&(p, _)| norm(p)))
+        .fold(0.0, f64::max);
     for &surface in &s {
         let len = block_len(&surface)?;
         let (e1, e2) = match surface {
@@ -792,7 +800,7 @@ pub fn solve(
         let sw = sw.max(f64::MIN_POSITIVE);
         let old_rms = (o / sw).sqrt();
         let new_rms = (nw / sw).sqrt();
-        if new_rms > MEMBER_GROWTH * old_rms + sigma {
+        if new_rms > MEMBER_GROWTH * old_rms + sigma.max(tol / NOISE_FACTOR) {
             return None;
         }
         old += o;
@@ -822,10 +830,14 @@ pub struct Args<'a> {
     pub threshold_deg: f64,
 }
 
-/// The RMS distance of a region's corners from their centroid: a
-/// translation-invariant measure of the lever arm over which a surface fit
-/// is determined, used to bound the angles the noise can explain.
-fn region_extent(vc: &[V3], faces: &[[u32; 3]], list: &[u32]) -> f64 {
+/// The lever arm over which a region's fit is determined: the RMS distance of
+/// its corners from their centroid, a translation-invariant measure used to
+/// bound the angles the noise can explain. For a cylinder or torus the axis is
+/// fixed by the spread both along and across it, so the overall and cross-axis
+/// RMS distances are combined geometrically; the overall extent alone would
+/// overstate the lever arm on a long thin fillet, whose length does not help
+/// fix its tangent line.
+fn region_extent(vc: &[V3], faces: &[[u32; 3]], list: &[u32], surface: &Surface) -> f64 {
     let mut c = [0.0; 3];
     let mut n = 0.0;
     for &f in list {
@@ -838,14 +850,25 @@ fn region_extent(vc: &[V3], faces: &[[u32; 3]], list: &[u32]) -> f64 {
         return 0.0;
     }
     c = scale(c, 1.0 / n);
+    let axis = axis_of(surface);
     let mut s2 = 0.0;
+    let mut sc = 0.0;
     for &f in list {
         for v in faces[f as usize] {
             let d = sub(vc[v as usize], c);
             s2 += dot(d, d);
+            if let Some(a) = axis {
+                let p = perp(d, a);
+                sc += dot(p, p);
+            }
         }
     }
-    (s2 / n).sqrt()
+    let full = (s2 / n).sqrt();
+    if axis.is_some() {
+        (full * (sc / n).sqrt()).sqrt()
+    } else {
+        full
+    }
 }
 
 /// The diagonal of the axis-aligned bounding box of `pts`, a
@@ -917,11 +940,19 @@ fn tangent_relations(args: &Args<'_>, finals: &[Final]) -> Vec<Rel> {
                 .collect();
             if !angles.is_empty() {
                 let med = median(angles);
-                let wa = region_extent(vc, faces, &finals[a as usize].faces).max(MIN_EXTENT);
-                let wb = region_extent(vc, faces, &finals[b as usize].faces).max(MIN_EXTENT);
-                let spread = (1.0 / (wa * wa) + 1.0 / (wb * wb)).sqrt();
-                let noise_ang = (ANGLE_NOISE_K * tol * spread).atan();
-                if med < threshold_deg && med.to_radians() <= noise_ang {
+                let explained = match rel {
+                    Rel::PlaneCyl { .. } | Rel::PlaneTorus { .. } => {
+                        let wa =
+                            region_extent(vc, faces, &finals[a as usize].faces, sa).max(MIN_EXTENT);
+                        let wb =
+                            region_extent(vc, faces, &finals[b as usize].faces, sb).max(MIN_EXTENT);
+                        let spread = (1.0 / (wa * wa) + 1.0 / (wb * wb)).sqrt();
+                        let noise_ang = (ANGLE_NOISE_K * tol * spread).atan();
+                        med.to_radians() <= noise_ang
+                    }
+                    _ => true,
+                };
+                if med < threshold_deg && explained {
                     rels.push(rel);
                 }
             }
