@@ -4,10 +4,10 @@
 Reads one or more `<grid>.jsonl` result files (as written by
 ``unmesh-harness run``), deduplicates each cell to its latest record, and prints a
 markdown table per converter: one row per family, with the mean F1 over the ok
-cells, the rate at which the output has no analytic faces (the writer fell back
-to faceted, or every written region is faceted — a ``facets`` patch, or a surface
-that does not match the area-weighted majority true surface type of its input
-triangles), the failure rate and the timeout count.
+cells, the faceted share (the fraction of the cell's classified regions that are
+faceted — a ``facets`` patch, or a surface that does not match the area-weighted
+majority true surface type of its input triangles), the failure rate and the
+timeout count.
 Cells whose operator names a noise step are split into their own section so they
 do not dilute the clean signal::
 
@@ -17,9 +17,16 @@ The family is derived from the part id (``complex_void-0003`` -> ``complex_void`
 ``imported-0225`` -> ``imported``); failed and skipped records carry no ``family``
 field, so grouping on the record field used to hide every failure in a ``?`` row.
 
+The faceted share is a per-cell ratio, ``faceted_regions / (faceted_regions +
+analytic_regions)``, so a correctly typed base plane beside a dome written as
+thousands of planes no longer reads as fully analytic; the table averages it over
+the ok cells that have at least one classified region. A cell the writer fell
+back on with no classified region at all is 1.0; a cell with no region of either
+kind and no fallback is skipped from the share (it stays in ``cells``).
+
 Statuses are counted separately:
 
-- ``ok`` cells are the F1 / no-analytic sample and the numerator of the table.
+- ``ok`` cells are the F1 / faceted-share sample and the numerator of the table.
 - a converter ``failure`` (an error or a timeout raised by the converter, its
   external tool, or the write/score stages) and a harness ``timeout`` both count
   against the family; ``timeout`` is also shown in its own column.
@@ -62,13 +69,18 @@ def family(record: dict[str, Any]) -> str:
     return _family(record)
 
 
-def no_analytic(record: dict[str, Any]) -> bool:
-    if record.get("fallback"):
-        return True
-    analytic = record.get("analytic_regions")
-    if analytic is None:
-        return False
-    return analytic == 0
+def faceted_share(record: dict[str, Any]) -> float | None:
+    """Fraction of the cell's classified regions that are faceted.
+
+    ``faceted_regions / (faceted_regions + analytic_regions)``. A writer fallback
+    with no classified region at all is 1.0; a cell with no region of either kind
+    and no fallback is ``None`` (skipped from the share).
+    """
+    faceted = record.get("faceted_regions") or 0
+    analytic = record.get("analytic_regions") or 0
+    if faceted + analytic == 0:
+        return 1.0 if record.get("fallback") else None
+    return faceted / (faceted + analytic)
 
 
 def _mean(values: list[float]) -> float | None:
@@ -131,10 +143,12 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     considered = len(rows) - kinds["skipped"] - kinds["harness"]
     failures = kinds["timeout"] + kinds["failure"]
     harness = [r for r in rows if classify(r) == "harness"]
+    shares = [s for s in (faceted_share(r) for r in ok) if s is not None]
     return {
         "cells": considered,
         "f1": _mean([float(r["f1"]) for r in ok if r.get("f1") is not None]),
-        "no_analytic": _mean([1.0 if no_analytic(r) else 0.0 for r in ok]),
+        "faceted_share": _mean(shares),
+        "no_regions": len(ok) - len(shares),
         "failure": failures / considered if considered else None,
         "timeout": kinds["timeout"],
         "skipped": kinds["skipped"],
@@ -146,13 +160,17 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _row(name: str, metrics: dict[str, Any]) -> str:
     return (
         f"| {name} | {int(metrics['cells'])} | {_fmt(metrics['f1'])} | "
-        f"{_fmt(metrics['no_analytic'], '.0%')} | {_fmt(metrics['failure'], '.0%')} | "
+        f"{_fmt(metrics['faceted_share'], '.0%')} | {_fmt(metrics['failure'], '.0%')} | "
         f"{int(metrics['timeout'])} |"
     )
 
 
 def _footer(metrics: dict[str, Any]) -> list[str]:
     lines = [f"skipped as inapplicable: {int(metrics['skipped'])}"]
+    if metrics["no_regions"]:
+        lines.append(
+            f"no classified regions (excluded from the faceted share): {int(metrics['no_regions'])}"
+        )
     if metrics["harness"]:
         operator = metrics["harness"] - metrics["harness_prep"]
         lines.append(
@@ -179,7 +197,7 @@ def render(records: list[dict[str, Any]], converters: list[str]) -> str:
             lines += [
                 f"### {converter}",
                 "",
-                "| family | cells | mean F1 | no-analytic | failure | timeout |",
+                "| family | cells | mean F1 | faceted share | failure | timeout |",
                 "|---|---|---|---|---|---|",
             ]
             for fam in sorted({family(r) for r in rows}):

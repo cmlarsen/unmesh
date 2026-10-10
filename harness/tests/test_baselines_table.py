@@ -23,6 +23,8 @@ def _rec(part, operator="identity", severity=0.0, seed=0, converter="unmesh", **
         "converter": converter,
         "status": "ok",
         "family": part.rsplit("-", 1)[0],
+        "faceted_regions": 0,
+        "analytic_regions": 1,
     }
     record.update(fields)
     return record
@@ -138,15 +140,27 @@ def test_noise_rows_split_into_their_own_section():
     assert "| alpha | 1 | 0.000 | 0% | 0% | 0 |" in noise
 
 
-def test_no_analytic_flag_and_fallback():
+def test_faceted_share_and_fallback():
     mod = _load()
     records = [
-        _rec("alpha-0000", f1=1.0, analytic_regions=2),
-        _rec("alpha-0001", f1=1.0, analytic_regions=0),
-        _rec("alpha-0002", f1=1.0, fallback=True),
+        _rec("alpha-0000", f1=1.0, faceted_regions=0, analytic_regions=2),
+        _rec("alpha-0001", f1=1.0, faceted_regions=1, analytic_regions=0),
+        _rec("alpha-0002", f1=1.0, fallback=True, faceted_regions=0, analytic_regions=0),
+        _rec("alpha-0003", f1=1.0, faceted_regions=7588, analytic_regions=1),
     ]
     out = mod.render(records, ["unmesh"])
-    assert "| alpha | 3 | 1.000 | 67% | 0% | 0 |" in out
+    assert "| alpha | 4 | 1.000 | 75% | 0% | 0 |" in out
+
+
+def test_no_region_cell_is_excluded_from_the_share():
+    mod = _load()
+    records = [
+        _rec("alpha-0000", f1=1.0, faceted_regions=1, analytic_regions=1),
+        _rec("alpha-0001", f1=1.0, faceted_regions=0, analytic_regions=0),
+    ]
+    out = mod.render(records, ["unmesh"])
+    assert "| alpha | 2 | 1.000 | 50% | 0% | 0 |" in out
+    assert "no classified regions (excluded from the faceted share): 1" in out
 
 
 def test_converter_missing_from_records_is_skipped():
