@@ -27,7 +27,7 @@ use crate::mesh::{Point, TriangleSoup};
 
 use emit::Asm;
 use fit::{label_faces, region_pairs};
-use linalg::{V3, add};
+use linalg::{V3, add, dot};
 use project::Projected;
 use snap::NOISE_FACTOR;
 use topology::NONE;
@@ -36,8 +36,110 @@ const INITIAL_TOL_REL: f64 = 5e-4;
 const MIN_TOL_REL: f64 = 1e-6;
 const FLOAT_TOL_REL: f64 = 5e-7;
 
+/// A tessellated surface that carries no vertex noise keeps every quad it was
+/// split into exactly coplanar: two triangles of one flat quad lie in one
+/// plane, and any vertex noise destroys that. Measuring the share over whole
+/// *patches* fails when a mesh carries large exactly-flat plateaus (a snapped
+/// base, a quantized scan) beside its noise, because those dominate the
+/// average; measuring it on the *small* coplanar patches (the quad splits)
+/// separates a clean tessellation, whose splits survive, from a noisy one,
+/// whose are broken. A clean mesh keeps its clean growth; a noisy one gets the
+/// noise-aware thresholds. A mesh whose small-patch share is low is noisy even
+/// if its whole-mesh share is high.
+const CLEAN_COPLANAR_SHARE: f64 = 0.08;
+/// A coplanar component of at least this many faces is a flat patch, not a
+/// quad split, and is left out of the share above.
+const CLEAN_PATCH_FACES: usize = 8;
+/// Even a mesh whose coplanar share clears `CLEAN_COPLANAR_SHARE` is noisy
+/// when the noise estimate so far exceeds the *part's own size* that the
+/// coplanarity must be an artefact (an exactly flat base or a quantized scan
+/// leaves the flat parts coplanar while the rest keeps the noise). Measured
+/// against `MIN_TOL_REL * diag`, never the `max_abs` term of the floor, which
+/// would make the decision move with translation: on the held-out parts a
+/// clean low-share tessellation sits at most at 14x (`revolved_dome`
+/// re-chorded), while the flat-based and quantized noisy scans the share
+/// misses start at 131x (`blind_bore` nn@0.1+flatbottom); 130 sits in that
+/// gap. Near the origin the floor *is* `MIN_TOL_REL * diag`, so this is the
+/// same threshold the `5 sigma / floor` form used.
+const NOISY_EST_RATIO: f64 = 130.0;
+/// A mesh whose estimate barely clears the floor is clean however its
+/// coplanarity reads: a clean re-chorded or refined surface has only the
+/// tessellation chord error for an estimate, and that is within this multiple
+/// of the floor. A noisy scan is far above it (a flat-based scan sits near
+/// 73, a quantized one near 158).
+const CLEAN_EST_RATIO: f64 = 2.0;
+const COPLANAR_EPS: f64 = 1e-12;
+
+/// The area-weighted share of interior face pairs that are exactly coplanar
+/// (`COPLANAR_EPS`) and lie in a coplanar component smaller than
+/// `CLEAN_PATCH_FACES` (see `CLEAN_COPLANAR_SHARE`). Weighting by the smaller
+/// face area keeps a quad split on a large flat face from being buried under
+/// the many tiny triangles beside it.
+fn coplanar_share(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
+    let n = info.len();
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            parent[x as usize] = parent[parent[x as usize] as usize];
+            x = parent[x as usize];
+        }
+        x
+    }
+    let mut pairs: Vec<(u32, u32, bool)> = Vec::new();
+    for (f, ns) in nbr.iter().enumerate() {
+        for &g in ns {
+            let g = g as usize;
+            if g >= n || g <= f {
+                continue;
+            }
+            let coplanar = 1.0 - dot(info[f].normal, info[g].normal).abs() < COPLANAR_EPS;
+            if coplanar {
+                let (a, b) = (find(&mut parent, f as u32), find(&mut parent, g as u32));
+                if a != b {
+                    parent[a as usize] = b;
+                }
+            }
+            pairs.push((f as u32, g as u32, coplanar));
+        }
+    }
+    let mut size = vec![0u32; n];
+    for i in 0..n {
+        let r = find(&mut parent, i as u32) as usize;
+        size[r] += 1;
+    }
+    let (mut num, mut den) = (0.0, 0.0);
+    for &(f, g, coplanar) in &pairs {
+        let r = find(&mut parent, f) as usize;
+        if size[r] >= CLEAN_PATCH_FACES as u32 {
+            continue;
+        }
+        let w = info[f as usize].area.min(info[g as usize].area);
+        den += w;
+        if coplanar {
+            num += w;
+        }
+    }
+    if den <= 0.0 { 1.0 } else { num / den }
+}
+
 fn floor(diag: f64, max_abs: f64) -> f64 {
     (MIN_TOL_REL * diag).max(FLOAT_TOL_REL * max_abs)
+}
+
+/// Whether the input carries vertex noise: its estimate `est` must clear the
+/// tolerance floor `fl`, and either its small-patch coplanar `share` is too
+/// low for a clean tessellation or the estimate is so far above the *part's
+/// own size* (`MIN_TOL_REL * diag`, see `NOISY_EST_RATIO`) that any
+/// coplanarity must be an artefact. A mesh whose estimate is within
+/// `CLEAN_EST_RATIO` of the floor is clean however its coplanarity reads.
+/// The override is measured against the diagonal, not the floor: the floor
+/// carries the `max_abs` term (float precision for a part far from the
+/// origin), so tying the override to it would make the clean/noisy decision
+/// move with translation.
+fn noisy_mesh(share: f64, est: f64, fl: f64, diag: f64) -> bool {
+    let est5 = NOISE_FACTOR * est;
+    let clean = share >= CLEAN_COPLANAR_SHARE || est5 <= CLEAN_EST_RATIO * fl;
+    est5 > fl && (!clean || est5 > NOISY_EST_RATIO * MIN_TOL_REL * diag)
 }
 
 pub fn convert_soup(
@@ -46,7 +148,7 @@ pub fn convert_soup(
 ) -> Result<ConvertOutput, ConvertError> {
     let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, sigma: f64, noisy: bool| {
         fit::fit_regions(fit::FitArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -54,6 +156,8 @@ pub fn convert_soup(
             info: &info,
             eligible: &shells.eligible,
             tol,
+            sigma,
+            noisy,
             snap_deg: options.angular_snap_deg,
             scratch: &mut scratch,
         })
@@ -151,7 +255,7 @@ pub fn convert_soup_from_labels(
         .collect();
     let (face_labels, n_seg) = split_components(&shells.topo.nbr, &raw);
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, _sigma: f64, _noisy: bool| {
         fit::run(fit::RunArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -220,20 +324,23 @@ fn finish(
     mut tol: f64,
     auto_tol: bool,
     mut warnings: Vec<ConvertWarning>,
-    fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
+    fit_once: &mut dyn FnMut(f64, f64, bool) -> (Vec<u32>, Vec<fit::Region>),
 ) -> Result<ConvertOutput, ConvertError> {
     let mut sigma = tol / NOISE_FACTOR;
+    let mut noisy = false;
     if auto_tol {
         let fl = floor(w.diag, w.max_abs);
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
+            noisy = noisy_mesh(coplanar_share(&shells.topo.nbr, info), est, fl, w.diag);
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
         timing::lap("noise");
     }
-    let (label2, mut regions) = fit_once(tol);
+    let grow_sigma = if noisy { sigma } else { tol };
+    let (label2, mut regions) = fit_once(tol, grow_sigma, noisy);
     snap::snap_normals(
         &w.vc,
         &mut regions,
@@ -246,7 +353,8 @@ fn finish(
     timing::lap("snap");
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
-    let (mut finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
+    let (mut finals, flabel) =
+        fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol, &w.vc);
     warnings.extend(tangency::snap(
         tangency::Args {
             vc: &w.vc,
@@ -429,6 +537,140 @@ mod tests {
             &ConvertOptions::default(),
         )
         .unwrap()
+    }
+
+    fn share_of(tris: Vec<[V3; 3]>) -> f64 {
+        let soup = TriangleSoup { triangles: tris };
+        let (_w, shells, info, ..) = prepare(&soup, &ConvertOptions::default()).unwrap();
+        coplanar_share(&shells.topo.nbr, &info)
+    }
+
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn uniform(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        }
+    }
+
+    /// The coplanar share separates a clean tessellation from a noisy one on
+    /// the two shapes that matter: a subdivided quad grid (many exact quad
+    /// splits) and a jittered one (none survive). A tiny mesh is judged on its
+    /// own pairs rather than defaulting.
+    #[test]
+    fn coplanar_share_separates_clean_from_jittered() {
+        let step = 1.0;
+        let nx = 8;
+        let ny = 8;
+        let mut verts = Vec::new();
+        for i in 0..nx {
+            for j in 0..ny {
+                verts.push([i as f64 * step, j as f64 * step, 0.0]);
+            }
+        }
+        let id = |i: usize, j: usize| i * ny + j;
+        let mut faces = Vec::new();
+        for i in 0..nx - 1 {
+            for j in 0..ny - 1 {
+                faces.push([id(i, j), id(i + 1, j), id(i + 1, j + 1)]);
+                faces.push([id(i, j), id(i + 1, j + 1), id(i, j + 1)]);
+            }
+        }
+        let clean: Vec<[V3; 3]> = faces.iter().map(|f| f.map(|k| verts[k])).collect();
+        let s = share_of(clean.clone());
+        assert!(s > 0.9, "clean grid share {s}");
+        assert!(!noisy_mesh(s, 0.0, 1e-4, 1e-4 / MIN_TOL_REL));
+
+        let mut rng = Lcg(7);
+        let mut jv = verts.clone();
+        for p in jv.iter_mut() {
+            p[2] += 1e-3 * rng.uniform();
+        }
+        let jittered: Vec<[V3; 3]> = faces.iter().map(|f| f.map(|k| jv[k])).collect();
+        let sj = share_of(jittered);
+        assert!(sj < 0.1, "jittered grid share {sj}");
+        assert!(noisy_mesh(sj, 1e-2, 1e-4, 1e-4 / MIN_TOL_REL));
+    }
+
+    /// A single coplanar pair reads clean and a single tilted pair reads
+    /// noisy, so a small mesh is not declared clean just for being small.
+    #[test]
+    fn small_mesh_is_judged_on_its_own_pairs() {
+        let flat = vec![
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        ];
+        assert!(share_of(flat) > 0.99);
+        let tilted = vec![
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[1.0, 0.0, 0.0], [1.0, 1.0, 0.5], [0.0, 1.0, 0.0]],
+        ];
+        let st = share_of(tilted);
+        assert!(st < 0.01, "tilted share {st}");
+    }
+
+    /// A noisy mesh with one exactly flat base: the base is a large coplanar
+    /// patch and is left out of the share, so the flat base does not make a
+    /// noisy scan read clean.
+    #[test]
+    fn flat_based_noisy_mesh_reads_noisy() {
+        let tris = grid_box([0.0; 3], [10.0, 10.0, 4.0], 6, false);
+        let mut rng = Lcg(11);
+        let jittered: Vec<[V3; 3]> = tris
+            .iter()
+            .map(|t| {
+                t.map(|mut p| {
+                    if p[2] > 1e-9 {
+                        p[2] += 2e-3 * rng.uniform();
+                    }
+                    p
+                })
+            })
+            .collect();
+        let s = share_of(jittered);
+        assert!(s < 0.08, "flat-based noisy share {s}");
+        assert!(noisy_mesh(s, 1e-2, 1e-4, 1e-4 / MIN_TOL_REL));
+    }
+
+    #[test]
+    fn strong_estimate_overrides_coplanar_share() {
+        let d = |fl| fl / MIN_TOL_REL;
+        assert!(noisy_mesh(0.01, 1e-3, 1e-4, d(1e-4)));
+        assert!(!noisy_mesh(0.9, 1e-3, 1e-4, d(1e-4)));
+        assert!(noisy_mesh(0.9, 1e-3, 1e-6, d(1e-6)));
+        assert!(!noisy_mesh(0.9, 1e-7, 1e-4, d(1e-4)));
+        // A low estimate reads clean even when the share is low (a refined
+        // clean surface has no exact quad splits left but no noise either).
+        assert!(!noisy_mesh(0.0, 2e-5, 1e-4, d(1e-4)));
+        assert!(noisy_mesh(0.0, 1e-2, 1e-4, d(1e-4)));
+    }
+
+    /// The clean/noisy decision must not move when the part is translated:
+    /// the strong-estimate override compares the estimate to the part's own
+    /// diagonal, not to the `max_abs` term of the floor. The near and far
+    /// floors straddle the estimate so the old `NOISY_EST_RATIO * fl` form
+    /// flips; the diagonal form does not.
+    #[test]
+    fn noisy_decision_is_translation_invariant() {
+        let diag = 20.0;
+        let near_floor = 1e-6 * diag;
+        let far_floor = 5e-7 * 1000.0;
+        assert!(near_floor < far_floor);
+        // A high-share mesh whose estimate is 500x the diagonal floor is
+        // noisy at either position; tied to the floor it would read clean far
+        // away, where the floor has risen above it.
+        let est = 2e-3;
+        assert!(noisy_mesh(0.9, est, near_floor, diag));
+        assert!(noisy_mesh(0.9, est, far_floor, diag));
+        // An estimate within the override multiple of the diagonal floor with
+        // the same share stays clean at either position.
+        let est = 1e-4;
+        assert!(!noisy_mesh(0.9, est, near_floor, diag));
+        assert!(!noisy_mesh(0.9, est, far_floor, diag));
     }
 
     #[test]

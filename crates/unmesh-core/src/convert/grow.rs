@@ -12,11 +12,13 @@ use super::surface::Surface;
 use super::topology::NONE;
 
 pub const MAX_TURN_DEG: f64 = 15.0;
+const MAX_CHORD_TURN_DEG: f64 = 60.0;
 const MIN_MEMBERS: usize = 3;
 const SEED_TRIES: usize = 3;
 const INIT_GATE: f64 = 5.0;
 const ESCALATE: f64 = 500.0;
-const SAG_RATIO: f64 = 16.0;
+const SAG_RATIO: f64 = 3.0;
+const SAG_RATIO_CLEAN: f64 = 16.0;
 const SEED_POINTS: [usize; 3] = [12, 24, 48];
 const DOUBLY_POINTS: [usize; 3] = [16, 32, 64];
 const PEEL_MAX: usize = 64;
@@ -43,30 +45,71 @@ struct Graph {
     adj: Vec<Vec<u32>>,
 }
 
-fn smooth_pair(a: &Region, b: &Region, tol: f64, cos_max: f64) -> bool {
+/// The angle a chord of one curve may turn and still be a piece of the same
+/// tessellated patch. The turn is a geometric property of the chord the planar
+/// stage left, which is bounded by the tolerance, not the noise: a chord that
+/// fits within `tol` bows by up to `4 atan(2 tol / width)`. Scaling the term
+/// by `sigma` instead (a tenth as large) drops `straight_fillet`'s four
+/// recovered fillets to one on `noise_normal@0.1`, so the tolerance stands.
+/// What the #156 fix got wrong was the 80° ceiling: a narrow region could turn
+/// that far and swallow a whole part into one near-degenerate cone. A real
+/// fold approaches 90°, so the ceiling is `MAX_CHORD_TURN_DEG`, with a margin.
+fn max_turn(a: &Region, b: &Region, tol: f64, noisy: bool) -> f64 {
+    if !noisy {
+        return MAX_TURN_DEG.to_radians();
+    }
+    let w = a.width.min(b.width).max(1e-300);
+    let chord = 4.0 * (2.0 * tol / w).atan();
+    MAX_TURN_DEG
+        .to_radians()
+        .max(chord)
+        .min(MAX_CHORD_TURN_DEG.to_radians())
+}
+
+/// The noise a crease's normal difference must exceed to count: two normals
+/// fitted over regions `a` and `b` each wander by `sigma / width`, so a real
+/// crease turns by more than the two together.
+fn curve_noise(sigma: f64) -> f64 {
+    2.0 * sigma
+}
+
+fn smooth_pair(a: &Region, b: &Region, tol: f64, sigma: f64, noisy: bool) -> bool {
     let (Some((na, _)), Some((nb, _))) = (a.surface.as_plane(), b.surface.as_plane()) else {
         return false;
     };
     if a.area <= 0.0 || b.area <= 0.0 {
         return false;
     }
-    if dot(na, nb) < cos_max {
+    let d = dot(na, nb);
+    if d <= 0.0 {
         return false;
     }
-    let turn = super::linalg::norm(super::linalg::cross(na, nb)).atan2(dot(na, nb));
-    if turn >= MAX_TURN_DEG.to_radians() - 1e-9 {
+    let turn = super::linalg::norm(super::linalg::cross(na, nb)).atan2(d);
+    if turn >= max_turn(a, b, tol, noisy) - 1e-9 {
         return false;
     }
-    let noise = (2.0 * tol).atan2(a.width.max(1e-300)) + (2.0 * tol).atan2(b.width.max(1e-300));
+    let noise = curve_noise(sigma).atan2(a.width.max(1e-300))
+        + curve_noise(sigma).atan2(b.width.max(1e-300));
     turn > noise
 }
 
-fn graph(regions: &[Region], pairs: &[(u32, u32)], tol: f64) -> Option<Graph> {
-    let cos_max = MAX_TURN_DEG.to_radians().cos();
+fn graph(
+    regions: &[Region],
+    pairs: &[(u32, u32)],
+    tol: f64,
+    sigma: f64,
+    noisy: bool,
+) -> Option<Graph> {
     let mut adj: Vec<Vec<u32>> = vec![Vec::new(); regions.len()];
     let mut any = false;
     for &(a, b) in pairs {
-        if smooth_pair(&regions[a as usize], &regions[b as usize], tol, cos_max) {
+        if smooth_pair(
+            &regions[a as usize],
+            &regions[b as usize],
+            tol,
+            sigma,
+            noisy,
+        ) {
             adj[a as usize].push(b);
             adj[b as usize].push(a);
             any = true;
@@ -82,6 +125,8 @@ struct Pool<'a> {
     regions: &'a [Region],
     preset: Vec<bool>,
     refused: std::cell::Cell<usize>,
+    sigma: f64,
+    noisy: bool,
     mark: Vec<u32>,
     pos: Vec<u32>,
     token: u32,
@@ -181,16 +226,16 @@ impl Pool<'_> {
     }
 
     /// `fits` for every member, and no member's chord sagitta more than
-    /// `SAG_RATIO` times the median member's (or `tol`): a tessellated curve
-    /// cuts its chords at a similar deflection, while a deliberate flat face
-    /// absorbed into a large cylinder carries a sagitta far beyond its
-    /// neighbours'.
+    /// `SAG_RATIO` times the median member's (or the noise): a tessellated
+    /// curve cuts its chords at a similar deflection, while a sliver of an
+    /// adjacent face absorbed into a large cylinder carries a sagitta far
+    /// beyond its neighbours'.
     fn all_fit(&self, members: &[u32], f: &Single, tol: f64) -> Option<Vec<f64>> {
         let sags: Vec<f64> = members
             .iter()
             .map(|&m| self.fits(m, f.0, &f.1, &f.2, tol))
             .collect::<Option<_>>()?;
-        let limit = SAG_RATIO * median(&sags).max(tol);
+        let limit = sag_limit(median(&sags), tol, self.sigma, doubly(f.0), self.noisy);
         sags.iter().all(|&s| s <= limit).then_some(sags)
     }
 
@@ -306,6 +351,23 @@ fn median(v: &[f64]) -> f64 {
     let mut s = v.to_vec();
     s.sort_by(f64::total_cmp);
     s[s.len() / 2]
+}
+
+/// The chord sagitta a member may carry and still count as the same
+/// tessellated surface: a few times the median member's, or a few times the
+/// noise. Comparing against the tolerance instead lets a sliver of an
+/// adjacent face — whose sagitta is a geometric artefact, far beyond the
+/// tessellation's — join a cylinder or cone as soon as the tolerance grows to
+/// the noise: a small cylinder's own chords sag by its fine deflection, while
+/// `SAG_RATIO_CLEAN * tol` grows to the noise and admits a member bounds away.
+/// Without a noise estimate, or on a sphere or torus (whose fitted radius can
+/// legitimately vary facet to facet), the wider ratio stands.
+fn sag_limit(median_sag: f64, tol: f64, sigma: f64, doubly: bool, noisy: bool) -> f64 {
+    if noisy && !doubly {
+        SAG_RATIO * median_sag.max(sigma)
+    } else {
+        SAG_RATIO_CLEAN * median_sag.max(tol)
+    }
 }
 
 fn opposite(regions: &[Region], s: u32, a: u32, b: u32) -> f64 {
@@ -545,7 +607,16 @@ impl<'a> Junction<'a> {
                         slot: 0,
                     };
                     let surf = curved::surface_of(axis, shape, &m);
-                    Some((surf, SAG_RATIO * median(&sags).max(tol)))
+                    Some((
+                        surf,
+                        sag_limit(
+                            median(&sags),
+                            tol,
+                            pool.sigma,
+                            doubly(blend.fit.0),
+                            pool.noisy,
+                        ),
+                    ))
                 });
                 surface
                     .as_ref()
@@ -643,7 +714,7 @@ fn grow_group(
             if owner[r as usize] != NONE || tried.contains(&r) {
                 continue;
             }
-            let limit = SAG_RATIO * sags.get().max(tol);
+            let limit = sag_limit(sags.get(), tol, pool.sigma, doubly(kind), pool.noisy);
             match pool.fits(r, kind, &axis, &shape, tol) {
                 Some(s) if s <= limit => {
                     if junction.is_some_and(|j| j.sliver(pool, owner, r, tol)) {
@@ -936,6 +1007,7 @@ fn find(root: &mut [u32], mut x: u32) -> u32 {
 /// least three regions: any two planes meeting at a crease fit a cylinder.
 /// A lone triangle whose three neighbours all meet it at smooth creases
 /// carries no evidence of a plane and becomes facets.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     vc: &[V3],
     faces: &[[u32; 3]],
@@ -944,6 +1016,8 @@ pub fn run(
     label: &[u32],
     regions: Vec<Region>,
     tol: f64,
+    sigma: f64,
+    noisy: bool,
 ) -> Grown {
     let sticky = vec![false; regions.len()];
     let ((mut grown, mut facets), (_, mut again)) = match pass(
@@ -956,6 +1030,8 @@ pub fn run(
         Vec::new(),
         &sticky,
         tol,
+        sigma,
+        noisy,
     ) {
         Ok(round) => round,
         Err(grown) => return grown,
@@ -974,6 +1050,8 @@ pub fn run(
             grown.prefit.clone(),
             &facets,
             tol,
+            sigma,
+            noisy,
         ) {
             Ok(((next, flags), (true, more))) => {
                 grown = next;
@@ -1013,11 +1091,13 @@ fn pass(
     preset: Vec<(usize, Single)>,
     sticky: &[bool],
     tol: f64,
+    sigma: f64,
+    noisy: bool,
 ) -> Result<Round, Grown> {
     super::timing::sub_start();
     let pairs = region_pairs(nbr, label);
     let n = regions.len();
-    let mut g = match graph(&regions, &pairs, tol) {
+    let mut g = match graph(&regions, &pairs, tol, sigma, noisy) {
         Some(g) => g,
         None if !preset.is_empty() => Graph {
             adj: vec![Vec::new(); n],
@@ -1051,6 +1131,8 @@ fn pass(
         regions: &regions,
         preset: is_preset,
         refused: std::cell::Cell::new(0),
+        sigma,
+        noisy,
         mark: vec![0; vc.len()],
         pos: vec![0; vc.len()],
         token: 0,
@@ -1395,7 +1477,13 @@ fn peel(
             let sags = pool
                 .all_fit(&grp.members, &grp.fit, tol)
                 .unwrap_or_default();
-            SAG_RATIO * median(&sags).max(tol)
+            sag_limit(
+                median(&sags),
+                tol,
+                pool.sigma,
+                doubly(grp.fit.0),
+                pool.noisy,
+            )
         })
         .collect();
     let surfaces: Vec<Surface> = groups
@@ -1983,6 +2071,7 @@ mod tests {
             &info,
             &shells.eligible,
             tol,
+            tol,
             false,
         );
         let mut scratch = super::super::fit::Scratch::new(w.vc.len());
@@ -2005,6 +2094,8 @@ mod tests {
             regions: &p.regions,
             preset: vec![false; p.regions.len()],
             refused: std::cell::Cell::new(0),
+            sigma: 0.0,
+            noisy: false,
             mark: vec![0; p.vc.len()],
             pos: vec![0; p.vc.len()],
             token: 0,
@@ -2154,8 +2245,16 @@ mod tests {
             super::super::prepare(soup, &ConvertOptions::default()).unwrap();
         let tol = 1e-4;
         let nbr = &shells.topo.nbr;
-        let (label, n) =
-            super::super::segment::run(&w.vc, &w.faces, nbr, &info, &shells.eligible, tol, false);
+        let (label, n) = super::super::segment::run(
+            &w.vc,
+            &w.faces,
+            nbr,
+            &info,
+            &shells.eligible,
+            tol,
+            tol,
+            false,
+        );
         let mut scratch = super::super::fit::Scratch::new(w.vc.len());
         let regions =
             super::super::fit::build_regions(&w.vc, &w.faces, &info, &label, n, tol, &mut scratch);
@@ -2166,6 +2265,8 @@ mod tests {
             regions: &regions,
             preset: vec![false; regions.len()],
             refused: std::cell::Cell::new(0),
+            sigma: 0.0,
+            noisy: false,
             mark: vec![0; w.vc.len()],
             pos: vec![0; w.vc.len()],
             token: 0,
@@ -2288,5 +2389,45 @@ mod tests {
                 assert!((radius - r).abs() < 1e-9);
             }
         }
+    }
+
+    fn region(width: f64) -> super::super::fit::Region {
+        super::super::fit::Region {
+            faces: Vec::new(),
+            surface: super::super::surface::Surface::Facets,
+            area: 1.0,
+            width,
+            verts: Vec::new(),
+            rms: 0.0,
+            max: 0.0,
+            sag: 0.0,
+        }
+    }
+
+    /// The sagitta a member may carry is a few times the median member's or
+    /// the noise, not the tolerance: `SAG_RATIO * max(median, sigma)` on a
+    /// noisy cylinder or cone, the wider clean ratio against the tolerance
+    /// otherwise, and the wide ratio on a sphere or torus either way.
+    #[test]
+    fn sag_limit_scales_with_noise_not_tolerance() {
+        let s = |m: f64, tol: f64, sigma: f64, doubly: bool, noisy: bool| {
+            super::sag_limit(m, tol, sigma, doubly, noisy)
+        };
+        assert!((s(0.0, 1.0, 0.01, false, true) - super::SAG_RATIO * 0.01).abs() < 1e-12);
+        assert!((s(0.5, 1.0, 0.01, false, true) - super::SAG_RATIO * 0.5).abs() < 1e-12);
+        assert!((s(0.0, 1.0, 0.01, false, false) - super::SAG_RATIO_CLEAN * 1.0).abs() < 1e-12);
+        assert!((s(0.0, 1.0, 0.01, true, true) - super::SAG_RATIO_CLEAN * 1.0).abs() < 1e-12);
+    }
+
+    /// A chord that fits within the tolerance may turn further than the
+    /// fixed floor, but never as far as a real fold.
+    #[test]
+    fn max_turn_rises_for_narrow_chords_but_not_to_a_fold() {
+        let deg = super::MAX_TURN_DEG.to_radians();
+        let cap = super::MAX_CHORD_TURN_DEG.to_radians();
+        assert!((super::max_turn(&region(10.0), &region(10.0), 1.0, false) - deg).abs() < 1e-12);
+        assert!((super::max_turn(&region(1e6), &region(1e6), 1.0, true) - deg).abs() < 1e-12);
+        assert!((super::max_turn(&region(1e-6), &region(1e-6), 1.0, true) - cap).abs() < 1e-12);
+        assert!(cap < std::f64::consts::FRAC_PI_2);
     }
 }
