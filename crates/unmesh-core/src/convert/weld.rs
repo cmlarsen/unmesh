@@ -12,6 +12,30 @@ fn parity(f: &[u32; 3], key: &[u32; 3]) -> bool {
         || (f[0] == key[2] && f[1] == key[0])
 }
 
+fn component_closed(faces: &[[u32; 3]], members: &[usize]) -> bool {
+    let mut edges: Vec<u64> = Vec::with_capacity(members.len() * 3);
+    for &f in members {
+        let t = faces[f];
+        for k in 0..3 {
+            let (u, v) = (t[k], t[(k + 1) % 3]);
+            edges.push(((u.min(v) as u64) << 32) | u.max(v) as u64);
+        }
+    }
+    edges.sort_unstable();
+    let mut i = 0;
+    while i < edges.len() {
+        let mut j = i + 1;
+        while j < edges.len() && edges[j] == edges[i] {
+            j += 1;
+        }
+        if j - i != 2 {
+            return false;
+        }
+        i = j;
+    }
+    true
+}
+
 pub struct Welded {
     pub faces: Vec<[u32; 3]>,
     pub fsrc: Vec<u32>,
@@ -143,6 +167,9 @@ pub fn run(
 
     let mut vertices: Vec<Point> = mesh.vertices.clone();
     let mut stacked = 0usize;
+    let mut coincident_comps = 0usize;
+    let mut coincident_shells = 0usize;
+    let mut coincident_copies = 0usize;
     {
         let mut stacks = Dsu::new(faces.len());
         let mut edges: Vec<(u64, u32)> = Vec::with_capacity(faces.len() * 3);
@@ -174,12 +201,17 @@ pub fn run(
                     .map(|&f| 1 + copies[f].len())
                     .min()
                     .unwrap_or(0);
-                mult >= 2 && members.iter().all(|&f| 1 + copies[f].len() == mult)
+                mult >= 2
+                    && members.iter().all(|&f| 1 + copies[f].len() == mult)
+                    && component_closed(&faces, members)
             })
             .collect();
         stack_comps.sort_unstable();
         for members in stack_comps {
             let mult = members.iter().map(|&f| 1 + copies[f].len()).min().unwrap();
+            coincident_comps += 1;
+            coincident_shells += mult;
+            coincident_copies += mult - 1;
             let mut used: Vec<u32> = members
                 .iter()
                 .flat_map(|&f| faces[f].iter().copied())
@@ -204,6 +236,14 @@ pub fn run(
     }
 
     let dropped = wrep.degenerate_dropped + (duplicates - stacked);
+    if coincident_comps > 0 {
+        warnings.push(ConvertWarning {
+            code: "coincident_shells".to_string(),
+            message: format!(
+                "{coincident_comps} coincident component(s) with {coincident_copies} extra copy(ies) were kept as {coincident_shells} coincident shells"
+            ),
+        });
+    }
     if dropped > 0 {
         warnings.push(ConvertWarning {
             code: "degenerate_triangles".to_string(),

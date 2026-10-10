@@ -391,6 +391,7 @@ def test_imported_coincident_bodies_and_open_input_are_reported(tmp_path):
     conv = convert_to_step(str(tmp_path / "imported-0103.stl"), solids, measure=False)
     assert conv.fidelity["validity"]["valid"] is True, conv.fidelity["validity"]["issues"]
     assert conv.fidelity["validity"]["solids"] == 2
+    assert "coincident_shells" in [w["code"] for w in conv.fidelity["input"]["warnings"]]
 
     open_id = tmp_path / "imported-0218.step"
     mesh = tessellate(load_imported_shape(by_id["imported-0218"]), 0.01, 0.2)
@@ -399,6 +400,7 @@ def test_imported_coincident_bodies_and_open_input_are_reported(tmp_path):
     boundary = conv.fidelity["validity"]["open_boundary"]
     assert boundary["edges"] == 4
     assert boundary["length"] == pytest.approx(25.4, abs=1e-3)
+    assert boundary["non_manifold_edges"] > 0
 
 
 def test_missing_cache_error_names_fetch_script(tmp_path, monkeypatch):

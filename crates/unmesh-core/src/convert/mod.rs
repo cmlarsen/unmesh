@@ -609,7 +609,143 @@ mod tests {
             out.report
                 .warnings
                 .iter()
+                .any(|w| w.code == "coincident_shells"),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
                 .all(|w| w.code != "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn tripled_body_becomes_three_shells() {
+        let body = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let mut tris = body.clone();
+        tris.extend(body.clone());
+        tris.extend(body);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 3, "{:?}", out.report.warnings);
+        assert!(
+            ir.shells
+                .iter()
+                .all(|s| s.closed && s.role == ShellRole::Outer)
+        );
+        assert_eq!(ir.vertices.len(), 24);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "coincident_shells"),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn doubly_stacked_open_triangle_is_dropped_not_stacked() {
+        let body = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let tri = [[100.0, 0.0, 0.0], [101.0, 0.0, 0.0], [100.0, 1.0, 0.0]];
+        let mut tris = body;
+        tris.push(tri);
+        tris.push(tri);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 2, "{:?}", out.report.warnings);
+        assert_eq!(ir.shells.iter().filter(|s| s.closed).count(), 1);
+        assert_eq!(ir.shells.iter().filter(|s| !s.closed).count(), 1);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "coincident_shells"),
+            "{:?}",
+            out.report.warnings
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn doubly_stacked_open_patch_is_dropped_not_stacked() {
+        let patch = [
+            [[200.0, 0.0, 0.0], [201.0, 0.0, 0.0], [200.0, 1.0, 0.0]],
+            [[201.0, 0.0, 0.0], [201.0, 1.0, 0.0], [200.0, 1.0, 0.0]],
+        ];
+        let mut tris = patch.to_vec();
+        tris.extend(patch);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 1, "{:?}", out.report.warnings);
+        assert!(!ir.shells[0].closed);
+        assert_eq!(ir.regions.len(), 1);
+        assert!(ir.regions[0].surface.is_facets());
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "coincident_shells"),
+            "{:?}",
+            out.report.warnings
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
+    fn non_uniform_doubling_is_not_stacked() {
+        let body = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let mut tris = body.clone();
+        tris.extend(body.clone());
+        tris.push(body[0]);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 1, "{:?}", out.report.warnings);
+        assert!(ir.shells[0].closed);
+        assert_eq!(ir.regions.len(), 6);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.code == "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "coincident_shells"),
             "{:?}",
             out.report.warnings
         );

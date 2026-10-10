@@ -86,6 +86,7 @@ class ShellReport:
     max_boundary_deviation: float = 0.0
     open_edges: int = 0
     open_boundary_length: float = 0.0
+    non_manifold_edges: int = 0
 
 
 @dataclass
@@ -123,6 +124,7 @@ class WriteReport:
     open_shells: list[int] = field(default_factory=list)
     open_edges: int = 0
     open_boundary_length: float = 0.0
+    non_manifold_edges: int = 0
     readback: ReadBack | None = None
     verified: bool = False
     verified_by: Literal["occt", "text", "occt+text"] | None = None
@@ -544,7 +546,7 @@ def _area(t: np.ndarray) -> float:
     return float(np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum() / 2)
 
 
-def _open_boundary(ir: Ir, shell: int) -> tuple[int, float]:
+def _open_boundary(ir: Ir, shell: int) -> tuple[int, float, int]:
     used: dict[tuple[int, int], int] = {}
     points: list[tuple[float, float, float]] = []
     for region in ir.shells[shell].regions:
@@ -559,29 +561,31 @@ def _open_boundary(ir: Ir, shell: int) -> tuple[int, float]:
                 key = (min(u, v), max(u, v))
                 used[key] = used.get(key, 0) + 1
     boundary = [edge for edge, count in used.items() if count == 1]
+    non_manifold = sum(1 for count in used.values() if count >= 3)
     length = 0.0
     for u, v in boundary:
         a = np.asarray(points[u], dtype=float)
         b = np.asarray(points[v], dtype=float)
         length += float(np.linalg.norm(a - b))
-    return len(boundary), length
+    return len(boundary), length, non_manifold
 
 
 def _shell_report(ir: Ir, g: _Group) -> ShellReport:
-    open_edges = open_boundary_length = 0.0
+    open_edges = open_boundary_length = non_manifold = 0.0
     if g.kind == "shell":
-        open_edges, open_boundary_length = _open_boundary(ir, g.outer)
+        open_edges, open_boundary_length, non_manifold = _open_boundary(ir, g.outer)
     return ShellReport(
-        g.outer,
-        g.kind,
-        g.valid,
-        g.volume,
-        g.tolerance,
-        g.issues,
-        g.moved,
-        g.deviation,
-        int(open_edges),
-        float(open_boundary_length),
+        shell=g.outer,
+        kind=g.kind,
+        valid=g.valid,
+        volume=g.volume,
+        max_shape_tolerance=g.tolerance,
+        issues=g.issues,
+        max_vertex_displacement=g.moved,
+        max_boundary_deviation=g.deviation,
+        open_edges=int(open_edges),
+        open_boundary_length=float(open_boundary_length),
+        non_manifold_edges=int(non_manifold),
     )
 
 
@@ -801,7 +805,8 @@ def write(
     if fallback is None and not complete and reason is not None:
         issues.append(reason)
     shell_reports = [_shell_report(ir, g) for g in groups]
-    open_reports = [s for s in shell_reports if s.kind == "shell"]
+    open_ids = {g.outer for g in written if g.kind == "shell"}
+    open_reports = [s for s in shell_reports if s.shell in open_ids]
     return WriteReport(
         valid=complete and len(written) == n_outer and (not verify or checked.ok),
         solids=_solid_count(written, occ, fallback, checked),
@@ -823,6 +828,7 @@ def write(
         open_shells=[g.outer for g in written if g.kind == "shell"],
         open_edges=sum(s.open_edges for s in open_reports),
         open_boundary_length=sum(s.open_boundary_length for s in open_reports),
+        non_manifold_edges=sum(s.non_manifold_edges for s in open_reports),
         readback=checked.readback,
         verified=checked.by is not None,
         verified_by=checked.by,

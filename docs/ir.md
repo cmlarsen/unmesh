@@ -318,6 +318,7 @@ every one of its mesh edges is shared by exactly two triangles, with consistent 
 |---|---|
 | Degenerate (zero-area) triangles | Dropped before fitting. Report warning `degenerate_triangles`. |
 | Duplicate triangles (same three vertices after welding), same winding | Dropped before fitting. Report warning `degenerate_triangles`. |
+| A whole closed edge-connected component repeated uniformly (every face an equal number of times, same winding, every edge still shared by exactly two of its faces) | Every extra copy is kept as its own coincident shell, so the writer writes the true number of solids. Warning `coincident_shells`. Any other repeated component follows the plain duplicate rule above. |
 | Coincident triangles with opposite winding | The reverse twin is dropped when removing it leaves its edge-connected component manifold (every edge used by exactly two triangles), reported as `repaired_winding`. Otherwise both copies are kept. |
 | Face-touching bodies (a coincident face pair with opposite winding shared by two bodies) | Both copies kept: the shared edges are used by more than two triangles, so the edge-connected component is a single open facets shell holding every triangle. Warning `non_manifold_edges`. |
 | Closed manifold, consistent winding, positive volume | Normal shell. |
