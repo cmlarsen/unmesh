@@ -41,6 +41,11 @@ struct Grower<'a> {
     f: &'a [[u32; 3]],
     info: &'a [TriInfo],
     tol: f64,
+    /// Scale of the noise a normal may wander by, not the point-distance
+    /// tolerance: a triangle's normal is uncertain by `noise / min_alt`, so
+    /// anchoring the angular allowance to `tol` (5x), lets a plane grow across
+    /// a curved fillet whenever the tolerance rises to the true noise.
+    noise: f64,
     strict: bool,
 }
 
@@ -63,7 +68,7 @@ impl Grower<'_> {
             if cosang <= 0.0 {
                 return false;
             }
-            let allow = BASE_ANGLE + (2.0 * self.tol).atan2(info.min_alt);
+            let allow = BASE_ANGLE + (2.0 * self.noise).atan2(info.min_alt);
             if allow < std::f64::consts::FRAC_PI_2 && cosang < allow.cos() {
                 return false;
             }
@@ -81,6 +86,7 @@ impl Grower<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     v: &[V3],
     f: &[[u32; 3]],
@@ -88,9 +94,10 @@ pub fn run(
     info: &[TriInfo],
     eligible: &[bool],
     tol: f64,
+    noise: f64,
     strict: bool,
 ) -> (Vec<u32>, usize) {
-    run_fenced(v, f, nbr, info, eligible, None, tol, strict)
+    run_fenced(v, f, nbr, info, eligible, None, tol, noise, strict)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -102,6 +109,7 @@ pub fn run_fenced(
     eligible: &[bool],
     fence: Option<&[u32]>,
     tol: f64,
+    noise: f64,
     strict: bool,
 ) -> (Vec<u32>, usize) {
     let grower = Grower {
@@ -109,6 +117,7 @@ pub fn run_fenced(
         f,
         info,
         tol,
+        noise,
         strict,
     };
     let mut label = vec![NONE; f.len()];
@@ -250,7 +259,7 @@ mod tests {
         let (v, f, nbr) = hinge_pair();
         let info = tri_info(&v, &f);
         let eligible = vec![true; 2];
-        run(&v, &f, &nbr, &info, &eligible, 0.03, strict).0
+        run(&v, &f, &nbr, &info, &eligible, 0.03, 0.03, strict).0
     }
 
     #[test]
@@ -266,11 +275,20 @@ mod tests {
         let (v, f, nbr) = hinge_pair_deg(0.0);
         let info = tri_info(&v, &f);
         let eligible = vec![true; 2];
-        let (open, n_open) = run(&v, &f, &nbr, &info, &eligible, 0.03, false);
+        let (open, n_open) = run(&v, &f, &nbr, &info, &eligible, 0.03, 0.03, false);
         assert_eq!((open, n_open), (vec![0, 0], 1));
         let fence = vec![0u32, 1];
-        let (fenced, n_fenced) =
-            run_fenced(&v, &f, &nbr, &info, &eligible, Some(&fence), 0.03, false);
+        let (fenced, n_fenced) = run_fenced(
+            &v,
+            &f,
+            &nbr,
+            &info,
+            &eligible,
+            Some(&fence),
+            0.03,
+            0.03,
+            false,
+        );
         assert_eq!((fenced, n_fenced), (vec![0, 1], 2));
     }
 }

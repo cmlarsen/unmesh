@@ -380,6 +380,8 @@ pub struct FitArgs<'a> {
     pub info: &'a [TriInfo],
     pub eligible: &'a [bool],
     pub tol: f64,
+    pub sigma: f64,
+    pub noisy: bool,
     pub snap_deg: f64,
     pub scratch: &'a mut Scratch,
 }
@@ -392,22 +394,26 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         info,
         eligible,
         tol,
+        sigma,
+        noisy,
         snap_deg,
         scratch,
     } = args;
-    let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, false);
+    let noise = if noisy { sigma } else { tol };
+    let (label, n_seg) = segment::run(vc, faces, nbr, info, eligible, tol, noise, false);
     super::timing::lap("segment");
     let (label2, regions) =
         merge_and_rebuild(vc, faces, info, nbr, &label, n_seg, tol, snap_deg, scratch);
     super::timing::lap("merge");
-    let (label3, regions) = match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol) {
+    let (label3, regions) = match resplit_loose(vc, faces, nbr, info, &label2, &regions, tol, noise)
+    {
         Some((combined, n_all)) => merge_and_rebuild(
             vc, faces, info, nbr, &combined, n_all, tol, snap_deg, scratch,
         ),
         None => (label2, regions),
     };
     super::timing::lap("resplit");
-    let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol);
+    let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol, sigma, noisy);
     super::timing::lap("grow");
     let mut regions = grown.regions;
     super::curved::refine_regions_with(
@@ -542,6 +548,7 @@ pub fn run(args: RunArgs<'_>) -> (Vec<u32>, Vec<Region>) {
     (label.to_vec(), regions)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resplit_loose(
     vc: &[V3],
     faces: &[[u32; 3]],
@@ -550,6 +557,7 @@ pub fn resplit_loose(
     label: &[u32],
     regions: &[Region],
     tol: f64,
+    noise: f64,
 ) -> Option<(Vec<u32>, usize)> {
     let loose: Vec<u32> = regions
         .iter()
@@ -589,7 +597,17 @@ pub fn resplit_loose(
         .iter()
         .map(|&l| l != NONE && creased[l as usize])
         .collect();
-    let (sub, n_sub) = segment::run_fenced(vc, faces, nbr, info, &eligible, Some(label), tol, true);
+    let (sub, n_sub) = segment::run_fenced(
+        vc,
+        faces,
+        nbr,
+        info,
+        &eligible,
+        Some(label),
+        tol,
+        noise,
+        true,
+    );
     for (f, &l) in sub.iter().enumerate() {
         if l != NONE {
             combined[f] = next_id + l;
@@ -855,7 +873,8 @@ mod tests {
         let mut scratch = Scratch::new(v.len());
         let regions = build_regions(&v, &f, &info, &label, 2, 0.03, &mut scratch);
         assert!(regions.iter().all(|r| r.max > 0.03));
-        let (combined, n_all) = resplit_loose(&v, &f, &nbr, &info, &label, &regions, 0.03).unwrap();
+        let (combined, n_all) =
+            resplit_loose(&v, &f, &nbr, &info, &label, &regions, 0.03, 0.03).unwrap();
         assert_eq!(n_all, 4);
         let (label2, regions) = merge_and_rebuild(
             &v,

@@ -27,7 +27,7 @@ use crate::mesh::{Point, TriangleSoup};
 
 use emit::Asm;
 use fit::{label_faces, region_pairs};
-use linalg::{V3, add};
+use linalg::{V3, add, dot};
 use project::Projected;
 use snap::NOISE_FACTOR;
 use topology::NONE;
@@ -35,6 +35,40 @@ use topology::NONE;
 const INITIAL_TOL_REL: f64 = 5e-4;
 const MIN_TOL_REL: f64 = 1e-6;
 const FLOAT_TOL_REL: f64 = 5e-7;
+
+/// A tessellated surface that carries no vertex noise keeps many adjacent
+/// faces that are exactly coplanar: the mesher splits each flat quad (and each
+/// planar patch) into a pair of triangles lying in one plane, and any vertex
+/// noise destroys that. A mesh whose coplanar-pair share is this high was
+/// cleanly tessellated, so the noise estimate it yields is the tessellation's
+/// own chord residual, not sensor noise, and growth must keep its clean
+/// behaviour.
+const CLEAN_COPLANAR_FRACTION: f64 = 0.01;
+const COPLANAR_EPS: f64 = 1e-12;
+
+/// The share of interior face pairs whose normals are parallel to within
+/// `COPLANAR_EPS`, the signature of a noise-free tessellation (see
+/// `CLEAN_COPLANAR_FRACTION`).
+fn coplanar_fraction(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
+    let (mut coplanar, mut total) = (0u32, 0u32);
+    for (f, ns) in nbr.iter().enumerate() {
+        for &g in ns {
+            let g = g as usize;
+            if g >= info.len() || g <= f {
+                continue;
+            }
+            total += 1;
+            if 1.0 - dot(info[f].normal, info[g].normal).abs() < COPLANAR_EPS {
+                coplanar += 1;
+            }
+        }
+    }
+    if total == 0 {
+        0.0
+    } else {
+        coplanar as f64 / total as f64
+    }
+}
 
 fn floor(diag: f64, max_abs: f64) -> f64 {
     (MIN_TOL_REL * diag).max(FLOAT_TOL_REL * max_abs)
@@ -46,7 +80,7 @@ pub fn convert_soup(
 ) -> Result<ConvertOutput, ConvertError> {
     let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, sigma: f64, noisy: bool| {
         fit::fit_regions(fit::FitArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -54,6 +88,8 @@ pub fn convert_soup(
             info: &info,
             eligible: &shells.eligible,
             tol,
+            sigma,
+            noisy,
             snap_deg: options.angular_snap_deg,
             scratch: &mut scratch,
         })
@@ -151,7 +187,7 @@ pub fn convert_soup_from_labels(
         .collect();
     let (face_labels, n_seg) = split_components(&shells.topo.nbr, &raw);
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, _sigma: f64, _noisy: bool| {
         fit::run(fit::RunArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -220,20 +256,24 @@ fn finish(
     mut tol: f64,
     auto_tol: bool,
     mut warnings: Vec<ConvertWarning>,
-    fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
+    fit_once: &mut dyn FnMut(f64, f64, bool) -> (Vec<u32>, Vec<fit::Region>),
 ) -> Result<ConvertOutput, ConvertError> {
     let mut sigma = tol / NOISE_FACTOR;
+    let mut noisy = false;
     if auto_tol {
         let fl = floor(w.diag, w.max_abs);
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
+            let clean = coplanar_fraction(&shells.topo.nbr, info) >= CLEAN_COPLANAR_FRACTION;
+            noisy = !clean && NOISE_FACTOR * est > fl && NOISE_FACTOR * est < tol;
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
         timing::lap("noise");
     }
-    let (label2, mut regions) = fit_once(tol);
+    let grow_sigma = if noisy { sigma } else { tol };
+    let (label2, mut regions) = fit_once(tol, grow_sigma, noisy);
     snap::snap_normals(
         &w.vc,
         &mut regions,
