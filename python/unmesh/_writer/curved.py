@@ -74,6 +74,7 @@ SEAM_GAP = 1e-4
 SEAM_SAMPLES = 9
 SEAM_DEPTH = 16
 SEAM_SLACK = 1.01
+SEAM_PLANE_COS = 0.999
 
 
 @dataclass
@@ -713,6 +714,15 @@ def _segment_distance(x, p, q) -> float:
 
 
 def _chord_gap(surface, p, q) -> float:
+    if isinstance(surface, Cylinder):
+        a = geo.unit(surface.axis)
+        u = np.asarray(p, dtype=float) - np.asarray(surface.origin, dtype=float)
+        v = np.asarray(q, dtype=float) - np.asarray(p, dtype=float)
+        up = u - (u @ a) * a
+        vp = v - (v @ a) * a
+        denom = float(vp @ vp)
+        t = 0.0 if denom == 0.0 else float(np.clip(-(up @ vp) / denom, 0.0, 1.0))
+        return max(surface.radius - float(np.linalg.norm(up + t * vp)), 0.0)
     return max(
         geo.distance(surface, p + t * (q - p)) for t in np.linspace(0.0, 1.0, SEAM_SAMPLES)[1:-1]
     )
@@ -740,6 +750,9 @@ class _Builder:
         self.patch: dict[tuple, np.ndarray] = {}
         self.splits: dict[tuple, list[np.ndarray]] = {}
         self.split_region: dict[tuple, int] = {}
+        self.seam_edges: dict[tuple, tuple[list, list]] = {}
+        self.seam_cuts: dict[tuple, list[np.ndarray]] = {}
+        self.seam_loop_edges: set[int] = set()
         self.patch_keys: dict = {}
         self.seam_records: list[tuple[SeamGap, list]] = []
         self.index = index
@@ -1224,6 +1237,76 @@ class _Builder:
                 cuts[k] = e.seam_point
             chords = chords[k:] + chords[:k]
             cuts = {(i - k) % len(chords): x for i, x in cuts.items()}
+        planes = self.patch_planes(self.surface(patch))
+        axis = geo.axis_of(s)
+        use_curve = (
+            isinstance(s, Cylinder)
+            and axis is not None
+            and bool(planes)
+            and all(abs(float(n @ axis)) >= SEAM_PLANE_COS for _, n in planes.values())
+        )
+        if not use_curve:
+            self.seam_straight(e, s, patch, chords, cuts, moved)
+            return
+        chord_gap = gap = deviation = tolerance = 0.0
+        inserted = 0
+        runs = []
+        for i, (p, q) in enumerate(chords):
+            chord_gap = max(chord_gap, _chord_gap(s, p, q))
+            plane = planes.get(frozenset((_key(p), _key(q))))
+            if i in cuts:
+                left = _subdivide(s, p, cuts[i], self.seam_gap)
+                at = len(left)
+                inner = [*left, cuts[i], *_subdivide(s, cuts[i], q, self.seam_gap)]
+            else:
+                inner = _subdivide(s, p, q, self.seam_gap)
+                at = 0
+            self.splits[(_key(p), _key(q))] = inner
+            self.split_region[(_key(p), _key(q))] = e.seam
+            inserted += len(inner)
+            if i in cuts:
+                self.seam_cuts[(_key(p), _key(q))] = [cuts[i]]
+                self.split_region[(_key(p), _key(cuts[i]))] = e.seam
+                self.split_region[(_key(cuts[i]), _key(q))] = e.seam
+            runs.append((inner, at))
+        loop: list[tuple[list, object]] = []
+        tail: list[tuple[list, object]] = []
+        for i, (p, q) in enumerate(chords):
+            inner, at = runs[i]
+            plane = planes.get(frozenset((_key(p), _key(q))))
+            if i in cuts:
+                pieces = [[p, *inner[:at], inner[at]], [inner[at], *inner[at + 1 :], q]]
+            else:
+                pieces = [[p, *inner, q]]
+            built = []
+            for pts in pieces:
+                edge, surf_off, plane_off = self.seam_curve(s, pts, plane)
+                gap = max(gap, surf_off)
+                deviation = max(deviation, plane_off)
+                tolerance = max(
+                    tolerance, max(EDGE_TOLERANCE, SEAM_SLACK * max(surf_off, plane_off))
+                )
+                self.seam_edges[(_key(pts[0]), _key(pts[-1]))] = (pts, [edge])
+                built.append((pts, edge))
+            if i in cuts:
+                loop.append(built[1])
+                tail.append(built[0])
+            else:
+                loop.extend(built)
+        loop.extend(tail)
+        e.edges = [edge for _, edge in loop]
+        self.seam_loop_edges.update(hash(edge) for edge in e.edges)
+        nodes: list[np.ndarray] = []
+        for pts, _ in loop:
+            nodes.extend(pts if not nodes else pts[1:])
+        e.nodes = nodes
+        e.deviation = max(moved, gap, deviation, chord_gap)
+        self.out.vertex_displacement[patch] = max(self.out.vertex_displacement[patch], moved)
+        record = SeamGap((e.a, e.b), s.type, len(e.points), gap, chord_gap, inserted, tolerance)
+        self.out.seams.append(record)
+        self.seam_records.append((record, e.edges))
+
+    def seam_straight(self, e, s, patch, chords, cuts, moved):
         chord_gap = gap = tolerance = 0.0
         inserted = 0
         runs = []
@@ -1276,6 +1359,46 @@ class _Builder:
             return got
         got = self.splits.get((kq, kp))
         return got[::-1] if got is not None else []
+
+    def cut(self, p, q) -> list[np.ndarray]:
+        kp, kq = _key(p), _key(q)
+        return self.seam_cuts.get((kp, kq), self.seam_cuts.get((kq, kp), []))
+
+    def seam_path(self, a, b) -> list | None:
+        ka, kb = _key(a), _key(b)
+        got = self.seam_edges.get((ka, kb))
+        if got is not None:
+            return got[1]
+        got = self.seam_edges.get((kb, ka))
+        if got is None:
+            return None
+        return [TopoDS.Edge_s(e.Reversed()) for e in reversed(got[1])]
+
+    def seam_curve(self, surface, pts, plane=None) -> tuple:
+        curve = _interpolate(pts, False)
+        v0 = self.pool.vertex(pts[0])
+        v1 = self.pool.vertex(pts[-1])
+        mk = BRepBuilderAPI_MakeEdge(curve, v0, v1, curve.FirstParameter(), curve.LastParameter())
+        if not mk.IsDone():
+            raise BuildError("a seam curve could not be built")
+        edge = mk.Edge()
+        surf_off = plane_off = 0.0
+        for t in np.linspace(curve.FirstParameter(), curve.LastParameter(), 4 * len(pts) + 1):
+            q = _xyz(curve.Value(float(t)))
+            surf_off = max(surf_off, geo.distance(surface, q))
+            if plane is not None:
+                plane_off = max(plane_off, abs(float((q - plane[0]) @ plane[1])))
+        self.seam_tolerance(edge, v0, v1, max(surf_off, plane_off))
+        return edge, surf_off, plane_off
+
+    def seam_tolerance(self, edge, v0, v1, off: float) -> None:
+        tol = max(EDGE_TOLERANCE, SEAM_SLACK * off)
+        self.builder.UpdateEdge(edge, tol)
+        self.builder.SameParameter(edge, False)
+        self.loose.append((edge, tol))
+        for v in (v0, v1):
+            if tol > BRep_Tool.Tolerance_s(v):
+                self.builder.UpdateVertex(v, tol)
 
     def curved_edge(self, e: _Edge):
         surfaces = [self.surface(e.a), self.surface(e.b)]
@@ -1459,18 +1582,34 @@ class _Builder:
             self.builder.Add(face, self.wire([e for seg in loops[i] for e in seg.edges]))
         return face
 
-    def facets_faces(self, r, s: Facets):
+    def patch_positions(self, s: Facets) -> np.ndarray:
         snapped = {}
         for v, x in zip(self.ir.vertices, self.vpos, strict=True):
             for p in (v.position, *v.source_positions):
                 snapped[_key(p)] = x
-        v = np.array(
+        return np.array(
             [
                 snapped.get(_key(p), self.patch.get(_key(p), np.asarray(p, dtype=float)))
                 for p in s.vertices
             ],
             dtype=float,
         )
+
+    def patch_planes(self, s: Facets) -> dict:
+        v = self.patch_positions(s)
+        planes = {}
+        for f in s.faces:
+            a, b, c = v[list(f)]
+            n = np.cross(b - a, c - a)
+            if np.linalg.norm(n) < 1e-14:
+                continue
+            n = geo.unit(n)
+            for u, w in ((a, b), (b, c), (c, a)):
+                planes[frozenset((_key(u), _key(w)))] = (a, n)
+        return planes
+
+    def facets_faces(self, r, s: Facets):
+        v = self.patch_positions(s)
         faces = []
         record = PatchWrite(v[np.asarray(s.faces, dtype=np.int64)])
         self.out.patches[r] = record
@@ -1484,15 +1623,29 @@ class _Builder:
                 if side:
                     seam = self.seam_of(corners[i], corners[(i + 1) % 3])
                     record.splits.extend((fi, i, x, seam) for x in side)
-            for a, b, c in self.split_triangle(corners, sides):
+            split = []
+            for i in range(3):
+                a, b = corners[i], corners[(i + 1) % 3]
+                if self.seam_path(a, b) is not None or self.cut(a, b):
+                    split.append(self.cut(a, b))
+                else:
+                    split.append(sides[i])
+            for a, b, c in self.split_triangle(corners, split):
                 m = np.cross(b - a, c - a)
                 if np.linalg.norm(m) < 1e-14 or not m @ n > 0:
                     raise BuildError(f"region {r}: a seam split folds a facets triangle")
                 face = TopoDS_Face()
                 self.builder.MakeFace(face, Geom_Plane(gp_Ax3(_pnt(a), _dir(geo.unit(m)))), 1e-7)
-                edges = [self.pool.edge(p, q) for p, q in ((a, b), (b, c), (c, a))]
-                if any(e is None for e in edges):
-                    raise BuildError(f"region {r}: degenerate facets triangle")
+                edges = []
+                for p, q in ((a, b), (b, c), (c, a)):
+                    path = self.seam_path(p, q)
+                    if path is not None:
+                        edges.extend(path)
+                        continue
+                    edge = self.pool.edge(p, q)
+                    if edge is None:
+                        raise BuildError(f"region {r}: degenerate facets triangle")
+                    edges.append(edge)
                 self.builder.Add(face, self.wire(edges))
                 faces.append(face)
         return faces
@@ -1529,7 +1682,10 @@ class _Builder:
                 raise BuildError(f"region {r}: natural {s.type} face construction failed")
             face = mk.Face()
             return TopoDS.Face_s(face.Reversed()) if reversed_ else face
-        uv_loops = [_UVLoop(r, surf, [e for seg in lp for e in seg.edges], s) for lp in loops]
+        uv_loops = [
+            _UVLoop(r, surf, [e for seg in lp for e in seg.edges], s, self.seam_loop_edges)
+            for lp in loops
+        ]
         wraps = [lp for lp in uv_loops if lp.du != 0]
         holes = [lp for lp in uv_loops if lp.du == 0]
         if any(lp.dv != 0 for lp in uv_loops):
@@ -1841,10 +1997,11 @@ def seam_vertex(seam, last: bool):
 
 
 class _UVLoop:
-    def __init__(self, region, surf, edges, ir_surface):
+    def __init__(self, region, surf, edges, ir_surface, trusted=frozenset()):
         self.region = region
         self.surf = surf
         self.edges = list(edges)
+        self.trusted = trusted
         self.v_periodic = isinstance(ir_surface, Torus)
         self.ir_surface = ir_surface
         self.pcurves = []
@@ -1856,7 +2013,7 @@ class _UVLoop:
             if pc is None:
                 raise BuildError(f"region {region}: could not project an edge onto the surface")
             pc = corrected_pcurve(surf, curve, first, last, pc)
-            if not isinstance(curve, Geom_Line):
+            if not isinstance(curve, Geom_Line) and hash(e) not in self.trusted:
                 # A line edge's perpendicular projection is already the nearest-point
                 # map, so the sampled fallback only matches it; skip the 512-sample check.
                 error = pcurve_error(surf, curve, first, last, pc)

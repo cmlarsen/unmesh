@@ -198,7 +198,7 @@ def test_straight_fillet_fallback_rate_under_1um_noise(tmp_path):
     assert len(reasons) < 0.05 * len(seeds), reasons
 
 
-MIXED_WRITE_BUDGET_S = 10.0
+MIXED_WRITE_BUDGET_S = 5.0
 MIXED_WRITE_CI_FACTOR = 3.0
 
 
