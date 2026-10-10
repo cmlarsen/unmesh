@@ -34,7 +34,6 @@ use topology::NONE;
 
 const INITIAL_TOL_REL: f64 = 5e-4;
 const MIN_TOL_REL: f64 = 1e-6;
-const FLOAT_TOL_REL: f64 = 5e-7;
 
 /// A tessellated surface that carries no vertex noise keeps every quad it was
 /// split into exactly coplanar: two triangles of one flat quad lie in one
@@ -54,8 +53,8 @@ const CLEAN_PATCH_FACES: usize = 8;
 /// when the noise estimate so far exceeds the *part's own size* that the
 /// coplanarity must be an artefact (an exactly flat base or a quantized scan
 /// leaves the flat parts coplanar while the rest keeps the noise). Measured
-/// against `MIN_TOL_REL * diag`, never the `max_abs` term of the floor, which
-/// would make the decision move with translation: on the held-out parts a
+/// against `MIN_TOL_REL * diag`, never the float32-quantization term of the
+/// floor, which would make the decision move with translation: on the held-out parts a
 /// clean low-share tessellation sits at most at 14x (`revolved_dome`
 /// re-chorded), while the flat-based and quantized noisy scans the share
 /// misses start at 131x (`blind_bore` nn@0.1+flatbottom); 130 sits in that
@@ -122,8 +121,35 @@ fn coplanar_share(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
     if den <= 0.0 { 1.0 } else { num / den }
 }
 
-fn floor(diag: f64, max_abs: f64) -> f64 {
-    (MIN_TOL_REL * diag).max(FLOAT_TOL_REL * max_abs)
+/// The smallest linear tolerance an auto-derived tolerance uses: `MIN_TOL_REL`
+/// of the bounding-box diagonal, or, when the input coordinates are
+/// float32-quantized, one float32 ulp at the largest `|coordinate|` (see
+/// `weld::f32_ulp` and `Welded::quant_abs`). A binary STL stores every
+/// coordinate rounded to the float32 grid, whose step grows with `|p|`
+/// (about 6e-5 mm at 1000 mm), so a
+/// float32 part far from the origin carries that much coordinate error and the
+/// floor has to cover it. The term is zero for float64 input, and for a part
+/// near the origin the diagonal term dominates, so the floor does not move
+/// with translation.
+fn floor(diag: f64, quant_abs: f64) -> f64 {
+    (MIN_TOL_REL * diag).max(quant_abs)
+}
+
+/// Removes the vertex-noise share of `est` that float32 quantization alone
+/// explains. A coordinate rounded to the float32 grid is off by up to half an
+/// ulp, i.e. uniform over one ulp, so it contributes `quant_abs^2 / 12` to the
+/// variance a surface-normal residual sees; subtracting it in quadrature keeps a
+/// clean float32 part far from the origin from reading `quant_abs / sqrt(12)`
+/// as noise. Only done when `NOISE_FACTOR` times that quantization std could
+/// raise the tolerance above the diagonal floor: below it the floor already caps
+/// the tolerance, so the estimate (and a near-origin part's IR) is left
+/// untouched.
+fn despeckle_sigma(est: f64, quant_abs: f64, diag: f64) -> f64 {
+    let quant_std = quant_abs / 12.0f64.sqrt();
+    if quant_std <= 0.0 || NOISE_FACTOR * quant_std <= MIN_TOL_REL * diag {
+        return est;
+    }
+    (est * est - quant_std * quant_std).max(0.0).sqrt()
 }
 
 /// Whether the input carries vertex noise: its estimate `est` must clear the
@@ -133,9 +159,9 @@ fn floor(diag: f64, max_abs: f64) -> f64 {
 /// coplanarity must be an artefact. A mesh whose estimate is within
 /// `CLEAN_EST_RATIO` of the floor is clean however its coplanarity reads.
 /// The override is measured against the diagonal, not the floor: the floor
-/// carries the `max_abs` term (float precision for a part far from the
-/// origin), so tying the override to it would make the clean/noisy decision
-/// move with translation.
+/// carries the float32-quantization term (coordinate precision for a part far
+/// from the origin), so tying the override to it would make the clean/noisy
+/// decision move with translation.
 fn noisy_mesh(share: f64, est: f64, fl: f64, diag: f64) -> bool {
     let est5 = NOISE_FACTOR * est;
     let clean = share >= CLEAN_COPLANAR_SHARE || est5 <= CLEAN_EST_RATIO * fl;
@@ -302,7 +328,7 @@ fn prepare(soup: &TriangleSoup, options: &ConvertOptions) -> Result<Prepared, Co
                 "linear_tolerance must be finite and > 0".to_string(),
             ));
         }
-        None => (INITIAL_TOL_REL * w.diag).max(floor(w.diag, w.max_abs)),
+        None => (INITIAL_TOL_REL * w.diag).max(floor(w.diag, w.quant_abs)),
     };
 
     let (shells, shell_warnings) = topology::prepare(&mut w.faces, &mut w.vc, &mut w.orig);
@@ -329,10 +355,11 @@ fn finish(
     let mut sigma = tol / NOISE_FACTOR;
     let mut noisy = false;
     if auto_tol {
-        let fl = floor(w.diag, w.max_abs);
-        if let Some(est) =
+        let fl = floor(w.diag, w.quant_abs);
+        if let Some(raw) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
+            let est = despeckle_sigma(raw, w.quant_abs, w.diag);
             noisy = noisy_mesh(coplanar_share(&shells.topo.nbr, info), est, fl, w.diag);
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
@@ -348,7 +375,7 @@ fn finish(
         sigma,
         options.angular_snap_deg,
         w.diag,
-        w.max_abs,
+        w.quant_abs,
     );
     timing::lap("snap");
 
@@ -651,7 +678,7 @@ mod tests {
 
     /// The clean/noisy decision must not move when the part is translated:
     /// the strong-estimate override compares the estimate to the part's own
-    /// diagonal, not to the `max_abs` term of the floor. The near and far
+    /// diagonal, not to the floor's float32-quantization term. The near and far
     /// floors straddle the estimate so the old `NOISY_EST_RATIO * fl` form
     /// flips; the diagonal form does not.
     #[test]
@@ -727,12 +754,39 @@ mod tests {
             false,
         ));
         assert_eq!(out.ir.regions.len(), 6);
-        let expect = 5e-7 * 1_000_010.0;
+        // Every coordinate is exactly representable as f32, so the input is
+        // float32-quantized and the floor is one f32 ulp at the largest
+        // coordinate: 2^(19-23) mm at ~1e6 mm, not the old 5e-7 * max_abs.
+        let expect = 2f64.powi(19 - 23);
         assert!(
-            (out.ir.tolerances.linear - expect).abs() < 1e-9,
+            (out.ir.tolerances.linear - expect).abs() < 1e-12,
             "linear={}",
             out.ir.tolerances.linear
         );
+    }
+
+    /// A float64 mesh far from the origin gets no float32-quantization floor
+    /// and no translation-dependent tolerance: the diagonal term alone, exactly
+    /// as the same box at the origin.
+    #[test]
+    fn float64_offset_part_keeps_diagonal_floor() {
+        let d = |tris| {
+            let out = convert_tris(tris);
+            assert_eq!(out.ir.regions.len(), 6, "{:?}", out.report.warnings);
+            out.ir.tolerances.linear
+        };
+        // 0.1 is not exactly representable as f32, so these coordinates are
+        // true float64 and must not trigger the quantization floor.
+        let origin = d(grid_box([0.1, 0.2, 0.3], [10.1, 20.2, 30.3], 1, false));
+        let moved = d(grid_box(
+            [1e6 + 0.1, -2e6 + 0.2, 5e5 + 0.3],
+            [1e6 + 10.1, -2e6 + 20.2, 5e5 + 30.3],
+            1,
+            false,
+        ));
+        let diag = norm(sub([10.0, 20.0, 30.0], [0.0; 3]));
+        assert!((origin - 1e-6 * diag).abs() < 1e-12, "origin={origin}");
+        assert_eq!(origin, moved, "float64 tolerance moved with translation");
     }
 
     #[test]

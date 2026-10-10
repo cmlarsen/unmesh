@@ -43,9 +43,41 @@ pub struct Welded {
     pub orig: Vec<Point>,
     pub center: V3,
     pub diag: f64,
-    pub max_abs: f64,
+    /// The float32-quantization step the tolerance floor covers: one f32 ulp at
+    /// the largest `|coordinate|` when the input is float32-quantized, else 0.
+    pub quant_abs: f64,
     pub unique_vertices: u32,
     pub merge_dev: f64,
+}
+
+/// One unit in the last place of the float32 value nearest `x`, i.e. the step
+/// of the float32 grid at `|x|` (about 6e-5 mm at 1000 mm). Zero for `x == 0`
+/// and for a non-finite `x`.
+pub fn f32_ulp(x: f64) -> f64 {
+    let a = x.abs();
+    if a == 0.0 || !a.is_finite() {
+        return 0.0;
+    }
+    let bits = (a as f32).to_bits();
+    let exp = ((bits >> 23) & 0xff) as i32;
+    if exp == 0 {
+        // Subnormal: the float32 ulp is the smallest subnormal.
+        return f64::from(f32::from_bits(1));
+    }
+    2f64.powi(exp - 127 - 23)
+}
+
+/// Whether every input coordinate is exactly representable as f32. A mesh read
+/// from a binary STL (whose coordinates are stored as f32) satisfies this, so
+/// the tolerance floor may cover the quantization it carries; a float64 mesh
+/// generally does not, so the floor must not move with its distance from the
+/// origin.
+fn float32_quantized(soup: &TriangleSoup) -> bool {
+    soup.triangles
+        .iter()
+        .flatten()
+        .flatten()
+        .all(|&c| (c as f32) as f64 == c)
 }
 
 pub fn run(
@@ -266,11 +298,18 @@ pub fn run(
     }
     let center: V3 = scale(add(lo, hi), 0.5);
     let diag = norm(sub(hi, lo));
-    let max_abs = vertices
-        .iter()
-        .flatten()
-        .map(|x| x.abs())
-        .fold(0.0, f64::max);
+    let quant_abs = if float32_quantized(soup) {
+        let max_abs = soup
+            .triangles
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|x| x.abs())
+            .fold(0.0, f64::max);
+        f32_ulp(max_abs)
+    } else {
+        0.0
+    };
     let orig: Vec<Point> = vertices;
     let vc: Vec<V3> = orig.iter().map(|p| sub(*p, center)).collect();
 
@@ -282,10 +321,35 @@ pub fn run(
             orig,
             center,
             diag,
-            max_abs,
+            quant_abs,
             unique_vertices: wrep.unique_vertices as u32,
             merge_dev: wrep.max_merge,
         },
         warnings,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f32_ulp_matches_the_float32_grid_step() {
+        assert_eq!(f32_ulp(0.0), 0.0);
+        // 58 is in the [32, 64) binade: 2^(5-23).
+        assert_eq!(f32_ulp(58.0), 2f64.powi(5 - 23));
+        // 1000 is in the [512, 1024) binade: 2^(9-23) ~ 6.1e-5.
+        assert_eq!(f32_ulp(1000.0), 2f64.powi(9 - 23));
+        // The step is one f32 value away at a binade boundary.
+        assert_eq!(f32_ulp(1024.0), 2f64.powi(10 - 23));
+    }
+
+    #[test]
+    fn float32_quantized_needs_every_coordinate_f32_exact() {
+        let soup = |c: [f64; 3]| TriangleSoup {
+            triangles: vec![[c, [c[0], c[1], 0.0], [0.0, 0.0, 1.0]]],
+        };
+        assert!(float32_quantized(&soup([1000.0, -0.5, 0.25])));
+        assert!(!float32_quantized(&soup([0.1, 1000.0, 0.25])));
+    }
 }
