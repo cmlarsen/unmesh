@@ -46,7 +46,7 @@ pub fn convert_soup(
 ) -> Result<ConvertOutput, ConvertError> {
     let (w, shells, info, tol, auto_tol, warnings) = prepare(soup, options)?;
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, sigma: f64, noisy: bool| {
         fit::fit_regions(fit::FitArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -54,6 +54,8 @@ pub fn convert_soup(
             info: &info,
             eligible: &shells.eligible,
             tol,
+            sigma,
+            noisy,
             snap_deg: options.angular_snap_deg,
             scratch: &mut scratch,
         })
@@ -151,7 +153,7 @@ pub fn convert_soup_from_labels(
         .collect();
     let (face_labels, n_seg) = split_components(&shells.topo.nbr, &raw);
     let mut scratch = fit::Scratch::new(w.vc.len());
-    let mut fit_once = |tol: f64| {
+    let mut fit_once = |tol: f64, _sigma: f64, _noisy: bool| {
         fit::run(fit::RunArgs {
             vc: &w.vc,
             faces: &w.faces,
@@ -220,20 +222,23 @@ fn finish(
     mut tol: f64,
     auto_tol: bool,
     mut warnings: Vec<ConvertWarning>,
-    fit_once: &mut dyn FnMut(f64) -> (Vec<u32>, Vec<fit::Region>),
+    fit_once: &mut dyn FnMut(f64, f64, bool) -> (Vec<u32>, Vec<fit::Region>),
 ) -> Result<ConvertOutput, ConvertError> {
     let mut sigma = tol / NOISE_FACTOR;
+    let mut noisy = false;
     if auto_tol {
         let fl = floor(w.diag, w.max_abs);
         if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
+            noisy = NOISE_FACTOR * est > fl && NOISE_FACTOR * est < tol;
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);
         }
         timing::lap("noise");
     }
-    let (label2, mut regions) = fit_once(tol);
+    let grow_sigma = if noisy { sigma } else { tol };
+    let (label2, mut regions) = fit_once(tol, grow_sigma, noisy);
     snap::snap_normals(
         &w.vc,
         &mut regions,

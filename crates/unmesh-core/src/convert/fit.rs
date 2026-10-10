@@ -380,6 +380,8 @@ pub struct FitArgs<'a> {
     pub info: &'a [TriInfo],
     pub eligible: &'a [bool],
     pub tol: f64,
+    pub sigma: f64,
+    pub noisy: bool,
     pub snap_deg: f64,
     pub scratch: &'a mut Scratch,
 }
@@ -392,6 +394,8 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         info,
         eligible,
         tol,
+        sigma,
+        noisy,
         snap_deg,
         scratch,
     } = args;
@@ -407,7 +411,7 @@ pub fn fit_regions(args: FitArgs<'_>) -> (Vec<u32>, Vec<Region>) {
         None => (label2, regions),
     };
     super::timing::lap("resplit");
-    let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol);
+    let grown = super::grow::run(vc, faces, nbr, info, &label3, regions, tol, sigma, noisy);
     super::timing::lap("grow");
     let mut regions = grown.regions;
     super::curved::refine_regions_with(
