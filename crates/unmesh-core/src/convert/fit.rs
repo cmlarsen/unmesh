@@ -690,9 +690,7 @@ fn degenerate(surface: &Surface, max: f64, sag: f64, scale: f64) -> bool {
     // passed through (or beside) the region instead of along it.
     let swollen = |feature: f64| max >= feature || sag >= feature;
     match *surface {
-        Surface::Cylinder { radius, .. } => {
-            bad(radius) || radius > scale || swollen(radius)
-        }
+        Surface::Cylinder { radius, .. } => bad(radius) || radius > scale || swollen(radius),
         Surface::Cone { half_angle, .. } => {
             bad(half_angle) || half_angle >= CONE_MAX_HALF_ANGLE_DEG.to_radians()
         }

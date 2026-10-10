@@ -2390,4 +2390,44 @@ mod tests {
             }
         }
     }
+
+    fn region(width: f64) -> super::super::fit::Region {
+        super::super::fit::Region {
+            faces: Vec::new(),
+            surface: super::super::surface::Surface::Facets,
+            area: 1.0,
+            width,
+            verts: Vec::new(),
+            rms: 0.0,
+            max: 0.0,
+            sag: 0.0,
+        }
+    }
+
+    /// The sagitta a member may carry is a few times the median member's or
+    /// the noise, not the tolerance: `SAG_RATIO * max(median, sigma)` on a
+    /// noisy cylinder or cone, the wider clean ratio against the tolerance
+    /// otherwise, and the wide ratio on a sphere or torus either way.
+    #[test]
+    fn sag_limit_scales_with_noise_not_tolerance() {
+        let s = |m: f64, tol: f64, sigma: f64, doubly: bool, noisy: bool| {
+            super::sag_limit(m, tol, sigma, doubly, noisy)
+        };
+        assert!((s(0.0, 1.0, 0.01, false, true) - super::SAG_RATIO * 0.01).abs() < 1e-12);
+        assert!((s(0.5, 1.0, 0.01, false, true) - super::SAG_RATIO * 0.5).abs() < 1e-12);
+        assert!((s(0.0, 1.0, 0.01, false, false) - super::SAG_RATIO_CLEAN * 1.0).abs() < 1e-12);
+        assert!((s(0.0, 1.0, 0.01, true, true) - super::SAG_RATIO_CLEAN * 1.0).abs() < 1e-12);
+    }
+
+    /// A chord that fits within the tolerance may turn further than the
+    /// fixed floor, but never as far as a real fold.
+    #[test]
+    fn max_turn_rises_for_narrow_chords_but_not_to_a_fold() {
+        let deg = super::MAX_TURN_DEG.to_radians();
+        let cap = super::MAX_CHORD_TURN_DEG.to_radians();
+        assert!((super::max_turn(&region(10.0), &region(10.0), 1.0, false) - deg).abs() < 1e-12);
+        assert!((super::max_turn(&region(1e6), &region(1e6), 1.0, true) - deg).abs() < 1e-12);
+        assert!((super::max_turn(&region(1e-6), &region(1e-6), 1.0, true) - cap).abs() < 1e-12);
+        assert!(cap < std::f64::consts::FRAC_PI_2);
+    }
 }
