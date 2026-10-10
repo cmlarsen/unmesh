@@ -164,6 +164,14 @@ def test_open_mesh_is_faceted(tmp_path):
     assert data["validity"]["open_shells"] == [0]
 
 
+def test_open_mesh_fidelity_reports_open_boundary(tmp_path):
+    code, data, _ = run(tmp_path, box()[:-2])
+    assert code == 2
+    boundary = data["validity"]["open_boundary"]
+    assert boundary["edges"] == 4
+    assert boundary["length"] == pytest.approx(26.0, rel=1e-9)
+
+
 def test_inch_input_is_written_in_mm(tmp_path):
     from unmesh._writer import occ
 

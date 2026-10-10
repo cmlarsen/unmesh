@@ -257,6 +257,10 @@ def build_report(
             "fallback_reason": wr.fallback_reason,
             "solids": wr.solids,
             "open_shells": list(wr.open_shells),
+            "open_boundary": {
+                "edges": int(getattr(wr, "open_edges", 0)),
+                "length": float(getattr(wr, "open_boundary_length", 0.0)),
+            },
             "issues": list(wr.issues),
             "edge_fallbacks": [
                 {"regions": list(e.regions), "kind": e.kind, "max_deviation": e.max_deviation}

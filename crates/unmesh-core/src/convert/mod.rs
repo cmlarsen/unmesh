@@ -591,6 +591,32 @@ mod tests {
     }
 
     #[test]
+    fn coincident_bodies_are_two_shells() {
+        let body = grid_box([0.0; 3], [10.0; 3], 1, false);
+        let mut tris = body.clone();
+        tris.extend(body);
+        let out = convert_tris(tris);
+        let ir = &out.ir;
+        assert_eq!(ir.shells.len(), 2, "{:?}", out.report.warnings);
+        assert!(
+            ir.shells
+                .iter()
+                .all(|s| s.closed && s.role == ShellRole::Outer)
+        );
+        assert_eq!(ir.regions.len(), 12);
+        assert_eq!(ir.vertices.len(), 16);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .all(|w| w.code != "degenerate_triangles"),
+            "{:?}",
+            out.report.warnings
+        );
+        ir.validate().unwrap();
+    }
+
+    #[test]
     fn stray_reverse_duplicate_heals_to_six_planes() {
         let mut tris = grid_box([0.0; 3], [10.0; 3], 1, false);
         let t = tris[0];

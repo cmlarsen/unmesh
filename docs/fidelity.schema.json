@@ -346,6 +346,7 @@
         "fallback_reason",
         "solids",
         "open_shells",
+        "open_boundary",
         "issues",
         "edge_fallbacks"
       ],
@@ -403,6 +404,21 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/count"
+          }
+        },
+        "open_boundary": {
+          "type": "object",
+          "required": [
+            "edges",
+            "length"
+          ],
+          "properties": {
+            "edges": {
+              "$ref": "#/$defs/count"
+            },
+            "length": {
+              "$ref": "#/$defs/length"
+            }
           }
         },
         "issues": {

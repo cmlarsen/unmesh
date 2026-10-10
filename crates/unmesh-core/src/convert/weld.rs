@@ -1,4 +1,4 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::dsu::Dsu;
 use super::linalg::{V3, add, norm, scale, sub};
@@ -38,19 +38,26 @@ pub fn run(
     }
     let mut warnings = Vec::new();
 
-    let mut seen: FxHashSet<([u32; 3], bool)> = FxHashSet::default();
+    let mut seen: FxHashMap<([u32; 3], bool), usize> = FxHashMap::default();
     let mut faces: Vec<[u32; 3]> = Vec::with_capacity(mesh.faces.len());
     let mut fsrc: Vec<u32> = Vec::with_capacity(mesh.faces.len());
+    let mut copies: Vec<Vec<u32>> = Vec::with_capacity(mesh.faces.len());
     let mut duplicates = 0usize;
     for (f, &s) in mesh.faces.iter().zip(&src) {
         let mut key = *f;
         key.sort_unstable();
-        if !seen.insert((key, parity(f, &key))) {
-            duplicates += 1;
-            continue;
+        match seen.get(&(key, parity(f, &key))) {
+            Some(&i) => {
+                copies[i].push(s);
+                duplicates += 1;
+            }
+            None => {
+                seen.insert((key, parity(f, &key)), faces.len());
+                faces.push(*f);
+                fsrc.push(s);
+                copies.push(Vec::new());
+            }
         }
-        faces.push(*f);
-        fsrc.push(s);
     }
     let mut first: FxHashMap<[u32; 3], (usize, bool)> = FxHashMap::default();
     let mut twins: Vec<(usize, usize)> = Vec::new();
@@ -121,16 +128,82 @@ pub fn run(
     if healed > 0 {
         let mut kept_faces: Vec<[u32; 3]> = Vec::with_capacity(faces.len() - healed);
         let mut kept_fsrc: Vec<u32> = Vec::with_capacity(faces.len() - healed);
+        let mut kept_copies: Vec<Vec<u32>> = Vec::with_capacity(faces.len() - healed);
         for (i, f) in faces.iter().enumerate() {
             if !drop_cand[i] {
                 kept_faces.push(*f);
                 kept_fsrc.push(fsrc[i]);
+                kept_copies.push(std::mem::take(&mut copies[i]));
             }
         }
         faces = kept_faces;
         fsrc = kept_fsrc;
+        copies = kept_copies;
     }
-    let dropped = wrep.degenerate_dropped + duplicates;
+
+    let mut vertices: Vec<Point> = mesh.vertices.clone();
+    let mut stacked = 0usize;
+    {
+        let mut stacks = Dsu::new(faces.len());
+        let mut edges: Vec<(u64, u32)> = Vec::with_capacity(faces.len() * 3);
+        for (i, f) in faces.iter().enumerate() {
+            for k in 0..3 {
+                let (u, v) = (f[k], f[(k + 1) % 3]);
+                edges.push((((u.min(v) as u64) << 32) | u.max(v) as u64, i as u32));
+            }
+        }
+        edges.sort_unstable();
+        let mut i = 0;
+        while i < edges.len() {
+            let mut j = i + 1;
+            while j < edges.len() && edges[j].0 == edges[i].0 {
+                stacks.union(edges[i].1, edges[j].1);
+                j += 1;
+            }
+            i = j;
+        }
+        let mut comps: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+        for f in 0..faces.len() {
+            comps.entry(stacks.find(f as u32)).or_default().push(f);
+        }
+        let mut stack_comps: Vec<&Vec<usize>> = comps
+            .values()
+            .filter(|members| {
+                let mult = members
+                    .iter()
+                    .map(|&f| 1 + copies[f].len())
+                    .min()
+                    .unwrap_or(0);
+                mult >= 2 && members.iter().all(|&f| 1 + copies[f].len() == mult)
+            })
+            .collect();
+        stack_comps.sort_unstable();
+        for members in stack_comps {
+            let mult = members.iter().map(|&f| 1 + copies[f].len()).min().unwrap();
+            let mut used: Vec<u32> = members
+                .iter()
+                .flat_map(|&f| faces[f].iter().copied())
+                .collect();
+            used.sort_unstable();
+            used.dedup();
+            for layer in 1..mult {
+                let mut remap: FxHashMap<u32, u32> = FxHashMap::default();
+                for &v in &used {
+                    let p = vertices[v as usize];
+                    remap.insert(v, vertices.len() as u32);
+                    vertices.push(p);
+                }
+                for &f in members {
+                    let t = faces[f];
+                    faces.push([remap[&t[0]], remap[&t[1]], remap[&t[2]]]);
+                    fsrc.push(copies[f][layer - 1]);
+                }
+                stacked += members.len();
+            }
+        }
+    }
+
+    let dropped = wrep.degenerate_dropped + (duplicates - stacked);
     if dropped > 0 {
         warnings.push(ConvertWarning {
             code: "degenerate_triangles".to_string(),
@@ -144,8 +217,8 @@ pub fn run(
         });
     }
 
-    let (mut lo, mut hi) = (mesh.vertices[0], mesh.vertices[0]);
-    for p in &mesh.vertices {
+    let (mut lo, mut hi) = (vertices[0], vertices[0]);
+    for p in &vertices {
         for a in 0..3 {
             lo[a] = lo[a].min(p[a]);
             hi[a] = hi[a].max(p[a]);
@@ -153,13 +226,12 @@ pub fn run(
     }
     let center: V3 = scale(add(lo, hi), 0.5);
     let diag = norm(sub(hi, lo));
-    let max_abs = mesh
-        .vertices
+    let max_abs = vertices
         .iter()
         .flatten()
         .map(|x| x.abs())
         .fold(0.0, f64::max);
-    let orig: Vec<Point> = mesh.vertices.clone();
+    let orig: Vec<Point> = vertices;
     let vc: Vec<V3> = orig.iter().map(|p| sub(*p, center)).collect();
 
     Ok((

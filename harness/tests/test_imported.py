@@ -379,6 +379,28 @@ def test_imported_metadata_marks_features_null():
     assert imported_metadata(load_imported_shape(entry), entry)["features"] is None
 
 
+def test_imported_coincident_bodies_and_open_input_are_reported(tmp_path):
+    _require_cache()
+    import unmesh
+    from unmesh.pipeline import convert_to_step
+
+    by_id = {e["id"]: e for e in _imported_entries()}
+    solids = tmp_path / "imported-0103.step"
+    mesh = tessellate(load_imported_shape(by_id["imported-0103"]), 0.01, 0.2)
+    unmesh.write_stl(str(tmp_path / "imported-0103.stl"), mesh.tris)
+    conv = convert_to_step(str(tmp_path / "imported-0103.stl"), solids, measure=False)
+    assert conv.fidelity["validity"]["valid"] is True, conv.fidelity["validity"]["issues"]
+    assert conv.fidelity["validity"]["solids"] == 2
+
+    open_id = tmp_path / "imported-0218.step"
+    mesh = tessellate(load_imported_shape(by_id["imported-0218"]), 0.01, 0.2)
+    unmesh.write_stl(str(tmp_path / "imported-0218.stl"), mesh.tris)
+    conv = convert_to_step(str(tmp_path / "imported-0218.stl"), open_id, measure=False)
+    boundary = conv.fidelity["validity"]["open_boundary"]
+    assert boundary["edges"] == 4
+    assert boundary["length"] == pytest.approx(25.4, abs=1e-3)
+
+
 def test_missing_cache_error_names_fetch_script(tmp_path, monkeypatch):
     monkeypatch.setenv("UNMESH_CACHE_DIR", str(tmp_path))
     entry = {
