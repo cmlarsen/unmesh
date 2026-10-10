@@ -54,6 +54,7 @@ class SeamReport:
     chord_gap: float = 0.0
     inserted: int = 0
     tolerance: float = 0.0
+    plane_gap: float = 0.0
 
 
 @dataclass
@@ -231,7 +232,13 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                     refined = curved.refine_vertices(ir, vpos, vmoved, bad, limit)
                 for idx in members:
                     cs = curved.build_shell(
-                        ir, idx, *refined, limit, occ.new_pool(), options.max_seam_gap
+                        ir,
+                        idx,
+                        *refined,
+                        limit,
+                        occ.new_pool(),
+                        options.max_seam_gap,
+                        options.max_shape_tolerance,
                     )
                     seams.extend(SeamReport(**vars(s)) for s in cs.seams)
                     g.patches.update(cs.patches)
