@@ -6,10 +6,12 @@ from typing import Any
 import numpy as np
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Curve
+from OCP.BRepGProp import BRepGProp
 from OCP.Extrema import Extrema_ExtPC
 from OCP.gp import gp_Pnt
+from OCP.GProp import GProp_GProps
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_VERTEX
-from OCP.TopExp import TopExp
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopoDS import TopoDS
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_IndexedMapOfShape
 
@@ -26,6 +28,32 @@ def brep_counts(shape) -> dict[str, int]:
         TopExp.MapShapes_s(shape, kind, m)
         out[name] = m.Extent()
     return out
+
+
+def minimum_edge_length(shape) -> float:
+    shape = getattr(shape, "wrapped", shape)
+    best = math.inf
+    ex = TopExp_Explorer(shape, TopAbs_EDGE)
+    while ex.More():
+        edge = TopoDS.Edge_s(ex.Current())
+        if not BRep_Tool.Degenerated_s(edge):
+            props = GProp_GProps()
+            BRepGProp.LinearProperties_s(edge, props)
+            best = min(best, float(props.Mass()))
+        ex.Next()
+    return best
+
+
+def minimum_face_area(shape) -> float:
+    shape = getattr(shape, "wrapped", shape)
+    best = math.inf
+    ex = TopExp_Explorer(shape, TopAbs_FACE)
+    while ex.More():
+        props = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(TopoDS.Face_s(ex.Current()), props)
+        best = min(best, float(props.Mass()))
+        ex.Next()
+    return best
 
 
 def boundary_edges(shape) -> list:

@@ -241,11 +241,9 @@ class FaceFlux:
     triangulated: bool = True
 
 
-def _edge_polyline(curve, first: float, last: float, start) -> list[np.ndarray]:
+def _edge_polyline(curve, first: float, last: float, reversed_: bool) -> list[np.ndarray]:
     ts = np.linspace(first, last, POLYGON_SAMPLES)
-    a = np.asarray(curve.Value(float(first)).Coord(), dtype=float)
-    b = np.asarray(curve.Value(float(last)).Coord(), dtype=float)
-    if np.linalg.norm(a - start) > np.linalg.norm(b - start):
+    if reversed_:
         ts = ts[::-1]
     return [np.asarray(curve.Value(float(t)).Coord(), dtype=float) for t in ts]
 
@@ -271,7 +269,7 @@ def _polygon(face) -> np.ndarray | None:
             poly = [start]
         else:
             first, last = BRep_Tool.Range_s(edge)
-            poly = _edge_polyline(curve, first, last, start)
+            poly = _edge_polyline(curve, first, last, edge.Orientation() == TopAbs_REVERSED)
         for p in poly:
             if not pts or float(np.linalg.norm(p - pts[-1])) > 0.0:
                 pts.append(p)

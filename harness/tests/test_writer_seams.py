@@ -3,9 +3,14 @@ import pytest
 
 pytest.importorskip("OCP")
 
+import unmesh  # noqa: E402
 import unmesh.step as step  # noqa: E402
+from unmesh import read_stl  # noqa: E402
+from unmesh._writer import occ  # noqa: E402
+from unmesh_harness import degrade  # noqa: E402
 from unmesh_harness.groundtruth import generate  # noqa: E402
 from unmesh_harness.labels import tessellate  # noqa: E402
+from unmesh_harness.metrics.edges import minimum_edge_length  # noqa: E402
 from unmesh_harness.oracle import build_oracle_ir, force_facets  # noqa: E402
 from unmesh_harness.oracle_fit import corpus_seeds  # noqa: E402
 
@@ -92,6 +97,25 @@ def test_one_forced_facets_region_writes_mixed(family, seed, tmp_path):
 @pytest.mark.parametrize(("family", "seed"), _cases())
 def test_one_forced_facets_region_writes_mixed_all_families(family, seed, tmp_path):
     _check(family, seed, tmp_path)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("noise_seed", [11, 8])
+@pytest.mark.parametrize("via_stl", [False, True], ids=["mesh", "stl"])
+def test_a_noisy_through_bore_has_no_needle_edge(noise_seed, via_stl, tmp_path):
+    mesh = tessellate(generate("through_bore", 0).solid, *DEFLECTION)
+    mesh = degrade.chain(mesh, [("noise_normal", 0.02)], noise_seed)
+    if via_stl:
+        stl = tmp_path / "input.stl"
+        mesh.write_stl(stl)
+        tris = np.asarray(read_stl(stl), dtype=np.float64)
+    else:
+        tris = np.asarray(mesh.tris)
+    ir, _ = unmesh.convert(tris)
+    path = tmp_path / "needle.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.valid and report.fallback is None, report.fallback_reason
+    assert minimum_edge_length(occ.read_step(path)) >= 1e-3
 
 
 def test_force_facets_keeps_a_valid_ir():
