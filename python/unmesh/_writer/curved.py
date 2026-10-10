@@ -1267,10 +1267,13 @@ class _Builder:
         chords = list(zip(nodes, nodes[1:] + nodes[:1] if e.closed else nodes[1:], strict=False))
         cuts: dict[int, np.ndarray] = {}
         if e.closed and e.seam_point is not None:
-            snap = max(KINK_JOIN, self.ir.tolerances.vertex_merge)
             count = len(nodes)
             k = min(range(len(chords)), key=lambda i: _segment_distance(e.seam_point, *chords[i]))
             p, q = chords[k]
+            band = max(
+                self.ir.tolerances.vertex_merge,
+                min(0.1 * self.limit, 0.01 * float(np.linalg.norm(q - p))),
+            )
             moved_node = False
             if float(np.linalg.norm(e.seam_point - p)) <= KINK_JOIN:
                 e.seam_point = p
@@ -1278,12 +1281,12 @@ class _Builder:
             elif float(np.linalg.norm(e.seam_point - q)) <= KINK_JOIN:
                 e.seam_point = q
                 rotate = (k + 1) % count
-            elif float(np.linalg.norm(e.seam_point - p)) <= snap:
+            elif float(np.linalg.norm(e.seam_point - p)) <= band:
                 nodes[k] = e.seam_point
                 self.patch[_key(e.points[k])] = e.seam_point
                 moved = max(moved, float(np.linalg.norm(e.seam_point - e.points[k])))
                 rotate, moved_node = k, True
-            elif float(np.linalg.norm(e.seam_point - q)) <= snap:
+            elif float(np.linalg.norm(e.seam_point - q)) <= band:
                 j = (k + 1) % count
                 nodes[j] = e.seam_point
                 self.patch[_key(e.points[j])] = e.seam_point
