@@ -7,6 +7,7 @@ use super::refine::dihedral;
 use super::segment::TriInfo;
 use super::surface::Surface;
 use super::topology::NONE;
+use crate::api::ConvertWarning;
 
 const DEFECT_REL: f64 = 1e-4;
 const REACH: f64 = 5.0;
@@ -15,6 +16,9 @@ const RANK_EPS: f64 = 1e-9;
 const ITERS: usize = 30;
 const MAX_PARAMS: usize = 600;
 const SSR_SLACK: f64 = 10.0;
+const MEMBER_GROWTH: f64 = 1.5;
+const ANGLE_NOISE_K: f64 = 6.0;
+const MIN_EXTENT: f64 = 1e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Rel {
@@ -643,20 +647,22 @@ fn valid(s: &Surface) -> bool {
 /// plane normals fixed, the axes snapped first (`snap_axes`), and the
 /// remaining offsets, axis positions, centres and radii constrained by the
 /// linear tangency conditions. Returns the new surfaces when every member
-/// still fits its points within `tol` and the total weighted squared
-/// residual grows by no more than the constraints allow for the noise the
-/// unconstrained fit shows.
-pub fn solve(members: &[Member], rels: &[Rel], tol: f64, max_sin: f64) -> Option<Vec<Surface>> {
+/// still fits its points within `tol`, no single member's residual grows
+/// beyond `MEMBER_GROWTH` times its own unconstrained RMS plus the noise
+/// scale `sigma`, and the total weighted squared residual grows by no more
+/// than the constraints allow for the noise the unconstrained fit shows.
+pub fn solve(
+    members: &[Member],
+    rels: &[Rel],
+    tol: f64,
+    max_sin: f64,
+    sigma: f64,
+) -> Option<Vec<Surface>> {
     let mut s: Vec<Surface> = members.iter().map(|m| m.surface).collect();
     snap_axes(&mut s, rels, max_sin)?;
     let mut blocks = Vec::with_capacity(s.len());
     let mut n = 0;
-    let mut extent: f64 = 0.0;
-    for m in members {
-        for &(p, _) in &m.pts {
-            extent = extent.max(norm(p));
-        }
-    }
+    let extent = bbox_diag(members.iter().flat_map(|m| m.pts.iter().map(|&(p, _)| p)));
     for &surface in &s {
         let len = block_len(&surface)?;
         let (e1, e2) = match surface {
@@ -778,9 +784,15 @@ pub fn solve(members: &[Member], rels: &[Rel], tol: f64, max_sin: f64) -> Option
     let mut new = 0.0;
     let mut count = 0usize;
     for (m, s) in members.iter().zip(&out) {
-        let (o, _, _) = ssr(&m.surface, &m.pts);
+        let (o, sw, _) = ssr(&m.surface, &m.pts);
         let (nw, _, mx) = ssr(s, &m.pts);
         if mx > tol {
+            return None;
+        }
+        let sw = sw.max(f64::MIN_POSITIVE);
+        let old_rms = (o / sw).sqrt();
+        let new_rms = (nw / sw).sqrt();
+        if new_rms > MEMBER_GROWTH * old_rms + sigma {
             return None;
         }
         old += o;
@@ -806,7 +818,50 @@ pub struct Args<'a> {
     pub info: &'a [TriInfo],
     pub flabel: &'a [u32],
     pub tol: f64,
+    pub sigma: f64,
     pub threshold_deg: f64,
+}
+
+/// The RMS distance of a region's corners from their centroid: a
+/// translation-invariant measure of the lever arm over which a surface fit
+/// is determined, used to bound the angles the noise can explain.
+fn region_extent(vc: &[V3], faces: &[[u32; 3]], list: &[u32]) -> f64 {
+    let mut c = [0.0; 3];
+    let mut n = 0.0;
+    for &f in list {
+        for v in faces[f as usize] {
+            c = add(c, vc[v as usize]);
+            n += 1.0;
+        }
+    }
+    if n == 0.0 {
+        return 0.0;
+    }
+    c = scale(c, 1.0 / n);
+    let mut s2 = 0.0;
+    for &f in list {
+        for v in faces[f as usize] {
+            let d = sub(vc[v as usize], c);
+            s2 += dot(d, d);
+        }
+    }
+    (s2 / n).sqrt()
+}
+
+/// The diagonal of the axis-aligned bounding box of `pts`, a
+/// translation-invariant measure of the size of a part or cluster.
+fn bbox_diag(pts: impl Iterator<Item = V3>) -> f64 {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    let mut any = false;
+    for p in pts {
+        any = true;
+        for a in 0..3 {
+            lo[a] = lo[a].min(p[a]);
+            hi[a] = hi[a].max(p[a]);
+        }
+    }
+    if any { norm(sub(hi, lo)) } else { 0.0 }
 }
 
 fn tangent_relations(args: &Args<'_>, finals: &[Final]) -> Vec<Rel> {
@@ -860,8 +915,15 @@ fn tangent_relations(args: &Args<'_>, finals: &[Final]) -> Vec<Rel> {
                 .iter()
                 .filter_map(|&(_, _, v)| dihedral(sa, sb, vc[v as usize]))
                 .collect();
-            if !angles.is_empty() && median(angles) < threshold_deg {
-                rels.push(rel);
+            if !angles.is_empty() {
+                let med = median(angles);
+                let wa = region_extent(vc, faces, &finals[a as usize].faces).max(MIN_EXTENT);
+                let wb = region_extent(vc, faces, &finals[b as usize].faces).max(MIN_EXTENT);
+                let spread = (1.0 / (wa * wa) + 1.0 / (wb * wb)).sqrt();
+                let noise_ang = (ANGLE_NOISE_K * tol * spread).atan();
+                if med < threshold_deg && med.to_radians() <= noise_ang {
+                    rels.push(rel);
+                }
             }
         }
         i = j;
@@ -897,17 +959,21 @@ fn member_points(faces: &[[u32; 3]], info: &[TriInfo], vc: &[V3], list: &[u32]) 
 /// `solve`). Clusters already tangent to within `DEFECT_REL * tol` are
 /// left untouched, so clean input keeps its fit bit for bit. Each changed
 /// region's residual and chord sagitta are recomputed on its new surface,
-/// so the reported deviation covers the move.
-pub fn snap(args: Args<'_>, finals: &mut [Final]) {
+/// so the reported deviation covers the move. A cluster whose refit would
+/// need more than `MAX_PARAMS` parameters is left unsnapped and reported
+/// as a warning rather than skipped silently.
+pub fn snap(args: Args<'_>, finals: &mut [Final]) -> Vec<ConvertWarning> {
+    let mut warnings = Vec::new();
     let rels = tangent_relations(&args, finals);
     if rels.is_empty() {
-        return;
+        return warnings;
     }
     let Args {
         vc,
         faces,
         info,
         tol,
+        sigma,
         threshold_deg,
         ..
     } = args;
@@ -927,7 +993,7 @@ pub fn snap(args: Args<'_>, finals: &mut [Final]) {
     }
     clusters.sort_by_key(|c| c.0);
     let surfaces: Vec<Surface> = finals.iter().map(|f| f.surface).collect();
-    let extent = vc.iter().map(|&p| norm(p)).fold(0.0, f64::max);
+    let extent = bbox_diag(vc.iter().copied());
     for (_, crels) in clusters {
         let worst = crels
             .iter()
@@ -946,6 +1012,19 @@ pub fn snap(args: Args<'_>, finals: &mut [Final]) {
             .collect();
         ids.sort_unstable();
         ids.dedup();
+        let params: usize = ids
+            .iter()
+            .map(|&g| block_len(&finals[g].surface).unwrap_or(0))
+            .sum();
+        if params > MAX_PARAMS {
+            warnings.push(ConvertWarning {
+                code: "tangency_cluster_too_large".to_string(),
+                message: format!(
+                    "tangent cluster of {params} parameters exceeds the {MAX_PARAMS} limit; left unsnapped"
+                ),
+            });
+            continue;
+        }
         let local: Vec<Rel> = crels
             .iter()
             .map(|r| r.map(|g| ids.binary_search(&g).unwrap()))
@@ -957,7 +1036,7 @@ pub fn snap(args: Args<'_>, finals: &mut [Final]) {
                 pts: member_points(faces, info, vc, &finals[g].faces),
             })
             .collect();
-        let Some(out) = solve(&members, &local, tol, max_sin) else {
+        let Some(out) = solve(&members, &local, tol, max_sin, sigma) else {
             continue;
         };
         for ((&g, m), s) in ids.iter().zip(&members).zip(out) {
@@ -975,6 +1054,7 @@ pub fn snap(args: Args<'_>, finals: &mut [Final]) {
             }
         }
     }
+    warnings
 }
 
 #[cfg(test)]
@@ -1019,7 +1099,7 @@ mod tests {
     }
 
     fn free_fit(members: &mut [Member]) {
-        let out = solve(members, &[], TOL, 0.05).expect("unconstrained fit");
+        let out = solve(members, &[], TOL, 0.05, AMP).expect("unconstrained fit");
         for (m, s) in members.iter_mut().zip(out) {
             m.surface = s;
         }
@@ -1043,7 +1123,7 @@ mod tests {
             worst > 1e-5,
             "the free fit should not already be tangent: {worst}"
         );
-        let out = solve(members, rels, TOL, 0.05).expect("tangent fit accepted");
+        let out = solve(members, rels, TOL, 0.05, AMP).expect("tangent fit accepted");
         for &r in rels {
             let (dir, pos) = defects(r, &out).unwrap();
             assert!(dir < 1e-14 && pos < 1e-12, "{r:?}: {dir} {pos}");
@@ -1274,7 +1354,16 @@ mod tests {
             p.0[2] += 0.01;
         }
         free_fit(&mut m);
-        assert!(solve(&m[..2], &[Rel::PlaneCyl { plane: 0, cyl: 1 }], TOL, 0.05).is_none());
+        assert!(
+            solve(
+                &m[..2],
+                &[Rel::PlaneCyl { plane: 0, cyl: 1 }],
+                TOL,
+                0.05,
+                AMP
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1293,5 +1382,142 @@ mod tests {
         }
         let bad = vec![(vec![1.0, 0.0], 1.0), (vec![1.0, 0.0], 1.5)];
         assert!(null_space(bad, 2, 1e-12).is_none());
+    }
+
+    fn shifted(s: Surface, t: V3) -> Surface {
+        match s {
+            Surface::Plane { normal, offset } => Surface::Plane {
+                normal,
+                offset: offset + dot(normal, t),
+            },
+            Surface::Cylinder {
+                origin,
+                axis,
+                radius,
+                reversed,
+            } => Surface::Cylinder {
+                origin: add(origin, t),
+                axis,
+                radius,
+                reversed,
+            },
+            Surface::Torus {
+                center,
+                axis,
+                major,
+                minor,
+                reversed,
+            } => Surface::Torus {
+                center: add(center, t),
+                axis,
+                major,
+                minor,
+                reversed,
+            },
+            Surface::Sphere {
+                center,
+                radius,
+                reversed,
+            } => Surface::Sphere {
+                center: add(center, t),
+                radius,
+                reversed,
+            },
+            s => s,
+        }
+    }
+
+    fn surfaces_close(a: &Surface, b: &Surface, tol: f64) -> bool {
+        match (a, b) {
+            (
+                Surface::Plane {
+                    normal: n0,
+                    offset: d0,
+                },
+                Surface::Plane {
+                    normal: n1,
+                    offset: d1,
+                },
+            ) => norm(sub(*n0, *n1)) < tol && (d0 - d1).abs() < tol,
+            (
+                Surface::Cylinder {
+                    origin: o0,
+                    axis: a0,
+                    radius: r0,
+                    ..
+                },
+                Surface::Cylinder {
+                    origin: o1,
+                    axis: a1,
+                    radius: r1,
+                    ..
+                },
+            ) => norm(sub(*o0, *o1)) < tol && norm(sub(*a0, *a1)) < tol && (r0 - r1).abs() < tol,
+            (
+                Surface::Torus {
+                    center: c0,
+                    major: m0,
+                    minor: n0,
+                    ..
+                },
+                Surface::Torus {
+                    center: c1,
+                    major: m1,
+                    minor: n1,
+                    ..
+                },
+            ) => norm(sub(*c0, *c1)) < tol && (m0 - m1).abs() < tol && (n0 - n1).abs() < tol,
+            _ => a == b,
+        }
+    }
+
+    #[test]
+    fn solve_is_translation_invariant() {
+        let mut noise = Noise(11);
+        let m = rounded_edge(&mut noise, 5e-5);
+        let t: V3 = [1000.0, -2000.0, 500.0];
+        let rels = [
+            Rel::PlaneCyl { plane: 0, cyl: 1 },
+            Rel::PlaneCyl { plane: 2, cyl: 1 },
+        ];
+        let base: Vec<Member> = m
+            .iter()
+            .map(|x| Member {
+                surface: x.surface,
+                pts: x.pts.clone(),
+            })
+            .collect();
+        let moved: Vec<Member> = m
+            .iter()
+            .map(|x| Member {
+                surface: shifted(x.surface, t),
+                pts: x.pts.iter().map(|&(p, w)| (add(p, t), w)).collect(),
+            })
+            .collect();
+        let out0 = solve(&base, &rels, TOL, 0.05, AMP).expect("origin accepted");
+        let out1 = solve(&moved, &rels, TOL, 0.05, AMP).expect("translated accepted");
+        for (a, b) in out0.iter().zip(&out1) {
+            assert!(surfaces_close(&shifted(*a, t), b, 1e-9), "{a:?} {b:?}");
+        }
+    }
+
+    #[test]
+    fn large_cluster_is_refused_by_solve() {
+        let mut members = Vec::new();
+        let mut z = 0.0;
+        for _ in 0..201 {
+            let s = Surface::Cylinder {
+                origin: [0.0, 0.0, z],
+                axis: [0.0, 0.0, 1.0],
+                radius: 1.0,
+                reversed: false,
+            };
+            members.push(Member {
+                surface: s,
+                pts: vec![([1.0, 0.0, z], 1.0), ([1.0, 0.0, z + 1.0], 1.0)],
+            });
+            z += 1.0;
+        }
+        assert!(solve(&members, &[], TOL, 0.05, AMP).is_none());
     }
 }
