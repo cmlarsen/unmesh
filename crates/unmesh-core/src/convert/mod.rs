@@ -247,7 +247,7 @@ fn finish(
 
     let pairs = region_pairs(&shells.topo.nbr, &label2);
     let (mut finals, flabel) = fit::finalize(&regions, &pairs, &shells.comp_of, &shells.topo, tol);
-    tangency::snap(
+    warnings.extend(tangency::snap(
         tangency::Args {
             vc: &w.vc,
             faces: &w.faces,
@@ -255,10 +255,11 @@ fn finish(
             info,
             flabel: &flabel,
             tol,
+            sigma,
             threshold_deg: options.tangent_threshold_deg,
         },
         &mut finals,
-    );
+    ));
     timing::lap("finalize");
 
     let Projected {

@@ -2,7 +2,25 @@ import math
 
 import numpy as np
 import pytest
-from build123d import Box, Cylinder, Keep, Plane, Pos, split
+from build123d import (
+    Align,
+    Axis,
+    Box,
+    BuildLine,
+    BuildPart,
+    BuildSketch,
+    CenterArc,
+    Cylinder,
+    Keep,
+    Line,
+    Plane,
+    Polyline,
+    Pos,
+    extrude,
+    fillet,
+    make_face,
+    split,
+)
 
 import unmesh
 from unmesh_harness import degrade
@@ -138,3 +156,133 @@ def test_curved_part_keeps_every_plane_under_1um_noise(part):
     mesh = degrade.chain(mesh, [("noise_isotropic", 0.02)], 0)
     ir, _ = unmesh.convert(mesh.tris)
     assert lost_plane_faces(mesh, ir) == [], ir.tolerances.linear
+
+
+def crease_part(alpha_deg, radius=2.0, width=20.0, height=10.0, depth=8.0):
+    alpha = math.radians(alpha_deg)
+    drop = (width - radius) * math.tan(alpha)
+    with BuildPart() as bp:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Line((0, 0), (width, 0))
+                Line((width, 0), (width, height - radius))
+                CenterArc((width - radius, height - radius), radius, 0, 90)
+                Line((width - radius, height), (0, height - drop))
+                Line((0, height - drop), (0, 0))
+            make_face()
+        extrude(amount=depth)
+    return bp.part
+
+
+def fillet_plane_defect(ir):
+    for adj in ir.adjacencies:
+        a, b = adj.regions
+        sa, sb = ir.regions[a].surface, ir.regions[b].surface
+        if {sa.type, sb.type} != {"plane", "cylinder"}:
+            continue
+        plane = sa if sa.type == "plane" else sb
+        cyl = sb if sa.type == "plane" else sa
+        if float(np.array(plane.normal)[2]) < 0.9:
+            continue
+        n = np.array(plane.normal)
+        offset = float(np.dot(n, np.array(plane.origin)))
+        sign = 1.0 if cyl.orientation == "same" else -1.0
+        return abs(float(np.dot(n, np.array(cyl.origin))) + sign * cyl.radius - offset)
+    return None
+
+
+def tangent_plane_cylinder_defects(ir):
+    defects = []
+    for adj in ir.adjacencies:
+        if adj.boundaries[0].kind != "tangent":
+            continue
+        a, b = adj.regions
+        sa, sb = ir.regions[a].surface, ir.regions[b].surface
+        if {sa.type, sb.type} != {"plane", "cylinder"}:
+            continue
+        plane = sa if sa.type == "plane" else sb
+        cyl = sb if sa.type == "plane" else sa
+        n = np.array(plane.normal)
+        offset = float(np.dot(n, np.array(plane.origin)))
+        sign = 1.0 if cyl.orientation == "same" else -1.0
+        defects.append(abs(float(np.dot(n, np.array(cyl.origin))) + sign * cyl.radius - offset))
+    return defects
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_clean_float32_fillet_snaps_exactly(seed):
+    mesh = tessellate(generate("straight_fillet", seed).solid, LIN, ANG)
+    cell = degrade.chain(mesh, [("float32", 1.0)], 0)
+    ir, _ = unmesh.convert(cell.tris)
+    defects = tangent_plane_cylinder_defects(ir)
+    assert defects, "the straight_fillet plane-cylinder fillet is missing from the IR"
+    assert max(defects) < 1e-9, defects
+
+
+def long_thin_fillet(radius=1.0, length=60.0, width=20.0, height=10.0):
+    solid = Box(width, length, height, align=(Align.MIN, Align.MIN, Align.MIN))
+    edge = solid.edges().filter_by(Axis.Y).group_by(Axis.Z)[-1].group_by(Axis.X)[-1]
+    return fillet(edge, radius)
+
+
+def test_long_thin_fillet_snaps_exactly_under_noise():
+    mesh = tessellate(long_thin_fillet(), LIN, ANG)
+    cell = degrade.chain(mesh, [("noise_normal", 0.02)], 2)
+    ir, _ = unmesh.convert(cell.tris)
+    defects = tangent_plane_cylinder_defects(ir)
+    assert defects, "the long fillet plane-cylinder tangency is missing from the IR"
+    assert max(defects) < 1e-9, defects
+
+
+@pytest.mark.parametrize("kind", ["noise_normal", "noise_isotropic"])
+@pytest.mark.parametrize("alpha_deg", [1.0, 2.0, 2.5, 2.9, 3.0, 5.0])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_real_crease_beside_a_fillet_is_kept_under_1um_noise(alpha_deg, kind, seed):
+    mesh = tessellate(crease_part(alpha_deg), LIN, ANG)
+    cell = degrade.chain(mesh, [(kind, 0.02)], seed)
+    ir, report = unmesh.convert(cell.tris)
+    defect = fillet_plane_defect(ir)
+    expect = 2.0 * (1.0 - math.cos(math.radians(alpha_deg)))
+    assert defect is not None, "the fillet-plane crease is missing from the IR"
+    assert defect > 1e-5, (defect, expect, ir.tolerances.linear)
+    measured = judge(ir, np.asarray(cell.tris), None, report).input.max
+    assert report.max_deviation >= measured - 1e-9 - 0.005 * measured
+
+
+def test_crease_snap_decision_is_translation_invariant():
+    mesh = tessellate(crease_part(2.9), LIN, ANG)
+    cell = degrade.chain(mesh, [("noise_isotropic", 0.02)], 0)
+    shift = np.array([1000.0, -2000.0, 500.0])
+    base, base_report = unmesh.convert(cell.tris)
+    moved, moved_report = unmesh.convert(np.asarray(cell.tris) + shift)
+    assert len(base.regions) == len(moved.regions)
+    assert fillet_plane_defect(base) == pytest.approx(fillet_plane_defect(moved), abs=1e-6)
+    assert fillet_plane_defect(base) > 1e-5
+    assert abs(base_report.max_deviation - moved_report.max_deviation) < 1e-6
+
+
+def zigzag_part(segments, amp=20.0, thick=30.0, depth=10.0, radius=3.0):
+    half = max(200.0, 6.0 * segments)
+    pts = [(-half, 0.0)]
+    dx = 2 * half / segments
+    for i in range(1, segments):
+        pts.append((-half + i * dx, amp if i % 2 else 0.0))
+    pts.append((half, 0.0))
+    with BuildPart() as bp:
+        with BuildSketch(Plane.XZ) as sk:
+            with BuildLine():
+                Polyline(*pts)
+                Line(pts[-1], (half, -thick))
+                Line((half, -thick), (-half, -thick))
+                Line((-half, -thick), pts[0])
+            make_face()
+            fillet(sk.vertices(), radius)
+        extrude(amount=depth)
+    return bp.part
+
+
+def test_large_tangent_cluster_is_reported():
+    mesh = tessellate(zigzag_part(340), 0.05, 0.3)
+    cell = degrade.chain(mesh, [("noise_normal", 0.02)], 0)
+    _, report = unmesh.convert(cell.tris)
+    assert "tangency_cluster_too_large" in {w.code for w in report.warnings}
