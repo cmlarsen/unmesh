@@ -1142,16 +1142,14 @@ pub(super) mod tests {
             let sigma = sigma_of(&v, faces).unwrap();
             let mut lo = [f64::MAX; 3];
             let mut hi = [f64::MIN; 3];
-            let mut max_abs = 0.0f64;
             for p in &v {
                 for k in 0..3 {
                     lo[k] = lo[k].min(p[k]);
                     hi[k] = hi[k].max(p[k]);
-                    max_abs = max_abs.max(p[k].abs());
                 }
             }
             let diag = norm(sub(hi, lo));
-            let floor = (1e-6 * diag).max(5e-7 * max_abs);
+            let floor = 1e-6 * diag;
             assert!(
                 5.0 * sigma < floor,
                 "{name}: 5 sigma {:.3e} not under floor {floor:.3e}",
