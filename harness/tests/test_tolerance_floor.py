@@ -22,6 +22,9 @@ from unmesh_harness.labels import tessellate  # noqa: E402
 LIN, ANG = 0.01, 0.2
 COARSE = (0.05, 0.5)
 OFFSET = np.array([1000.0, -2000.0, 500.0])
+BIG = np.array([3.0e4, 1.0e3, 0.0])
+X1050 = np.array([1050.0, 0.0, 0.0])
+X1400 = np.array([1400.0, 0.0, 0.0])
 NOISE = (("noise_normal", 0.02),)
 
 
@@ -45,8 +48,16 @@ def _round_decimals(tris, digits=6):
     return np.vectorize(lambda x: float(f"{x:.{digits}e}"))(tris)
 
 
+def _round_general(tris):
+    return np.vectorize(lambda x: float(f"{x:g}"))(tris)
+
+
 def _to_mm_from_metres(tris):
     return _as_float32(tris / 1000.0) * 1000.0
+
+
+def _to_mm_from_inches(tris):
+    return _as_float32(tris / 25.4) * 25.4
 
 
 def _summary(tris):
@@ -108,12 +119,61 @@ def test_ascii_and_metre_rescaled_match_main():
         ("complex_void", 0, _round_decimals, 65, 13),
         ("straight_fillet", 1, _to_mm_from_metres, 10, 4),
         ("complex_void", 0, _to_mm_from_metres, 65, 13),
+        ("straight_fillet", 1, _to_mm_from_inches, 10, 4),
+        ("complex_void", 0, _to_mm_from_inches, 65, 13),
     ]
     for family, seed, transform, main_regions, main_cyls in cases:
         tris = transform(_part(family, seed) + OFFSET)
         _, kinds, regions = _summary(tris)
         assert abs(regions - main_regions) <= 2, family
         assert abs(kinds.get("cylinder", 0) - main_cyls) <= 1, family
+
+
+@pytest.mark.parametrize(
+    "family,seed,offset",
+    [
+        ("ngon_prism", 0, OFFSET),
+        ("counterbore", 1, OFFSET),
+        ("through_cuts", 0, OFFSET),
+        ("square_slots", 1, BIG),
+        ("rotated_pockets", 0, BIG),
+    ],
+)
+def test_float64_moved_equals_origin_on_the_rounding_defect_parts(family, seed, offset):
+    # The divisor-scan detector fitted a spurious grid on these float64 parts
+    # once they were moved far enough that a divisor of the geometry's own
+    # vertex spacing landed inside its acceptance band. The exact-match models
+    # find no grid, so the moved part keeps its origin tolerance exactly.
+    tris = _part(family, seed)
+    tol_o, kinds_o, regions_o = _summary(tris)
+    tol_m, kinds_m, regions_m = _summary(tris + offset)
+
+    assert kinds_m == kinds_o, family
+    assert regions_m == regions_o, family
+    assert tol_m == pytest.approx(tol_o, rel=1e-6), family
+
+
+@pytest.mark.parametrize("offset", [X1050, X1400, BIG])
+def test_seven_digit_ascii_moved_matches_main(offset):
+    # A %.6e grid (7 significant digits) has step 1e-3 at max_abs in
+    # [1000, 2000) and 1e-2 at 3e4. The old detector rejected the step (it
+    # exceeded 5e-7 * max_abs) and fragmented through_bore-0 from 7 regions to
+    # 94-156; main's region count is the reference.
+    tris = _round_decimals(_part("through_bore", 0) + offset)
+    _, kinds, regions = _summary(tris)
+    assert abs(regions - 7) <= 2, offset
+    assert kinds.get("cylinder", 0) == 1
+
+
+def test_percent_g_moved_is_no_worse_than_main():
+    # %g keeps 6 significant digits: step 1e-2 at the round-1 offset. main
+    # fragmented through_bore-0 to 152 regions; the exact-match model recovers
+    # the origin's 7.
+    tris = _round_general(_part("through_bore", 0) + OFFSET)
+    _, kinds, regions = _summary(tris)
+    assert regions <= 152 + 2
+    assert abs(regions - 7) <= 2
+    assert kinds.get("cylinder", 0) == 1
 
 
 def test_mixed_input_is_stable():

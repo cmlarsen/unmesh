@@ -68,16 +68,44 @@ pub fn f32_ulp(x: f64) -> f64 {
     2f64.powi(exp - 127 - 23)
 }
 
-/// The largest candidate divisor of the smallest coordinate gap tried when
-/// fitting a rounding step (see `axis_rounding_step`).
-const STEP_DIVISORS: u64 = 8192;
+/// A candidate coordinate rounding grid must reproduce at least this share of
+/// the distinct coordinates exactly (to within `ROUNDING_ULPS` float64 ulps)
+/// before it is accepted. Exact match is what makes a chance fit impossible: a
+/// random float64 lands on a 9-significant-digit grid with probability about
+/// 1e-7, not the half a loose acceptance band would allow.
+const ROUNDING_MIN_SHARE: f64 = 0.99;
 
-/// Safety factor on a rounding step estimated from the data. A binary grid
-/// doubles its step at a binade boundary, so coordinates that cross one can
-/// under-report the step at the largest coordinate by up to two; the factor
-/// covers that. An all-f32 mesh knows its step exactly (`f32_ulp`) and is not
-/// scaled.
-const ROUNDING_STEP_FACTOR: f64 = 2.0;
+/// Fewer distinct coordinates than this cannot separate a rounding grid from
+/// the geometry's own vertex spacing, so no model is accepted and the floor is
+/// the diagonal term alone.
+const ROUNDING_MIN_DISTINCT: usize = 64;
+
+/// How many float64 ulps a coordinate and a model's rounded value may differ
+/// by and still count as reproduced. Covers the representation error of
+/// `%.{d}e` and of `x * 10^p` arithmetic, and is far below any real step.
+const ROUNDING_ULPS: f64 = 4.0;
+
+/// Multiple of a data-fitted rounding step the floor covers. The step is the
+/// grid the coordinates sit on exactly, so the coordinate rounding error is at
+/// most half a step; the full step covers that with a factor of two in hand, so
+/// no further multiplier is needed. The all-f32 path knows its step exactly
+/// (`f32_ulp`) and is not scaled.
+const ROUNDING_STEP_FACTOR: f64 = 1.0;
+
+/// Upper bound on the quantization term as a fraction of the bounding-box
+/// diagonal: the same cap the initial tolerance uses. The floor must never
+/// exceed the tolerance it floors.
+const ROUNDING_CAP_REL: f64 = 5e-4;
+
+/// Unit conversions a mesh is commonly rescaled by before being written as a
+/// binary STL: the coordinates are then `f32` on the *converted* scale.
+const SCALED_F32: [f64; 6] = [1000.0, 0.001, 25.4, 1.0 / 25.4, 10.0, 0.1];
+
+/// Significant-digit models, matching `%.{d-1}e` (`%g` is 6).
+const SIG_DIGITS: [u32; 4] = [6, 7, 8, 9];
+
+/// Fixed-decimal models, matching `%.{p}f`.
+const FIXED_DECIMALS: [u32; 5] = [2, 3, 4, 5, 6];
 
 /// Whether the coordinates are exactly representable as f32, allowing a stray
 /// vertex not to be. A binary STL's coordinates always are, so such a mesh is
@@ -99,73 +127,84 @@ fn all_float32_exact(soup: &TriangleSoup) -> bool {
     off <= 1 + total / 1000
 }
 
-/// Whether `d` (positive coordinate differences from the first distinct value)
-/// are all within a quarter of `step` of an integer multiple of `step`, the
-/// test for `step` being the coordinate rounding grid. The quarter tolerates
-/// the float64 representation error of a decimal or scaled grid (about
-/// `1e-16 * |x|`), far below a real step.
-fn multiples_of(d: &[f64], step: f64, abstol: f64) -> bool {
-    let tol = (0.25 * step).max(abstol);
-    d.iter().all(|&x| {
-        let q = (x / step).round();
-        (x - q * step).abs() <= tol
-    })
+/// The float64 ulp at `x` (the spacing down to the next representable value).
+/// Zero for `x == 0` and non-finite `x`.
+fn f64_ulp(x: f64) -> f64 {
+    let a = x.abs();
+    if a == 0.0 || !a.is_finite() {
+        return 0.0;
+    }
+    a - f64::from_bits(a.to_bits() - 1)
 }
 
-/// The coordinate rounding step of one axis, from the sorted distinct
-/// coordinates `coords` whose magnitude is at least half the mesh's largest
-/// coordinate. The smallest positive gap is a multiple of the step, so the
-/// step is the coarsest divisor of that gap for which every difference is an
-/// integer multiple: the first divisor that fits, scanning from the smallest
-/// gap down. Finer divisors can keep fitting when every difference happens to
-/// be an even multiple, so the finest fit is not the grid; and below the
-/// float64 noise floor (`abstol`) every divisor fits, so the scan stops there.
-fn axis_rounding_step(coords: &[f64], max_abs: f64) -> f64 {
-    let v0 = coords[0];
-    let d: Vec<f64> = coords[1..]
-        .iter()
-        .map(|&v| v - v0)
-        .filter(|&x| x > 0.0)
-        .collect();
-    if d.len() < 2 {
+/// `floor(log10(|x|))`, corrected against float64 `log10` rounding at a power
+/// of ten. `x` must be finite and non-zero.
+fn decade(x: f64) -> i32 {
+    let a = x.abs();
+    let mut e = a.log10().floor() as i32;
+    while 10f64.powi(e + 1) <= a {
+        e += 1;
+    }
+    while 10f64.powi(e) > a {
+        e -= 1;
+    }
+    e
+}
+
+/// `x` rounded to `d` significant decimal digits.
+fn round_sig(x: f64, d: u32) -> f64 {
+    if x == 0.0 {
         return 0.0;
     }
-    let gap = d.iter().copied().fold(f64::INFINITY, f64::min);
-    if !gap.is_finite() || gap <= 0.0 {
-        return 0.0;
+    let scale = 10f64.powi(d as i32 - 1 - decade(x));
+    (x * scale).round() / scale
+}
+
+/// The step of the `d`-significant-digit grid at `|x|`. Every other coordinate
+/// has a smaller-or-equal step, so the largest-coordinate step is the largest.
+fn sig_step(x: f64, d: u32) -> f64 {
+    10f64.powi(decade(x) - d as i32 + 1)
+}
+
+/// `x` rounded to `p` decimal places.
+fn round_fixed(x: f64, p: u32) -> f64 {
+    let scale = 10f64.powi(p as i32);
+    (x * scale).round() / scale
+}
+
+/// Whether `x` and a model's rounded `y` agree to within a few float64 ulps.
+fn ulps_close(x: f64, y: f64) -> bool {
+    if x == y {
+        return true;
     }
-    let abstol = (1e-11 * max_abs).max(1e-15);
-    let smin = 64.0 * abstol;
-    for k in 1..=STEP_DIVISORS {
-        let s = gap / k as f64;
-        if s < smin {
-            break;
-        }
-        if multiples_of(&d, s, abstol) {
-            return s;
-        }
-    }
-    0.0
+    let u = f64_ulp(x).max(f64_ulp(y));
+    u > 0.0 && (x - y).abs() <= ROUNDING_ULPS * u
 }
 
 /// The coordinate rounding step the tolerance floor covers, estimated from the
-/// coordinates themselves. An all-f32 mesh is on the f32 grid, so the step is
-/// one f32 ulp at the largest coordinate, exactly. Otherwise each axis is
-/// tested for a rounding grid (a decimal STL's 7 significant digits, a metre-
-/// or inch-rescaled f32 mesh); the largest axis step, scaled by
-/// `ROUNDING_STEP_FACTOR`, is the coordinate precision. Float64 CAD
-/// coordinates are not on any grid, so no step is found and the floor is the
-/// diagonal term alone. A step coarser than the term the always-on floor used
-/// (`5e-7 * max_abs`) is rejected: such a "grid" is the geometry's own vertex
-/// spacing (or the two f64 coordinates of a coarse mesh), not coordinate
-/// rounding, and must not make the floor follow translation. The result is
-/// capped there as well, so the floor never exceeds that always-on term.
+/// coordinates themselves by testing explicit rounding models.
+///
+/// An all-f32 mesh is on the f32 grid, so the step is one f32 ulp at the
+/// largest coordinate, exactly. Otherwise every distinct coordinate (all axes
+/// pooled) is tested against a short list of models: a unit-rescaled f32 mesh,
+/// a decimal mesh rounded to 6..9 significant digits, or one rounded to 2..6
+/// decimal places. A model is accepted only with at least
+/// `ROUNDING_MIN_DISTINCT` distinct values and `ROUNDING_MIN_SHARE` of them
+/// reproduced exactly; the coarsest accepted model (the largest step at the
+/// largest coordinate) is the coordinate precision. A float64 CAD mesh matches
+/// none, so no step is found and the floor is the diagonal term alone. The
+/// step is scaled by `ROUNDING_STEP_FACTOR` and capped at `ROUNDING_CAP_REL`
+/// of the diagonal, so the floor never exceeds the initial tolerance.
 pub fn coordinate_rounding_step(soup: &TriangleSoup) -> f64 {
     let mut max_abs = 0.0f64;
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
     for t in &soup.triangles {
         for p in t {
-            for &c in p {
+            for (a, &c) in p.iter().enumerate() {
                 max_abs = max_abs.max(c.abs());
+                lo[a] = lo[a].min(c);
+                hi[a] = hi[a].max(c);
             }
         }
     }
@@ -175,29 +214,49 @@ pub fn coordinate_rounding_step(soup: &TriangleSoup) -> f64 {
     if all_float32_exact(soup) {
         return f32_ulp(max_abs);
     }
-    let cap = 5e-7 * max_abs;
+    let mut vals: Vec<f64> = soup
+        .triangles
+        .iter()
+        .flatten()
+        .flat_map(|p| p.iter().copied())
+        .collect();
+    vals.sort_unstable_by(f64::total_cmp);
+    vals.dedup();
+    if vals.len() < ROUNDING_MIN_DISTINCT {
+        return 0.0;
+    }
+    let n = vals.len() as f64;
+    let share = |f: &dyn Fn(f64) -> bool| vals.iter().filter(|&&v| f(v)).count() as f64 / n;
+
     let mut best = 0.0f64;
-    for axis in 0..3 {
-        let mut coords: Vec<f64> = soup
-            .triangles
-            .iter()
-            .flatten()
-            .map(|p| p[axis])
-            .filter(|c| c.abs() >= 0.5 * max_abs)
-            .collect();
-        coords.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        coords.dedup();
-        if coords.len() < 8 {
-            continue;
-        }
-        let step = axis_rounding_step(&coords, max_abs);
-        // A step coarser than the term the always-on floor used is the
-        // geometry's own vertex spacing, not coordinate rounding: reject it.
-        if step > 0.0 && step <= cap {
-            best = best.max(step);
+    // Only reached for a mesh that is not all-f32: one stray beyond the early
+    // return's allowance leaves a few coordinates off the f32 grid.
+    if share(&|v| (v as f32) as f64 == v) >= ROUNDING_MIN_SHARE {
+        best = best.max(f32_ulp(max_abs));
+    }
+    for &s in &SCALED_F32 {
+        if share(&|v| ulps_close(((v / s) as f32) as f64 * s, v)) >= ROUNDING_MIN_SHARE {
+            best = best.max(s * f32_ulp(max_abs / s));
         }
     }
-    (ROUNDING_STEP_FACTOR * best).min(cap)
+    for &d in &SIG_DIGITS {
+        if share(&|v| ulps_close(v, round_sig(v, d))) >= ROUNDING_MIN_SHARE {
+            best = best.max(sig_step(max_abs, d));
+        }
+    }
+    for &p in &FIXED_DECIMALS {
+        if share(&|v| ulps_close(v, round_fixed(v, p))) >= ROUNDING_MIN_SHARE {
+            best = best.max(10f64.powi(-(p as i32)));
+        }
+    }
+    if best == 0.0 {
+        return 0.0;
+    }
+    let dx = hi[0] - lo[0];
+    let dy = hi[1] - lo[1];
+    let dz = hi[2] - lo[2];
+    let diag = (dx * dx + dy * dy + dz * dz).sqrt();
+    (ROUNDING_STEP_FACTOR * best).min(ROUNDING_CAP_REL * diag)
 }
 
 pub fn run(
@@ -470,33 +529,160 @@ mod tests {
         assert_eq!(step, f32_ulp(2011.0));
     }
 
+    /// The largest `|coordinate|` and the bounding-box diagonal of a point set.
+    fn extent(points: &[[f64; 3]]) -> (f64, f64) {
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        let mut max_abs = 0.0f64;
+        for p in points {
+            for a in 0..3 {
+                max_abs = max_abs.max(p[a].abs());
+                lo[a] = lo[a].min(p[a]);
+                hi[a] = hi[a].max(p[a]);
+            }
+        }
+        let d = (0..3).map(|a| (hi[a] - lo[a]).powi(2)).sum::<f64>().sqrt();
+        (max_abs, d)
+    }
+
     #[test]
-    fn decimal_grid_is_found_without_f32_coordinates() {
-        let mut pts: Vec<[f64; 3]> = (0..12)
-            .map(|i| [5000.0 + i as f64 * 0.001, 5000.0, 5000.0])
+    fn scaled_float32_metre_is_found() {
+        let pts: Vec<[f64; 3]> = (0..200)
+            .map(|i| {
+                [
+                    (i as f32 * 1.7) as f64 * 1000.0,
+                    (i as f32 * 2.3 + 0.5) as f64 * 1000.0,
+                    (i as f32 * 3.1 + 1.25) as f64 * 1000.0,
+                ]
+            })
             .collect();
         assert!(
             pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
             "the fixture must not be all-f32"
         );
-        // The per-axis detector finds the raw 1e-3 digit step.
-        let coords: Vec<f64> = pts.iter().map(|p| p[0]).collect();
-        let raw = axis_rounding_step(&coords, 5000.011);
-        assert!((raw - 0.001).abs() < 1e-9, "raw={raw}");
-
-        // The floor's step is doubled to cover a binade crossing.
+        let (max_abs, diag) = extent(&pts);
+        let expected = (ROUNDING_STEP_FACTOR * 1000.0 * f32_ulp(max_abs / 1000.0))
+            .min(ROUNDING_CAP_REL * diag);
         let step = coordinate_rounding_step(&soup(&pts));
-        assert!((step - 0.002).abs() < 1e-9, "step={step}");
+        assert!(
+            (step - expected).abs() < 1e-12,
+            "step={step} expected={expected}"
+        );
+    }
 
-        // A single coordinate nudged off the grid must not change the step.
-        pts[5][0] += 1e-9;
-        let step2 = coordinate_rounding_step(&soup(&pts));
-        assert!((step2 - 0.002).abs() < 1e-9, "step2={step2}");
+    #[test]
+    fn scaled_float32_inch_is_found() {
+        let pts: Vec<[f64; 3]> = (0..200)
+            .map(|i| {
+                let inch = |v: f64| (v as f32) as f64 * 25.4;
+                [
+                    inch(i as f64 * 1.7),
+                    inch(i as f64 * 2.3 + 0.5),
+                    inch(i as f64 * 3.1 + 1.25),
+                ]
+            })
+            .collect();
+        assert!(
+            pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
+            "the fixture must not be all-f32"
+        );
+        let (max_abs, diag) = extent(&pts);
+        let expected =
+            (ROUNDING_STEP_FACTOR * 25.4 * f32_ulp(max_abs / 25.4)).min(ROUNDING_CAP_REL * diag);
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!(
+            (step - expected).abs() < 1e-12,
+            "step={step} expected={expected}"
+        );
+    }
+
+    #[test]
+    fn decimal_significant_digits_are_found() {
+        // 1000.000..1005.000 in 1e-3 steps: 5000 distinct 7-significant-digit
+        // decimals, spread so the tolerance cap does not bind.
+        let pts: Vec<[f64; 3]> = (0..5000)
+            .map(|i| {
+                let t = i as f64 * 0.001;
+                [1000.0 + t, 1000.0 + 2.0 * t, 1000.0 + 3.0 * t]
+            })
+            .collect();
+        assert!(
+            pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
+            "the fixture must not be all-f32"
+        );
+        let (max_abs, diag) = extent(&pts);
+        let expected = (ROUNDING_STEP_FACTOR * sig_step(max_abs, 7)).min(ROUNDING_CAP_REL * diag);
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!(
+            (step - expected).abs() < 1e-12,
+            "step={step} expected={expected}"
+        );
+        // The raw 1e-3 step is the answer (the cap does not bind).
+        assert!((step - 0.001).abs() < 1e-12, "step={step}");
+    }
+
+    #[test]
+    fn decimal_fixed_places_are_found() {
+        // 1000.00..1050.00 in 1e-2 steps: 5000 distinct two-decimal values.
+        let pts: Vec<[f64; 3]> = (0..5000)
+            .map(|i| {
+                let t = i as f64 * 0.01;
+                [1000.0 + t, 1000.0 + 2.0 * t, 1000.0 + 3.0 * t]
+            })
+            .collect();
+        assert!(
+            pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
+            "the fixture must not be all-f32"
+        );
+        let (max_abs, diag) = extent(&pts);
+        let expected = (ROUNDING_STEP_FACTOR * 0.01).min(ROUNDING_CAP_REL * diag);
+        let _ = max_abs;
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!(
+            (step - expected).abs() < 1e-12,
+            "step={step} expected={expected}"
+        );
+        assert!((step - 0.01).abs() < 1e-12, "step={step}");
+    }
+
+    #[test]
+    fn sixty_four_random_float64_values_match_nothing() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let pts: Vec<[f64; 3]> = (0..100)
+            .map(|_| {
+                [
+                    1000.0 + next() * 1000.0,
+                    1000.0 + next() * 1000.0,
+                    1000.0 + next() * 1000.0,
+                ]
+            })
+            .collect();
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert_eq!(step, 0.0, "spurious step {step}");
+    }
+
+    #[test]
+    fn fewer_than_sixty_four_distinct_values_have_no_grid() {
+        // A perfect 1e-3 decimal grid, but only 20 distinct values per axis.
+        let pts: Vec<[f64; 3]> = (0..20)
+            .map(|i| {
+                let t = i as f64 * 0.001;
+                [5000.0 + t, 5000.0, 5000.0]
+            })
+            .collect();
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert_eq!(step, 0.0, "spurious step {step}");
     }
 
     #[test]
     fn float64_coordinates_have_no_grid() {
-        let pts: Vec<[f64; 3]> = (0..12)
+        let pts: Vec<[f64; 3]> = (0..100)
             .map(|i| {
                 let t = i as f64 * 0.7;
                 [
@@ -507,6 +693,19 @@ mod tests {
             })
             .collect();
         let step = coordinate_rounding_step(&soup(&pts));
-        assert!(step < 1e-6, "spurious step {step}");
+        assert_eq!(step, 0.0, "spurious step {step}");
+    }
+
+    #[test]
+    fn one_stray_coordinate_does_not_change_a_decimal_grid() {
+        let mut pts: Vec<[f64; 3]> = (0..5000)
+            .map(|i| {
+                let t = i as f64 * 0.001;
+                [1000.0 + t, 1000.0 + 2.0 * t, 1000.0 + 3.0 * t]
+            })
+            .collect();
+        pts[5][0] += 1e-9;
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!((step - 0.001).abs() < 1e-12, "step={step}");
     }
 }
