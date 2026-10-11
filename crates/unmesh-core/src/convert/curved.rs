@@ -11,6 +11,9 @@ pub const QUICK_ITERS: usize = 10;
 /// underdetermined and a shallow cone is better left to the normal-line
 /// estimate (and, if that fails, to the facet fallback).
 const CONE_STABLE_MIN: usize = 48;
+/// The half-angle below which the cone's apex parameterisation is degenerate
+/// enough to bias the LM refinement; above it the fit is left as it is.
+const DEBIAS_MAX_DEG: f64 = 5.0;
 const ROW_GAP: f64 = 0.05;
 pub const IRLS_ROUNDS: usize = 3;
 pub const MAX_GROUP: usize = 16;
@@ -455,26 +458,36 @@ pub fn init_cone_stable(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> 
     if vals[1].is_nan() || vals[1] <= 1e-10 * vals[2].max(f64::MIN_POSITIVE) {
         return None;
     }
-    let mut a = unit(vecs[0]);
-    let mut sw = 0.0;
-    let mut o = [0.0; 3];
-    for &(p, w) in pts {
-        sw += w;
-        o = add(o, scale(p, w));
-    }
-    if sw <= 0.0 {
-        return None;
-    }
-    o = scale(o, 1.0 / sw);
-    let (mut sh, mut sr, mut shh, mut shr) = (0.0, 0.0, 0.0, 0.0);
+    let a = unit(vecs[0]);
+    // The axis line must pass through the true axis, not the vertex centroid:
+    // on a partial arc the centroid sits well inside the arc, and a line
+    // through it makes the radius regression pick up the azimuth as a spurious
+    // slope. A Kasa circle centre lies on the axis whatever the azimuth span.
+    let (o, _) = kasa(pts, a)?;
+    cone_regression(pts, &Axis { a, c: o })
+}
+
+/// Radius regression about a given axis line: for points on a cone of any
+/// half-angle the radius is an exact affine function of the axial coordinate,
+/// so the regression slope is the draft tangent. The line must pass through
+/// the true axis (`kasa` or a converged fit); about an offset line the azimuth
+/// leaks into the slope.
+fn cone_regression(pts: &[(V3, f64)], axis: &Axis) -> Option<(Axis, f64)> {
+    let a0 = unit(axis.a);
+    let o = axis.c;
+    let (mut sw, mut sh, mut sr, mut shh, mut shr) = (0.0, 0.0, 0.0, 0.0, 0.0);
     for &(p, w) in pts {
         let q = sub(p, o);
-        let h = dot(q, a);
-        let rho = norm(sub(q, scale(a, h)));
+        let h = dot(q, a0);
+        let rho = norm(sub(q, scale(a0, h)));
+        sw += w;
         sh += w * h;
         sr += w * rho;
         shh += w * h * h;
         shr += w * h * rho;
+    }
+    if sw <= 0.0 {
+        return None;
     }
     let denom = sw * shh - sh * sh;
     if denom <= 1e-24 * sw * shh {
@@ -482,6 +495,7 @@ pub fn init_cone_stable(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> 
     }
     let mut b = (sw * shr - sh * sr) / denom;
     let aa = (sr - b * sh) / sw;
+    let mut a = a0;
     if b < 0.0 {
         a = scale(a, -1.0);
         b = -b;
@@ -495,6 +509,50 @@ pub fn init_cone_stable(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> 
     }
     let apex = add(o, scale(a, -aa / b));
     Some((Axis { a, c: apex }, alpha))
+}
+
+/// Re-derive a shallow cone's angle from the radius regression about its
+/// fitted axis when the LM refinement's angle disagrees with it. On exact
+/// points the two agree to the last bits, so clean cones are untouched; under
+/// noise the degenerate apex parameterisation lets LM stall tens of percent
+/// off, while the regression is unbiased. `None` when the regression does not
+/// fit or does not disagree.
+fn debias_cone(
+    pts: &[(V3, f64)],
+    kind: Kind,
+    axis: &Axis,
+    shape: &[f64],
+    tol: f64,
+) -> Option<(Axis, f64)> {
+    if !matches!(kind, Kind::Cone { .. }) {
+        return None;
+    }
+    // Only a shallow cone's apex parameterisation is degenerate enough to bias
+    // the LM angle; a steeper cone converges and is left untouched.
+    if shape[1] >= DEBIAS_MAX_DEG.to_radians() {
+        return None;
+    }
+    // The regression must be about the true axis, and the LM's axis is itself
+    // biased for a shallow cone (its apex solve is degenerate). The direction
+    // from the vertex rows' plane normals and a Kasa circle centre pin the
+    // line to the axis regardless of the azimuth span.
+    let rough = unit(axis.a);
+    let dir = row_axis(pts, rough).unwrap_or(rough);
+    let (o, _) = kasa(pts, dir)?;
+    let (ra, ralpha) = cone_regression(pts, &Axis { a: dir, c: o })?;
+    if (ralpha - shape[1]).abs() <= 1e-6 {
+        return None;
+    }
+    let (_, rmax) = member_residual(
+        &ra,
+        &[0.0, ralpha],
+        &Member {
+            pts: pts.to_vec(),
+            kind,
+            slot: 0,
+        },
+    );
+    (rmax <= tol).then_some((ra, ralpha))
 }
 
 /// Cone axis from triangle normals that fall into two tilt populations (a
@@ -1078,41 +1136,107 @@ pub fn fit_quick(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Result
 /// residual, kept going only if one short round brings it within `gate`:
 /// under noise that estimate can start far off on a narrow band that a cone
 /// still fits.
-pub fn fit_cone_ungated(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Option<Single> {
-    let inits = [
-        init_cone(pts, tris),
-        (pts.len() >= CONE_STABLE_MIN)
-            .then(|| init_cone_stable(pts, tris))
-            .flatten(),
-    ];
-    for init in inits.into_iter().flatten() {
-        let (axis, alpha) = init;
-        let m = [Member {
-            pts: pts.to_vec(),
-            kind: Kind::Cone { sign: 1.0 },
-            slot: 0,
-        }];
-        let free = [false, false];
-        let q = fit_joint_with(
-            &m,
-            axis,
-            vec![0.0, alpha],
-            &free,
-            false,
-            tol,
-            1,
-            QUICK_ITERS,
+pub fn fit_cone_ungated(
+    pts: &[(V3, f64)],
+    tris: &[Tri],
+    tol: f64,
+    gate: f64,
+    allow_stable: bool,
+) -> Option<Single> {
+    // The normal-line estimate is tried first and, when it already places the
+    // cone, the regression estimate is never computed: it is only the shallow
+    // drafts `init_cone` cannot place that need it, and it is not cheap.
+    if let Some(init) = init_cone(pts, tris)
+        && let Some(fit) = cone_from_init(pts, init, tol, gate)
+    {
+        return Some(fit);
+    }
+    // The stable estimate is the radius regression itself; the LM refinement
+    // is degenerate for a shallow cone and moves the angle under noise, so
+    // return the regression directly when it fits. It is only used where a
+    // shallow draft is assembled from fragments (the merge); the seed stage
+    // never needs it and it is not cheap, and under noise the angle is not
+    // resolvable from the data so it is not trusted.
+    if allow_stable
+        && pts.len() >= CONE_STABLE_MIN
+        && let Some((axis, alpha)) = init_cone_stable(pts, tris)
+    {
+        let (rms, max) = member_residual(
+            &axis,
+            &[0.0, alpha],
+            &Member {
+                pts: pts.to_vec(),
+                kind: Kind::Cone { sign: 1.0 },
+                slot: 0,
+            },
         );
-        if q.fit[0].1 > gate {
-            continue;
+        if max <= tol {
+            return Some((
+                Kind::Cone { sign: 1.0 },
+                axis,
+                vec![0.0, alpha],
+                rms,
+                max,
+                false,
+            ));
         }
-        let j = fit_joint(&m, q.axis, q.shape, &free, false, tol);
-        let (rms, max) = j.fit[0];
-        if max <= tol && valid_shape(&j.shape, &m[0]) {
-            return Some((Kind::Cone { sign: 1.0 }, j.axis, j.shape, rms, max, false));
+        if let Some(fit) = cone_from_init(pts, (axis, alpha), tol, gate) {
+            return Some(fit);
         }
     }
     None
+}
+
+/// One cone init refined by a short gated round and then the full fit, with
+/// the shallow-angle bias correction.
+fn cone_from_init(pts: &[(V3, f64)], init: (Axis, f64), tol: f64, gate: f64) -> Option<Single> {
+    let (axis, alpha) = init;
+    let m = [Member {
+        pts: pts.to_vec(),
+        kind: Kind::Cone { sign: 1.0 },
+        slot: 0,
+    }];
+    let free = [false, false];
+    let q = fit_joint_with(
+        &m,
+        axis,
+        vec![0.0, alpha],
+        &free,
+        false,
+        tol,
+        1,
+        QUICK_ITERS,
+    );
+    if q.fit[0].1 > gate {
+        return None;
+    }
+    let j = fit_joint(&m, q.axis, q.shape, &free, false, tol);
+    let (mut rms, mut max) = j.fit[0];
+    let mut axis = j.axis;
+    let mut shape = j.shape;
+    if let Some((ra, ralpha)) = debias_cone(pts, Kind::Cone { sign: 1.0 }, &axis, &shape, tol) {
+        let (rrms, rmax) = member_residual(
+            &ra,
+            &[0.0, ralpha],
+            &Member {
+                pts: pts.to_vec(),
+                kind: Kind::Cone { sign: 1.0 },
+                slot: 0,
+            },
+        );
+        rms = rrms;
+        max = rmax;
+        axis = ra;
+        shape = vec![0.0, ralpha];
+    }
+    (max <= tol && valid_shape(&shape, &m[0])).then_some((
+        Kind::Cone { sign: 1.0 },
+        axis,
+        shape,
+        rms,
+        max,
+        false,
+    ))
 }
 
 /// The sum of squared vertex residuals of a single-surface fit, unweighted so
@@ -1252,8 +1376,25 @@ fn refit_with(
         rounds,
         iters,
     );
-    let (rms, max) = j.fit[0];
-    (max <= tol && valid_shape(&j.shape, &m[0])).then_some((kind, j.axis, j.shape, rms, max, false))
+    let (mut rms, mut max) = j.fit[0];
+    let mut axis = j.axis;
+    let mut shape = j.shape;
+    if let Some((ra, ralpha)) = debias_cone(pts, kind, &axis, &shape, tol) {
+        let (rrms, rmax) = member_residual(
+            &ra,
+            &[0.0, ralpha],
+            &Member {
+                pts: pts.to_vec(),
+                kind,
+                slot: 0,
+            },
+        );
+        rms = rrms;
+        max = rmax;
+        axis = ra;
+        shape = vec![0.0, ralpha];
+    }
+    (max <= tol && valid_shape(&shape, &m[0])).then_some((kind, axis, shape, rms, max, false))
 }
 
 pub fn valid_shape(shape: &[f64], m: &Member) -> bool {
@@ -1273,6 +1414,12 @@ pub fn valid_shape(shape: &[f64], m: &Member) -> bool {
 
 fn line_distance(p: V3, axis: &Axis) -> f64 {
     radial(p, axis.c, axis.a).1
+}
+
+/// The perpendicular distance from a point to an axis line (the public form of
+/// `line_distance`, for the merge gate).
+pub fn axis_line_distance(p: V3, axis: &Axis) -> f64 {
+    line_distance(p, axis)
 }
 
 fn coaxial(a: &Fitted, b: &Fitted, cos_lim: f64, dist: f64) -> bool {

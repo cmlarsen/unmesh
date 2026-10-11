@@ -27,22 +27,34 @@ const THIN_POINTS: usize = 2048;
 const RETRY_ROUNDS: usize = 3;
 const RETRY_ROUNDS_DOUBLY: usize = 12;
 const SLICE_SHARE: f64 = 0.15;
+/// The gap between axial circles, as a fraction of the group's axial extent,
+/// that separates one tessellation row from the next.
+const SLICE_ROW_GAP: f64 = 0.05;
 const DOUBLY_AREA: f64 = 4.0;
 const DOUBLY_RATIO: f64 = 0.01;
 const PASSES: usize = 3;
 const WIDEN_REL: f64 = 0.1;
-/// A group whose largest vertex residual is below this fraction of the noise
-/// scale (the tolerance on clean input, the noise `sigma` otherwise) lies on
-/// its fitted surface to the precision of the coordinates: it is that surface,
-/// not a slice of a doubly-curved one that merely fits within tolerance. A
-/// real facet of a sphere or a torus misses its fitted cylinder or cone by a
-/// geometric fraction of the tolerance, never by the last bits of a double.
-const EXACT_FIT_REL: f64 = 1e-6;
 /// The F-statistic a cone must clear over the best cylinder: the cone spends
 /// one extra degree of freedom (its half-angle), and the ratio of the
 /// residual it removes to the residual per remaining degree of freedom must
 /// beat the one-sided 95% point (about 3.84), a little higher to be safe.
 const CONE_F: f64 = 4.0;
+/// Under noise a cone's half-angle is only identifiable when its radius change
+/// across the group's axial extent clears this many tolerances; below it the
+/// fitted angle is noise and the cylinder is the honest surface.
+const RESOLVE_REL: f64 = 3.0;
+/// A cone steeper than this is never confused with a cylinder, so the
+/// cylinder comparison (a full fit) is skipped for it.
+const CONE_GATE_MAX_DEG: f64 = 5.0;
+/// Two non-adjacent cylinder/cone fragments can only be one cone face when
+/// their stored axes are near-parallel (within this cosine), near-coincident
+/// (this fraction of the radius apart) and of a similar radius (this relative
+/// difference) where the axes meet. The gate is cheap — it reads the stored
+/// fits — and keeps the quadratic non-adjacent candidacy from running the
+/// union and the cone fit on every unrelated pair in a component.
+const COAX_COS: f64 = 0.99939;
+const COAX_RAD_REL: f64 = 0.1;
+const COAX_DIST_REL: f64 = 0.005;
 
 /// A growth round's regions, which of them become facets, whether it
 /// changed anything, and whether another round could.
@@ -532,22 +544,40 @@ fn widen_seed(
     (chain, fit)
 }
 
-/// Whether a cone candidate explains the points significantly better than the
-/// best cylinder: an F-test on the one extra parameter (the half-angle). On
-/// clean input the fallback cone is exact and trusted; under noise a short
-/// shallow band fits a wrong cone about as well as the cylinder it is, the
-/// cone's half-angle only absorbing the noise, and growth from it locks the
-/// wrong angle in. The cone's six parameters leave `n - 6` residual degrees of
-/// freedom, and the ratio of the residual it removes to the residual per
-/// remaining degree of freedom must clear `CONE_F`, so a draft below the noise
+/// Whether a cone candidate is believed over the simpler cylinder. A cylinder
+/// is the limit of cones, so a shallow cone fits a real cylinder to the same
+/// tolerance and a merge would turn one into a near-zero cone: on any input a
+/// cone is kept only when the best cylinder of the same points cannot explain
+/// them within `tol`. On clean input that is the whole test — a real draft's
+/// sagitta over the face exceeds `tol`, a real cylinder's cylinder does not.
+/// Under noise the angle is also only identifiable when the radius changes by
+/// more than the tolerance across the group's axial extent; below that the
+/// cone's angle merely absorbs noise, and the F-test on the one extra
+/// parameter (the half-angle) guards the rest, so a draft below the noise
 /// resolution keeps the cylinder.
 fn cone_wins(pts: &[(V3, f64)], tris: &[Tri], cone: &Single, tol: f64, noisy: bool) -> bool {
-    if !noisy {
+    // A cone steeper than the confusion angle is a cone whatever a cylinder
+    // does; only near-cylinder cones need the cylinder comparison, which is a
+    // full fit.
+    if cone.2[1].to_degrees() >= CONE_GATE_MAX_DEG {
         return true;
     }
     let Some(cyl) = curved::fit_cylinder_ungated(pts, tris, tol) else {
         return true;
     };
+    if !noisy {
+        return cyl.4 > cone.4 + tol;
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for &(p, _) in pts {
+        let h = dot(sub(p, cone.1.c), cone.1.a);
+        lo = lo.min(h);
+        hi = hi.max(h);
+    }
+    if (hi - lo) * cone.2[1].tan() <= RESOLVE_REL * tol {
+        return false;
+    }
     let rss_cone = curved::residual_ss(cone, pts);
     let gain = curved::residual_ss(&cyl, pts) - rss_cone;
     let dof = (pts.len() as f64 - 6.0).max(1.0);
@@ -567,7 +597,7 @@ fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], wide: bool, tol: f64) -> Result<
                             .iter()
                             .any(|&r| pool.regions[r as usize].rms > WIDEN_REL * tol))) =>
         {
-            match curved::fit_cone_ungated(&pts, &tris, tol, INIT_GATE * tol) {
+            match curved::fit_cone_ungated(&pts, &tris, tol, INIT_GATE * tol, false) {
                 Some(c) if cone_wins(&pts, &tris, &c, tol, pool.noisy) => c,
                 _ => return Err(init),
             }
@@ -849,6 +879,42 @@ fn link_presets(
     }
 }
 
+/// The radius a stored cylinder or cone fit has at axial coordinate `h` along
+/// its axis (measured from `axis.c`), or `None` for a doubly-curved fit.
+fn fit_radius_at(f: &Single, h: f64) -> Option<f64> {
+    match f.0 {
+        Kind::Cylinder => Some(f.2[0]),
+        Kind::Cone { sign } => {
+            let r = sign * (h - f.2[0]) * f.2[1].tan();
+            (r.is_finite() && r > 0.0).then_some(r)
+        }
+        Kind::Sphere | Kind::Torus => None,
+    }
+}
+
+/// Whether two stored fits could be fragments of one shallow cone: both are
+/// cylinders or cones, their axes are near-parallel and near-coincident, and
+/// their radii where the axes meet agree. A shallow cone's fragments all fit
+/// cylinders of nearly the same radius about nearly the same axis; unrelated
+/// coaxial cylinders of different radii, or oblique ones, fail.
+fn cone_pair_candidate(a: &Single, b: &Single, _tol: f64) -> bool {
+    if !matches!(a.0, Kind::Cylinder | Kind::Cone { .. })
+        || !matches!(b.0, Kind::Cylinder | Kind::Cone { .. })
+    {
+        return false;
+    }
+    if dot(a.1.a, b.1.a).abs() < COAX_COS {
+        return false;
+    }
+    let dist = curved::axis_line_distance(b.1.c, &a.1).max(curved::axis_line_distance(a.1.c, &b.1));
+    let ha = dot(sub(b.1.c, a.1.c), a.1.a);
+    let hb = dot(sub(a.1.c, b.1.c), b.1.a);
+    let (Some(ra), Some(rb)) = (fit_radius_at(a, ha), fit_radius_at(b, hb)) else {
+        return false;
+    };
+    dist <= COAX_DIST_REL * (ra + rb) && (ra - rb).abs() <= COAX_RAD_REL * (ra + rb)
+}
+
 /// Joins adjacent groups whose union still fits one surface, starting from
 /// the larger group's: separate seeds can claim pieces of one face before
 /// either reaches the other. Adjacency is any shared edge, since slivers
@@ -865,7 +931,11 @@ fn merge_groups(
     let mut root: Vec<u32> = (0..groups.len() as u32).collect();
     let mut version = vec![0u32; groups.len()];
     let mut failed: FxHashSet<(u32, u32, u32, u32)> = FxHashSet::default();
+    // Rejections of non-adjacent pairs, keyed by the pair alone so that a
+    // version bump of either group (or any other) does not refit them.
+    let mut nonadj_failed: FxHashSet<(u32, u32)> = FxHashSet::default();
     loop {
+        let mut adjacent: FxHashSet<(u32, u32)> = FxHashSet::default();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         for (gi, grp) in groups.iter().enumerate() {
             if !alive[gi] {
@@ -879,26 +949,29 @@ fn merge_groups(
                     }
                     let h = find(&mut root, o);
                     if h != gi as u32 {
-                        pairs.push((gi.min(h as usize) as u32, gi.max(h as usize) as u32));
+                        let p = (gi.min(h as usize) as u32, gi.max(h as usize) as u32);
+                        adjacent.insert(p);
+                        pairs.push(p);
                     }
                 }
             }
         }
         pairs.sort_unstable();
         pairs.dedup();
-        let adjacency = pairs.clone();
         // Two pieces of one face that are not edge-adjacent still carry
         // together the azimuth a shallow cone needs to be determined, which no
         // adjacent pair of its fragments does. Candidate them too, within a
         // connected component so unrelated faces are never considered.
         if groups.len() <= 64 {
             let mut comp = Dsu::new(groups.len());
-            for &(a, b) in &adjacency {
+            for &(a, b) in &adjacent {
                 comp.union(a, b);
             }
             for gi in 0..groups.len() {
                 for h in gi + 1..groups.len() {
-                    if comp.find(gi as u32) == comp.find(h as u32) {
+                    if comp.find(gi as u32) == comp.find(h as u32)
+                        && !adjacent.contains(&(gi as u32, h as u32))
+                    {
                         pairs.push((gi as u32, h as u32));
                     }
                 }
@@ -912,8 +985,27 @@ fn merge_groups(
             if a == b || !alive[a] || !alive[b] {
                 continue;
             }
+            let is_adjacent = groups[a].members.iter().any(|&r| {
+                near[r as usize]
+                    .iter()
+                    .any(|&x| groups[b].members.contains(&x))
+            });
+            if !is_adjacent {
+                // Decide from the stored fits first: a non-adjacent pair can
+                // only be one cone face when both pieces are coaxial
+                // cylinder/cone fragments of the same radius, and then only
+                // the cone fit is tried. Caching the rejection keeps a version
+                // bump of an unrelated group from refitting them.
+                if nonadj_failed.contains(&(a as u32, b as u32)) {
+                    continue;
+                }
+                if !cone_pair_candidate(&groups[a].fit, &groups[b].fit, tol) {
+                    nonadj_failed.insert((a as u32, b as u32));
+                    continue;
+                }
+            }
             let key = (a as u32, b as u32, version[a], version[b]);
-            if failed.contains(&key) {
+            if is_adjacent && failed.contains(&key) {
                 continue;
             }
             let (big, small) = if groups[a].members.len() >= groups[b].members.len() {
@@ -924,49 +1016,51 @@ fn merge_groups(
             let mut members = groups[big].members.clone();
             members.extend_from_slice(&groups[small].members);
             let (pts, tris) = pool.union(&members);
-            let lead = [&groups[big].fit, &groups[small].fit]
-                .into_iter()
-                .find(|f| {
-                    curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
-                        && pool.all_fit(&members, f, tol).is_some()
-                })
-                .cloned()
-                .or_else(|| {
-                    if doubly(groups[big].fit.0) || doubly(groups[small].fit.0) {
-                        return None;
-                    }
-                    let (tp, tt) = (thin(&pts), thin(&tris));
-                    let noisy = pool.noisy;
-                    let holds = |f: &Single| {
-                        curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
-                            && pool.all_fit(&members, f, tol).is_some()
-                    };
-                    curved::fit_single_gated(&tp, &tt, tol, INIT_GATE * tol)
-                        .filter(holds)
-                        .or_else(|| {
-                            curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol)
-                                .filter(|c| cone_wins(&tp, &tt, c, tol, noisy))
-                                .filter(holds)
-                        })
-                });
+            let holds = |f: &Single| {
+                curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
+                    && pool.all_fit(&members, f, tol).is_some()
+            };
+            let lead = if is_adjacent {
+                [&groups[big].fit, &groups[small].fit]
+                    .into_iter()
+                    .find(|f| holds(f))
+                    .cloned()
+                    .or_else(|| {
+                        if doubly(groups[big].fit.0) || doubly(groups[small].fit.0) {
+                            return None;
+                        }
+                        let (tp, tt) = (thin(&pts), thin(&tris));
+                        let noisy = pool.noisy;
+                        curved::fit_single_gated(&tp, &tt, tol, INIT_GATE * tol)
+                            .filter(holds)
+                            .or_else(|| {
+                                curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol, false)
+                                    .filter(|c| cone_wins(&tp, &tt, c, tol, noisy))
+                                    .filter(holds)
+                            })
+                    })
+            } else if holds(&groups[big].fit) {
+                // The larger group's stored fit already explains the union, so
+                // the pair is that one surface: a stored cone joins it, a
+                // stored cylinder keeps it (the cone fit would be rejected).
+                matches!(groups[big].fit.0, Kind::Cone { .. }).then(|| groups[big].fit.clone())
+            } else {
+                // A non-adjacent pair is only ever one cone face; the stored
+                // fits are cylinders, so the only candidate is the cone fit.
+                let (tp, tt) = (thin(&pts), thin(&tris));
+                let noisy = pool.noisy;
+                curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol, !noisy)
+                    .filter(|c| cone_wins(&tp, &tt, c, tol, noisy))
+                    .filter(holds)
+            };
             let Some(lead) = lead else {
-                failed.insert(key);
+                if is_adjacent {
+                    failed.insert(key);
+                } else {
+                    nonadj_failed.insert((a as u32, b as u32));
+                }
                 continue;
             };
-            // A non-adjacent pair is only ever one face when that face is the
-            // cone an adjacent pair of its fragments cannot pin down; two
-            // non-adjacent pieces of an ordinary cylinder or sphere carry no
-            // information an adjacent merge does not, and merging them early
-            // would only reorder regions.
-            let adjacent = groups[a].members.iter().any(|&r| {
-                near[r as usize]
-                    .iter()
-                    .any(|&x| groups[b].members.contains(&x))
-            });
-            if !adjacent && !matches!(lead.0, Kind::Cone { .. }) {
-                failed.insert(key);
-                continue;
-            }
             let pts = if doubly(lead.0) { thin(&pts) } else { pts };
             let fit = curved::refit_quick(&pts, lead.0, lead.1, &lead.2, tol)
                 .filter(|f| pool.all_fit(&members, f, tol).is_some())
@@ -981,6 +1075,11 @@ fn merge_groups(
                 alive[small] = false;
                 root[small] = big as u32;
                 version[big] += 1;
+                // The merged group's stored fit changed, so any non-adjacent
+                // rejection involving it is stale and must be reconsidered.
+                nonadj_failed.retain(|&(x, y)| {
+                    x != big as u32 && y != big as u32 && x != small as u32 && y != small as u32
+                });
                 merged = true;
                 changed = true;
             }
@@ -1758,6 +1857,38 @@ fn refreshed(vc: &[V3], verts: &[(u32, f64)], fit: Single) -> Single {
     (fit.0, fit.1, fit.2, rms, max, fit.5)
 }
 
+/// Whether a group's vertices fall on at least three distinct circles across
+/// its fitted axis (three tessellation rows). A single row of a sphere or
+/// torus lies on two coaxial circles and is always an exact cone; a real
+/// cylinder or cone spans several rows.
+fn spans_rows(pool: &Pool<'_>, grp: &Group) -> bool {
+    let axis = &grp.fit.1;
+    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    let mut hs: Vec<f64> = Vec::new();
+    for &r in &grp.members {
+        for &(v, _) in &pool.regions[r as usize].verts {
+            if seen.insert(v) {
+                hs.push(dot(sub(pool.vc[v as usize], axis.c), axis.a));
+            }
+        }
+    }
+    if hs.len() < 3 {
+        return false;
+    }
+    hs.sort_by(f64::total_cmp);
+    let range = hs[hs.len() - 1] - hs[0];
+    if range <= 0.0 {
+        return false;
+    }
+    let mut rows = 1;
+    for w in hs.windows(2) {
+        if w[1] - w[0] > SLICE_ROW_GAP * range {
+            rows += 1;
+        }
+    }
+    rows >= 3
+}
+
 /// Groups sandwiched between curved neighbours: at least two other groups
 /// that each share `SLICE_SHARE` of the group's boundary across smooth
 /// creases. A torus or a sphere has no cylinder or cone through it, but it
@@ -1784,7 +1915,14 @@ fn slices(
         .iter()
         .enumerate()
         .map(|(gi, grp)| {
-            if grp.fit.4 <= EXACT_FIT_REL * pool.sigma {
+            // A group that spans several tessellation rows is a face, not a
+            // one-row band cut from a doubly-curved surface: a single row of a
+            // sphere or torus lies on two coaxial circles and so is always an
+            // exact cone, which an exact-fit test cannot separate from a real
+            // cone. An exact fit is kept only when it covers several rows, so
+            // the drafted bore's cone (many rows) survives while a one-row
+            // torus or sphere band is cut.
+            if grp.fit.4 <= 1e-6 * pool.sigma && spans_rows(pool, grp) {
                 return false;
             }
             let smooth_to: Vec<u32> = grp
@@ -2488,7 +2626,7 @@ mod tests {
     fn cone_is_kept_only_when_the_draft_is_resolvable() {
         let tol = 3e-3;
         let (pts, tris) = cone_band(2f64.to_radians(), 48, 10, 4.0, 20.0, 2e-4);
-        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
             .expect("a 2 degree draft fits a cone");
         assert!(
             (cone.2[1].to_degrees() - 2.0).abs() < 0.1,
@@ -2498,7 +2636,7 @@ mod tests {
         assert!(super::cone_wins(&pts, &tris, &cone, tol, true));
 
         let (pts, tris) = cone_band(0.02f64.to_radians(), 12, 2, 6.0, 6.5, 2e-3);
-        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
             .expect("a shallow band still fits a cone");
         assert!(
             !super::cone_wins(&pts, &tris, &cone, tol, true),
@@ -2516,7 +2654,7 @@ mod tests {
         let h = 8.0 / alpha.tan();
         let (pts, tris) = cone_band(alpha, 72, 5, h - 3.0, h + 3.0, 0.0);
         let tol = 5e-4;
-        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
             .expect("a 0.2 degree draft fits a cone");
         assert!(
             (cone.2[1].to_degrees() - 0.2).abs() < 1e-6,
@@ -2524,6 +2662,251 @@ mod tests {
             cone.2[1].to_degrees()
         );
         assert!(cone.4 <= tol, "max {}", cone.4);
+    }
+
+    /// A tessellated cylinder band of radius `r` about +z from height `h0` to
+    /// `h1`, `around` columns and `rings` rows, every vertex jittered by up to
+    /// `noise` (same sequence as `cone_band`).
+    fn cyl_band(
+        r: f64,
+        around: usize,
+        rings: usize,
+        h0: f64,
+        h1: f64,
+        noise: f64,
+    ) -> (Vec<(V3, f64)>, Vec<super::Tri>) {
+        use super::super::linalg::{add, cross, norm, scale, sub, unit};
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut jitter = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+        };
+        let mut pts = Vec::new();
+        let mut rows: Vec<Vec<usize>> = Vec::new();
+        for j in 0..=rings {
+            let h = h0 + (h1 - h0) * j as f64 / rings as f64;
+            let mut row = Vec::new();
+            for i in 0..around {
+                let t = std::f64::consts::TAU * i as f64 / around as f64;
+                row.push(pts.len());
+                pts.push((
+                    [
+                        r * t.cos() + noise * jitter(),
+                        r * t.sin() + noise * jitter(),
+                        h + noise * jitter(),
+                    ],
+                    1.0,
+                ));
+            }
+            rows.push(row);
+        }
+        let mut tris = Vec::new();
+        for j in 0..rings {
+            for i in 0..around {
+                let i1 = (i + 1) % around;
+                for tri in [
+                    [rows[j][i], rows[j][i1], rows[j + 1][i1]],
+                    [rows[j][i], rows[j + 1][i1], rows[j + 1][i]],
+                ] {
+                    let (a, b, c) = (pts[tri[0]].0, pts[tri[1]].0, pts[tri[2]].0);
+                    let n = cross(sub(b, a), sub(c, a));
+                    tris.push(super::Tri {
+                        normal: unit(n),
+                        area: 0.5 * norm(n),
+                        centroid: scale(add(add(a, b), c), 1.0 / 3.0),
+                    });
+                }
+            }
+        }
+        (pts, tris)
+    }
+
+    /// A non-adjacent merge is only ever a shallow cone, so its stored fits
+    /// must be coaxial cylinders or cones of the same radius; unrelated
+    /// coaxial cylinders of different radius, and oblique ones, are rejected
+    /// before the union and the fit.
+    #[test]
+    fn non_adjacent_cone_candidates_require_coaxial_similar_fragments() {
+        use super::super::linalg::unit;
+        let cyl = |r: f64, c: V3, a: V3| {
+            (
+                super::Kind::Cylinder,
+                super::Axis { a, c },
+                vec![r],
+                0.0,
+                0.0,
+                false,
+            )
+        };
+        let z = [0.0, 0.0, 1.0];
+        assert!(super::cone_pair_candidate(
+            &cyl(8.0, [0.0; 3], z),
+            &cyl(8.0, [0.02, 0.0, 0.0], z),
+            1e-4
+        ));
+        assert!(!super::cone_pair_candidate(
+            &cyl(8.0, [0.0; 3], z),
+            &cyl(20.0, [0.0; 3], z),
+            1e-4
+        ));
+        assert!(!super::cone_pair_candidate(
+            &cyl(8.0, [0.0; 3], z),
+            &cyl(8.0, [0.5, 0.0, 0.0], z),
+            1e-4
+        ));
+        assert!(!super::cone_pair_candidate(
+            &cyl(8.0, [0.0; 3], z),
+            &cyl(8.0, [0.0; 3], unit([0.2, 0.0, 1.0])),
+            1e-4
+        ));
+    }
+
+    /// A shallow cone is believed only when the best cylinder of the same
+    /// points cannot explain them within tolerance: a real draft's sagitta
+    /// over the face exceeds it, while a near-cylinder (a clean cylinder
+    /// fragment) keeps the cylinder and never becomes a near-zero cone.
+    #[test]
+    fn a_near_cylinder_is_not_believed_as_a_cone() {
+        let tol = 5e-4;
+        let alpha = 0.2f64.to_radians();
+        let h = 8.0 / alpha.tan();
+        let (pts, tris) = cone_band(alpha, 72, 5, h - 3.0, h + 3.0, 0.0);
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
+            .expect("a 0.2 degree draft fits a cone");
+        assert!(super::cone_wins(&pts, &tris, &cone, tol, false));
+
+        let (pts, tris) = cyl_band(1.25, 72, 5, 0.0, 5.0, 0.0);
+        if let Some(cone) =
+            super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
+        {
+            assert!(
+                !super::cone_wins(&pts, &tris, &cone, tol, false),
+                "a clean cylinder fragment must not become a cone, angle {}",
+                cone.2[1].to_degrees()
+            );
+        }
+    }
+
+    /// The non-adjacent candidacy is quadratic in a component's groups, so the
+    /// stored-fit gate must reject unrelated pairs without the union and the
+    /// cone fit. 64 unrelated coaxial cylinders of different radii are all
+    /// rejected, and the whole sweep is near-instant (issue #160).
+    #[test]
+    fn non_adjacent_gate_rejects_many_large_groups_cheaply() {
+        let z = [0.0, 0.0, 1.0];
+        let cyl = |r: f64| {
+            (
+                super::Kind::Cylinder,
+                super::Axis { a: z, c: [0.0; 3] },
+                vec![r],
+                0.0,
+                0.0,
+                false,
+            )
+        };
+        let fits: Vec<_> = (0..64).map(|i| cyl(1.5f64.powi(i))).collect();
+        let start = std::time::Instant::now();
+        let mut rejected = 0;
+        for i in 0..fits.len() {
+            for j in i + 1..fits.len() {
+                if !super::cone_pair_candidate(&fits[i], &fits[j], 1e-4) {
+                    rejected += 1;
+                }
+            }
+        }
+        assert_eq!(rejected, fits.len() * (fits.len() - 1) / 2);
+        assert!(
+            start.elapsed().as_secs_f64() < 0.5,
+            "gate took {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// A one-row band lies on two coaxial circles and must not be exempt from
+    /// `slices` (it is always an exact cone); a band covering three or more
+    /// rows is a real face and is exempt.
+    #[test]
+    fn a_band_on_two_circles_is_not_a_face() {
+        let z = [0.0, 0.0, 1.0];
+        let mut vc = Vec::new();
+        let mut verts = Vec::new();
+        for k in 0..2 {
+            for i in 0..8 {
+                let t = std::f64::consts::TAU * i as f64 / 8.0;
+                verts.push((vc.len() as u32, 1.0));
+                vc.push([8.0 * t.cos(), 8.0 * t.sin(), k as f64]);
+            }
+        }
+        let region = super::super::fit::Region {
+            faces: Vec::new(),
+            surface: super::Surface::Cylinder {
+                origin: [0.0; 3],
+                axis: z,
+                radius: 8.0,
+                reversed: false,
+            },
+            area: 0.0,
+            width: 0.0,
+            verts,
+            rms: 0.0,
+            max: 0.0,
+            sag: 0.0,
+        };
+        let regions = vec![region];
+        let pool = super::Pool {
+            vc: &vc,
+            faces: &[],
+            info: &[],
+            regions: &regions,
+            preset: vec![false; 1],
+            refused: std::cell::Cell::new(0),
+            sigma: 0.0,
+            noisy: false,
+            mark: Vec::new(),
+            pos: Vec::new(),
+            token: 0,
+        };
+        let group = |members| super::Group {
+            members,
+            fit: (
+                super::Kind::Cylinder,
+                super::Axis { a: z, c: [0.0; 3] },
+                vec![8.0],
+                0.0,
+                0.0,
+                false,
+            ),
+            preset: false,
+        };
+        assert!(!super::spans_rows(&pool, &group(vec![0])));
+
+        let mut vc3 = vc.clone();
+        let mut verts3 = regions[0].verts.clone();
+        for i in 0..8 {
+            let t = std::f64::consts::TAU * i as f64 / 8.0;
+            verts3.push((vc3.len() as u32, 1.0));
+            vc3.push([8.0 * t.cos(), 8.0 * t.sin(), 2.0]);
+        }
+        let regions3 = vec![super::super::fit::Region {
+            verts: verts3,
+            ..regions.into_iter().next().unwrap()
+        }];
+        let pool3 = super::Pool {
+            vc: &vc3,
+            faces: &[],
+            info: &[],
+            regions: &regions3,
+            preset: vec![false; 1],
+            refused: std::cell::Cell::new(0),
+            sigma: 0.0,
+            noisy: false,
+            mark: Vec::new(),
+            pos: Vec::new(),
+            token: 0,
+        };
+        assert!(super::spans_rows(&pool3, &group(vec![0])));
     }
 
     #[test]
