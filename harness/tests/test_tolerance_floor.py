@@ -98,8 +98,14 @@ def test_float32_moved_stays_close_to_the_origin():
     tol_m, _, regions_m = _summary(moved)
 
     assert abs(regions_m - regions_o) <= max(2, 0.2 * regions_o)
-    assert tol_m == pytest.approx(tol_o, rel=0.05)
-    assert tol_m >= _f32_ulp(float(np.abs(moved).max()))
+    # f32 rounding at |p| ~ 2000 mm is real extra noise (one ulp, std ulp/sqrt(12)),
+    # so the moved estimate may rise by that in quadrature: Linux reads 3.600e-4
+    # against 3.597e-4, macOS 4.86e-4 against 3.74e-4. Main jumped to 5e-7*max_abs.
+    ulp = _f32_ulp(float(np.abs(moved).max()))
+    explained = 5.0 * np.hypot(tol_o / 5.0, ulp / np.sqrt(12.0))
+    assert 0.95 * tol_o <= tol_m <= 1.25 * explained
+    assert tol_m < 0.6 * 5e-7 * float(np.abs(moved).max())
+    assert tol_m >= ulp
 
     # A clean f32 part stays on the same region count and within twice the
     # origin tolerance (the quantization reads as a small extra noise).
