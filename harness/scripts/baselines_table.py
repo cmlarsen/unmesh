@@ -20,9 +20,11 @@ field, so grouping on the record field used to hide every failure in a ``?`` row
 The faceted share is a per-cell ratio, ``faceted_regions / (faceted_regions +
 analytic_regions)``, so a correctly typed base plane beside a dome written as
 thousands of planes no longer reads as fully analytic; the table averages it over
-the ok cells that have at least one classified region. A cell the writer fell
-back on with no classified region at all is 1.0; a cell with no region of either
-kind and no fallback is skipped from the share (it stays in ``cells``).
+the ok cells that have at least one classified region. ``fallback`` is the
+writer's own faceted fallback, not the STEP face-count comparison: a cell the
+writer fell back on with no classified region at all is 1.0; a cell with no
+region of either kind and no fallback is skipped from the share (it stays in
+``cells``).
 
 Statuses are counted separately:
 
@@ -73,8 +75,9 @@ def faceted_share(record: dict[str, Any]) -> float | None:
     """Fraction of the cell's classified regions that are faceted.
 
     ``faceted_regions / (faceted_regions + analytic_regions)``. A writer fallback
-    with no classified region at all is 1.0; a cell with no region of either kind
-    and no fallback is ``None`` (skipped from the share).
+    (``WriteReport.fallback``, not a STEP face-count mismatch) with no classified
+    region at all is 1.0; a cell with no region of either kind and no fallback is
+    ``None`` (skipped from the share).
     """
     faceted = record.get("faceted_regions") or 0
     analytic = record.get("analytic_regions") or 0
