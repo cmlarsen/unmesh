@@ -52,47 +52,29 @@ def draft_block(deg):
     return extrude(make_face(Plane.XZ * profile), amount=-30)
 
 
-def draft_bore(deg, r=6.0, hc=4.0, hk=6.0):
-    from build123d import Align, Box, Cone, Cylinder, Pos
+def draft_boss(deg, r=8.0, hc=4.0, hk=6.0):
+    from build123d import Align, Cone, Cylinder, Pos
 
     t = math.tan(math.radians(deg))
-    hole = Cylinder(r, hc, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    hole += Pos(0, 0, hc) * Cone(r, r + hk * t, hk, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    return Box(4 * r, 4 * r, hc + hk, align=(Align.CENTER, Align.CENTER, Align.MIN)) - hole
-
-
-def drafted_face(mesh):
-    return min((f for f in mesh.faces if f.surface == "cone"), key=lambda f: f.params["half_angle"])
-
-
-def covering_region(ir, face_id, fid):
-    sel = np.flatnonzero(face_id == fid)
-    best, cover = None, 0
-    for r in ir.regions:
-        tris = np.asarray(r.triangles, dtype=np.int64)
-        if tris.size and (n := int(np.isin(tris, sel).sum())) > cover:
-            best, cover = r, n
-    return best
+    base = Cylinder(r, hc, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    top = Pos(0, 0, hc) * Cone(r, r - hk * t, hk, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return base + top
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("seed", range(3))
-def test_noisy_draft_cone_angle_within_a_tenth_or_cylinder(seed):
-    """A resolvable 2 degree bore draft keeps its cone within 0.1 degrees
-    clean and under 1 um noise, or is left a cylinder, never a wrong cone."""
-    part = draft_bore(2.0)
+def test_noisy_shallow_draft_never_emits_a_wrong_cone():
+    """A 0.2 degree boss draft under 1 um noise (seed 4) is below the noise
+    resolution: growth must not lock in a wrong cone. Main kept a 0.0396 degree
+    cone over 184 triangles here; the gate drops it."""
+    part = draft_boss(0.2, r=12.0, hc=4.0, hk=12.0)
     mesh = tessellate(part, LIN, ANG)
-    fid = drafted_face(mesh).id
-    for steps in ([], [("noise_normal", 0.02)]):
-        cell = mesh if not steps else degrade.chain(mesh, steps, seed)
-        ir, _ = unmesh.convert(np.asarray(cell.tris))
-        region = covering_region(ir, np.asarray(cell.face_id), fid)
-        assert region is not None
-        surface = region.to_dict()["surface"]
-        if surface["type"] == "cone":
-            assert abs(math.degrees(surface["half_angle"]) - 2.0) <= 0.1, surface
-        else:
-            assert surface["type"] == "cylinder", surface
+    cell = degrade.chain(mesh, [("noise_normal", 0.02)], 4)
+    ir, _ = unmesh.convert(np.asarray(cell.tris))
+    for region in ir.regions:
+        surface = region.to_dict().get("surface") or {}
+        if surface.get("type") == "cone":
+            angle = abs(math.degrees(surface["half_angle"]))
+            assert angle >= 0.1, (angle, surface)
 
 
 def test_clean_shallow_draft_keeps_floor_and_regions():

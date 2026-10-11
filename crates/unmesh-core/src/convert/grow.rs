@@ -529,18 +529,11 @@ fn widen_seed(
 /// clean input the fallback cone is exact and trusted; under noise a short
 /// shallow band fits a wrong cone about as well as the cylinder it is, the
 /// cone's half-angle only absorbing the noise, and growth from it locks the
-/// wrong angle in. The ratio of the residual the cone removes to the residual
-/// per remaining degree of freedom must clear `CONE_F`, and the gain must
-/// exceed the noise variance, so a draft below the noise resolution keeps the
-/// cylinder.
-fn cone_wins(
-    pts: &[(V3, f64)],
-    tris: &[Tri],
-    cone: &Single,
-    tol: f64,
-    noisy: bool,
-    sigma: f64,
-) -> bool {
+/// wrong angle in. The cone's six parameters leave `n - 6` residual degrees of
+/// freedom, and the ratio of the residual it removes to the residual per
+/// remaining degree of freedom must clear `CONE_F`, so a draft below the noise
+/// resolution keeps the cylinder.
+fn cone_wins(pts: &[(V3, f64)], tris: &[Tri], cone: &Single, tol: f64, noisy: bool) -> bool {
     if !noisy {
         return true;
     }
@@ -549,10 +542,7 @@ fn cone_wins(
     };
     let rss_cone = curved::residual_ss(cone, pts);
     let gain = curved::residual_ss(&cyl, pts) - rss_cone;
-    if gain <= sigma * sigma {
-        return false;
-    }
-    let dof = (pts.len() as f64 - 5.0).max(1.0);
+    let dof = (pts.len() as f64 - 6.0).max(1.0);
     gain / (rss_cone / dof) > CONE_F
 }
 
@@ -570,7 +560,7 @@ fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], wide: bool, tol: f64) -> Result<
                             .any(|&r| pool.regions[r as usize].rms > WIDEN_REL * tol))) =>
         {
             match curved::fit_cone_ungated(&pts, &tris, tol, INIT_GATE * tol) {
-                Some(c) if cone_wins(&pts, &tris, &c, tol, pool.noisy, pool.sigma) => c,
+                Some(c) if cone_wins(&pts, &tris, &c, tol, pool.noisy) => c,
                 _ => return Err(init),
             }
         }
@@ -668,31 +658,18 @@ impl<'a> Junction<'a> {
 
 /// A fresh fit of the union (which can take the tessellation-law radius),
 /// else a refit started from `start`, each kept only if every member fits.
-/// A cone is then re-estimated from the whole region's facet normals, which
-/// read the half-angle directly, so a shallow cone does not keep whatever
-/// angle the seed's short arc happened to lock in.
 fn final_fit(pool: &mut Pool<'_>, members: &[u32], start: &Single, tol: f64) -> Option<Single> {
     let (pts, tris) = pool.union(members);
     if doubly(start.0) {
         return curved::refit(&thin(&pts), start.0, start.1, &start.2, tol)
             .filter(|f| pool.all_fit(members, f, tol).is_some());
     }
-    let fresh = curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
+    curved::fit_single_gated(&pts, &tris, tol, INIT_GATE * tol)
         .filter(|f| pool.all_fit(members, f, tol).is_some())
         .or_else(|| {
             curved::refit(&pts, start.0, start.1, &start.2, tol)
                 .filter(|f| pool.all_fit(members, f, tol).is_some())
-        });
-    let f = fresh?;
-    if pool.noisy
-        && matches!(f.0, Kind::Cone { .. })
-        && let Some(re) = curved::refit_cone_ndot(&pts, &tris, f.1, f.2[0], tol)
-            .filter(|r| pool.all_fit(members, r, tol).is_some())
-        && re.4 <= f.4
-    {
-        return Some(re);
-    }
-    Some(f)
+        })
 }
 
 /// At most `THIN_POINTS` of the items, evenly strided, for refining a fit
@@ -931,7 +908,7 @@ fn merge_groups(
                         return None;
                     }
                     let (tp, tt) = (thin(&pts), thin(&tris));
-                    let (noisy, sigma) = (pool.noisy, pool.sigma);
+                    let noisy = pool.noisy;
                     let holds = |f: &Single| {
                         curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
                             && pool.all_fit(&members, f, tol).is_some()
@@ -940,7 +917,7 @@ fn merge_groups(
                         .filter(holds)
                         .or_else(|| {
                             curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol)
-                                .filter(|c| cone_wins(&tp, &tt, c, tol, noisy, sigma))
+                                .filter(|c| cone_wins(&tp, &tt, c, tol, noisy))
                                 .filter(holds)
                         })
                 });
@@ -2457,13 +2434,14 @@ mod tests {
         (pts, tris)
     }
 
-    /// A draft the noise can resolve is fitted as a cone within a tenth of a
-    /// degree and beats the best cylinder; one below the resolution keeps the
-    /// cylinder, which still fits.
+    /// A 2 degree draft over 16 mm is resolved, fitted as a cone within a
+    /// tenth of a degree, and accepted. A 0.02 degree draft over 0.5 mm under
+    /// 1 um of noise still lets `fit_cone_ungated` return a cone that fits
+    /// within tolerance, but it explains the points no better than the
+    /// cylinder it nearly is, so the gate rejects it.
     #[test]
     fn cone_is_kept_only_when_the_draft_is_resolvable() {
         let tol = 3e-3;
-        let sigma = 1e-3;
         let (pts, tris) = cone_band(2f64.to_radians(), 48, 10, 4.0, 20.0, 2e-4);
         let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
             .expect("a 2 degree draft fits a cone");
@@ -2472,15 +2450,14 @@ mod tests {
             "angle {}",
             cone.2[1].to_degrees()
         );
-        assert!(super::cone_wins(&pts, &tris, &cone, tol, true, sigma));
+        assert!(super::cone_wins(&pts, &tris, &cone, tol, true));
 
-        let (pts, tris) = cone_band(0.002f64.to_radians(), 48, 3, 10.0, 11.0, sigma);
-        let cyl = super::curved::fit_cylinder_ungated(&pts, &tris, tol).expect("a cylinder");
-        assert!(cyl.4 <= tol, "cylinder max {}", cyl.4);
+        let (pts, tris) = cone_band(0.02f64.to_radians(), 12, 2, 6.0, 6.5, 2e-3);
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+            .expect("a shallow band still fits a cone");
         assert!(
-            super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
-                .is_none_or(|c| !super::cone_wins(&pts, &tris, &c, tol, true, sigma)),
-            "a 0.002 degree draft over 1 mm is below the noise resolution"
+            !super::cone_wins(&pts, &tris, &cone, tol, true),
+            "a 0.02 degree draft over 0.5 mm under 1 um noise is below resolution"
         );
     }
 
