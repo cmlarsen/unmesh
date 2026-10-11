@@ -12,6 +12,7 @@ from unmesh_harness.labels import tessellate
 from unmesh_harness.oracle import build_oracle_ir
 from unmesh_harness.runner import gate, load_grid, run_grid, summarize
 from unmesh_harness.runner.converters import faceted_ir, get_converter
+from unmesh_harness.runner.execute import step_face_mismatch
 from unmesh_harness.runner.results import KEY_FIELDS, read_results, record_key
 from unmesh_harness.runner.score import face_recovery
 
@@ -619,8 +620,42 @@ def test_records_carry_validity_topology_structure(tmp_path):
     assert record["validity"]["valid"] is True, record["validity"]
     assert record["validity"]["fallback"] is False
     assert record["structure"]["face_count_ratio"] == pytest.approx(1.0)
+    assert record["step_faces"] == record["ir_regions"]
+    assert record["step_face_mismatch"] is None
     table = summarize(summary.records)
     assert "topo" in table and "holes" in table
+
+
+def test_step_face_mismatch_allows_documented_splits():
+    from types import SimpleNamespace
+
+    def region(kind, triangles=0):
+        return SimpleNamespace(surface=SimpleNamespace(type=kind), triangles=list(range(triangles)))
+
+    analytic = SimpleNamespace(regions=[region("plane"), region("cylinder")])
+    assert step_face_mismatch(999, analytic, {"fallback": "faceted"}) is None
+    assert step_face_mismatch(2, analytic, {"fallback": None}) is None
+    assert step_face_mismatch(3, analytic, {"fallback": None}) == (
+        "STEP has 3 faces for 2 IR regions (2 expected)"
+    )
+    mixed = SimpleNamespace(regions=[region("plane"), region("facets", triangles=5)])
+    write = {"fallback": None, "faceted_faces": 5}
+    assert step_face_mismatch(6, mixed, write) is None
+    assert step_face_mismatch(4, mixed, write) is None
+    assert step_face_mismatch(7, mixed, write) == (
+        "STEP has 7 faces for 2 IR regions (at most 6 expected)"
+    )
+
+
+def test_faceted_converter_records_faces_without_a_mismatch(tmp_path):
+    grid = small_grid(parts=1, cells=("identity",))
+    summary = run_grid(grid, ["faceted"], tmp_path, jobs=1, sha="s", log=lambda *_: None)
+    (record,) = read_results(summary.results_path)
+    assert record["status"] == "ok", record
+    assert record["fallback"] is False
+    assert record["ir_regions"] == 1
+    assert record["step_faces"] is not None
+    assert record["step_face_mismatch"] is None
 
 
 def test_under_reports_rejects_non_finite():

@@ -139,6 +139,38 @@ def region_kinds(ir, clean, degraded) -> tuple[int, int]:
     return faceted, analytic
 
 
+def step_face_mismatch(step_faces: int, ir, write: dict[str, Any]) -> str | None:
+    """The STEP face count against the regions the writer was asked to write.
+
+    ``None`` when the count matches a legitimate write, else a reason. A faceted
+    fallback writes one face per input triangle, not one per IR region, so the
+    region count is not comparable and the writer's own validity checks stand.
+    A mixed write carries the analytic regions plus the ``facets`` regions as
+    triangle faces, possibly split at seams; ``WriteReport.faceted_faces`` is the
+    writer's own count of those faces. A writer may merge coplanar facet
+    triangles, so a mixed write is flagged only when it writes *more* faces than
+    that. A pure analytic write must have exactly one face per region.
+    """
+    if write.get("fallback") is not None:
+        return None
+    facets = [r for r in ir.regions if r.surface.type == "facets"]
+    if facets:
+        triangles = sum(len(r.triangles) for r in facets)
+        expected = len(ir.regions) - len(facets) + max(triangles, write.get("faceted_faces") or 0)
+        if step_faces > expected:
+            return (
+                f"STEP has {step_faces} faces for {len(ir.regions)} IR regions"
+                f" (at most {expected} expected)"
+            )
+        return None
+    if step_faces != len(ir.regions):
+        return (
+            f"STEP has {step_faces} faces for {len(ir.regions)} IR regions"
+            f" ({len(ir.regions)} expected)"
+        )
+    return None
+
+
 EXTERNAL_RESERVE_S = 5.0
 
 
@@ -207,6 +239,7 @@ def _score(
     faceted, analytic = region_kinds(ir, clean, degraded)
     record["faceted_regions"] = faceted
     record["analytic_regions"] = analytic
+    record["ir_regions"] = len(ir.regions)
     frame = to_original(degraded)
     use_truth = task["judge_truth"] and truth_tris is not None
     truth_in_input = None
@@ -234,6 +267,8 @@ def _score(
     if skipped:
         record["valid"] = None
         record["step_problems"] = []
+        record["step_faces"] = None
+        record["step_face_mismatch"] = None
     else:
         bound = None
         if not baseline and task["step_deviation"]:
@@ -252,18 +287,14 @@ def _score(
             problems.append("STEP write skipped by a non-baseline converter")
         if write.get("valid") is False:
             problems.append("writer reports invalid")
-        facets = [r for r in ir.regions if r.surface.type == "facets"]
+        record["step_faces"] = step_faces
         if step_faces is not None:
-            if facets:
-                triangles = sum(len(r.triangles) for r in facets)
-                written = max(triangles, write.get("faceted_faces") or 0)
-                limit = len(ir.regions) - len(facets) + written
-                mismatch = step_faces > limit
-            else:
-                mismatch = step_faces != len(ir.regions)
-            if mismatch:
-                record["fallback"] = True
-                problems.append(f"STEP has {step_faces} faces for {len(ir.regions)} IR regions")
+            mismatch = step_face_mismatch(step_faces, ir, write)
+            record["step_face_mismatch"] = mismatch
+            if mismatch is not None:
+                problems.append(mismatch)
+        else:
+            record["step_face_mismatch"] = None
         record["valid"] = not problems
         record["step_problems"] = problems
     phases["validity"] = time.perf_counter() - mark

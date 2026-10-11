@@ -115,3 +115,25 @@ error. That error, not the writer, made `through_bore`, `blind_bore` and `bore_c
 13.3 and 17.8 um against bounds of 11.0, 11.0 and 12.7 um (issue #117). The written cylinder's radius
 matches the IR's to 1e-11 mm. At an absolute deflection they read 4.99, 4.99 and 6.67 um, equal to
 their judge deviations.
+
+## The runner's STEP face-count check
+
+`runner.execute.step_face_mismatch` compares the re-imported STEP's face count with the faces the
+writer was asked to write. It does not touch `fallback`: that field is the writer's own
+`WriteReport.fallback` (`"faceted"` or `None`). The comparison is recorded in `step_faces`,
+`ir_regions` and `step_face_mismatch` (a reason, or `None`).
+
+The expected count depends on what the writer did:
+
+- A **faceted fallback** writes one face per input triangle, not one face per IR region, so the
+  region count is not comparable and `step_face_mismatch` is `None`; the writer's own read-back,
+  text and volume checks still run.
+- A **mixed write** with `facets` regions writes the analytic regions plus those regions as triangle
+  faces (split at seams); `WriteReport.faceted_faces` is the writer's count of them. A writer may
+  merge coplanar facet triangles, so only more faces than that is a mismatch.
+- A **pure analytic write** has exactly one face per IR region. Periodic surfaces (a full cylinder,
+  cone, sphere or torus) are written as a single face with a seam edge, not two faces, so the count
+  matches on clean curved parts.
+
+A genuine mismatch still fails the cell's `valid`; the three fields make it visible without
+overloading `fallback` (issue #161).
