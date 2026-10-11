@@ -924,6 +924,14 @@ def _faceted_share(ir: Ir) -> float:
 
 
 _FALLBACK_CODES: tuple[tuple[str, str], ...] = (
+    ("from its IR position", "vertex_intersection"),
+    ("IR's side of its boundary", "face_side"),
+    ("confirm the built face's side of its boundary", "face_side"),
+    ("projected boundary curve is", "boundary_curve"),
+    ("winds against the outward normal", "region_winding"),
+    ("winds with the outward normal", "region_winding"),
+    ("Standard_TypeMismatch", "occt_type_mismatch"),
+    ("degenerate boundary loop", "degenerate_loop"),
     ("facets regions hold", "facets_share"),
     ("non-positive volume", "non_positive_volume"),
     ("could not be triangulated for the flux", "flux_untriangulated"),
@@ -933,6 +941,7 @@ _FALLBACK_CODES: tuple[tuple[str, str], ...] = (
     ("mesh has fewer triangles", "input_short"),
     ("a facets patch vertex is", "patch_move"),
     ("a seam split point is", "seam_split"),
+    ("a seam split folds a facets triangle", "seam_split"),
     ("does not match the input mesh", "patch_mismatch"),
     ("shape tolerance", "shape_tolerance"),
     ("BRepCheck_Analyzer reports the shape invalid", "brepcheck"),
@@ -943,11 +952,18 @@ _FALLBACK_CODES: tuple[tuple[str, str], ...] = (
 )
 
 
+def _issue_code(issue: str) -> str | None:
+    for needle, code in _FALLBACK_CODES:
+        if needle in issue:
+            return code
+    return None
+
+
 def _fallback_code(issues: list[str], whole: bool) -> str:
     if whole:
         return "facets_share"
-    text = " | ".join(issues)
-    for needle, code in _FALLBACK_CODES:
-        if needle in text:
+    for issue in issues:
+        code = _issue_code(issue)
+        if code is not None:
             return code
     return "build"
