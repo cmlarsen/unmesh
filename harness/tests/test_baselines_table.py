@@ -147,9 +147,16 @@ def test_faceted_share_and_fallback():
         _rec("alpha-0001", f1=1.0, faceted_regions=1, analytic_regions=0),
         _rec("alpha-0002", f1=1.0, fallback=True, faceted_regions=0, analytic_regions=0),
         _rec("alpha-0003", f1=1.0, faceted_regions=7588, analytic_regions=1),
+        _rec("alpha-0004", f1=1.0, fallback=True, faceted_regions=0, analytic_regions=6),
     ]
     out = mod.render(records, ["unmesh"])
-    assert "| alpha | 4 | 1.000 | 75% | 0% | 0 |" in out
+    assert "| alpha | 5 | 1.000 | 80% | 0% | 0 |" in out
+
+
+def test_writer_fallback_reads_fully_faceted_despite_analytic_regions():
+    mod = _load()
+    record = _rec("alpha-0000", fallback=True, faceted_regions=0, analytic_regions=9)
+    assert mod.faceted_share(record) == 1.0
 
 
 def test_no_region_cell_is_excluded_from_the_share():

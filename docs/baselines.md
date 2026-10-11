@@ -127,11 +127,13 @@ Regions roll up into a cell as the **faceted share**,
 `faceted_regions / (faceted_regions + analytic_regions)`. One correctly typed
 base plane therefore no longer hides a dome written as thousands of planes: a
 cell with one analytic and 7588 faceted regions has a share of 100%, where the
-old per-cell flag read 0%. A cell the writer fell back on with no classified
-region at all is 100%; a cell with no region of either kind is skipped from the
-share (it stays in `cells`). The table then averages the per-cell share over the
-ok cells only, so a family's share is the mean of its scored cells' shares, not a
-pooled region ratio.
+old per-cell flag read 0%. A writer fallback makes the whole cell faceted: when
+the writer gives up on analytic recovery it writes a faceted solid, so the cell
+is 100% regardless of how many analytic regions it reports — the written STEP,
+which is what a user gets, has no analytic surface left. A cell with no region of
+either kind and no fallback is skipped from the share (it stays in `cells`). The
+table then averages the per-cell share over the ok cells only, so a family's
+share is the mean of its scored cells' shares, not a pooled region ratio.
 
 The share is a region-count ratio, so a soup of many tiny approximate planes can
 pull it toward 100% (or a single correctly typed region can dominate a count)
@@ -180,36 +182,36 @@ affected.
 
 | family | cells | mean F1 | faceted share | failure | timeout |
 |---|---|---|---|---|---|
-| blind_bore | 243 | 0.596 | 40% | 0% | 1 |
-| bore_chamfer | 324 | 0.599 | 39% | 1% | 2 |
-| boss_plate | 162 | 0.718 | 24% | 0% | 0 |
-| circular_fillet | 324 | 0.575 | 40% | 5% | 15 |
-| complex_assembly | 405 | 0.643 | 32% | 1% | 5 |
-| complex_mixed | 324 | 0.573 | 43% | 2% | 8 |
-| complex_thin | 567 | 0.599 | 39% | 0% | 0 |
-| complex_void | 324 | 0.604 | 30% | 1% | 4 |
-| corner_fillet | 324 | 0.566 | 40% | 2% | 6 |
-| counterbore | 324 | 0.576 | 42% | 0% | 1 |
-| countersink | 324 | 0.573 | 43% | 1% | 2 |
-| imported | 1536 | 0.491 | 45% | 43% | 658 |
-| lshape_outline | 162 | 0.722 | 25% | 0% | 0 |
-| planar_chamfer | 324 | 0.705 | 24% | 0% | 0 |
-| plate_pockets | 162 | 0.712 | 25% | 0% | 0 |
-| polygon_prism | 324 | 0.734 | 24% | 0% | 0 |
-| revolved_cone | 81 | 0.667 | 31% | 1% | 1 |
-| revolved_dome | 81 | 0.591 | 35% | 1% | 1 |
-| revolved_torus | 81 | 0.862 | 14% | 25% | 20 |
-| rotated_pockets | 162 | 0.724 | 24% | 0% | 0 |
-| round_boss | 162 | 0.580 | 41% | 1% | 1 |
-| round_slot_blind | 81 | 0.599 | 40% | 0% | 0 |
-| round_slot_through | 162 | 0.594 | 41% | 1% | 1 |
-| square_slots | 162 | 0.703 | 26% | 0% | 0 |
-| stepped_block | 162 | 0.739 | 23% | 0% | 0 |
-| straight_fillet | 324 | 0.548 | 43% | 0% | 1 |
-| thin_walls | 162 | 0.733 | 23% | 0% | 0 |
-| through_bore | 81 | 0.576 | 40% | 1% | 1 |
-| through_cuts | 162 | 0.715 | 25% | 0% | 0 |
-| **all families** | 8016 | 0.615 | 36% | 9% | 728 |
+| blind_bore | 243 | 0.596 | 48% | 0% | 1 |
+| bore_chamfer | 324 | 0.599 | 52% | 1% | 2 |
+| boss_plate | 162 | 0.718 | 32% | 0% | 0 |
+| circular_fillet | 324 | 0.575 | 53% | 5% | 15 |
+| complex_assembly | 405 | 0.643 | 57% | 1% | 5 |
+| complex_mixed | 324 | 0.573 | 65% | 2% | 8 |
+| complex_thin | 567 | 0.599 | 52% | 0% | 0 |
+| complex_void | 324 | 0.604 | 62% | 1% | 4 |
+| corner_fillet | 324 | 0.566 | 56% | 2% | 6 |
+| counterbore | 324 | 0.576 | 52% | 0% | 1 |
+| countersink | 324 | 0.573 | 52% | 1% | 2 |
+| imported | 1536 | 0.491 | 63% | 43% | 658 |
+| lshape_outline | 162 | 0.722 | 32% | 0% | 0 |
+| planar_chamfer | 324 | 0.705 | 35% | 0% | 0 |
+| plate_pockets | 162 | 0.712 | 32% | 0% | 0 |
+| polygon_prism | 324 | 0.734 | 31% | 0% | 0 |
+| revolved_cone | 81 | 0.667 | 41% | 1% | 1 |
+| revolved_dome | 81 | 0.591 | 51% | 1% | 1 |
+| revolved_torus | 81 | 0.862 | 25% | 25% | 20 |
+| rotated_pockets | 162 | 0.724 | 32% | 0% | 0 |
+| round_boss | 162 | 0.580 | 52% | 1% | 1 |
+| round_slot_blind | 81 | 0.599 | 50% | 0% | 0 |
+| round_slot_through | 162 | 0.594 | 52% | 1% | 1 |
+| square_slots | 162 | 0.703 | 34% | 0% | 0 |
+| stepped_block | 162 | 0.739 | 30% | 0% | 0 |
+| straight_fillet | 324 | 0.548 | 52% | 0% | 1 |
+| thin_walls | 162 | 0.733 | 31% | 0% | 0 |
+| through_bore | 81 | 0.576 | 50% | 1% | 1 |
+| through_cuts | 162 | 0.715 | 31% | 0% | 0 |
+| **all families** | 8016 | 0.615 | 49% | 9% | 728 |
 
 skipped as inapplicable: 3
 harness failures (excluded): 81 (81 ground-truth preparation, 0 degradation)
@@ -334,36 +336,36 @@ harness failures (excluded): 81 (81 ground-truth preparation, 0 degradation)
 
 | family | cells | mean F1 | faceted share | failure | timeout |
 |---|---|---|---|---|---|
-| blind_bore | 54 | 0.390 | 34% | 20% | 11 |
-| bore_chamfer | 72 | 0.739 | 7% | 19% | 14 |
-| boss_plate | 36 | 0.824 | 1% | 0% | 0 |
-| circular_fillet | 72 | 0.164 | 67% | 33% | 24 |
-| complex_assembly | 90 | 0.228 | 49% | 27% | 24 |
-| complex_mixed | 72 | 0.167 | 75% | 33% | 24 |
-| complex_thin | 126 | 0.192 | 37% | 33% | 42 |
-| complex_void | 72 | 0.333 | 42% | 28% | 20 |
-| corner_fillet | 72 | 0.020 | 91% | 36% | 26 |
-| counterbore | 72 | 0.507 | 40% | 29% | 21 |
-| countersink | 72 | 0.415 | 51% | 29% | 21 |
-| imported | 336 | 0.091 | 56% | 53% | 177 |
-| lshape_outline | 36 | 0.771 | 1% | 0% | 0 |
-| planar_chamfer | 72 | 0.646 | 2% | 1% | 1 |
-| plate_pockets | 36 | 0.823 | 1% | 0% | 0 |
-| polygon_prism | 72 | 0.686 | 4% | 0% | 0 |
-| revolved_cone | 18 | 0.213 | 35% | 33% | 6 |
-| revolved_dome | 18 | 0.003 | 75% | 17% | 3 |
+| blind_bore | 54 | 0.390 | 65% | 20% | 11 |
+| bore_chamfer | 72 | 0.739 | 28% | 19% | 14 |
+| boss_plate | 36 | 0.824 | 9% | 0% | 0 |
+| circular_fillet | 72 | 0.164 | 90% | 33% | 24 |
+| complex_assembly | 90 | 0.228 | 100% | 27% | 24 |
+| complex_mixed | 72 | 0.167 | 100% | 33% | 24 |
+| complex_thin | 126 | 0.192 | 100% | 33% | 42 |
+| complex_void | 72 | 0.333 | 100% | 28% | 20 |
+| corner_fillet | 72 | 0.020 | 100% | 36% | 26 |
+| counterbore | 72 | 0.507 | 59% | 29% | 21 |
+| countersink | 72 | 0.415 | 68% | 29% | 21 |
+| imported | 336 | 0.091 | 98% | 53% | 177 |
+| lshape_outline | 36 | 0.771 | 9% | 0% | 0 |
+| planar_chamfer | 72 | 0.646 | 88% | 1% | 1 |
+| plate_pockets | 36 | 0.823 | 9% | 0% | 0 |
+| polygon_prism | 72 | 0.686 | 23% | 0% | 0 |
+| revolved_cone | 18 | 0.213 | 92% | 33% | 6 |
+| revolved_dome | 18 | 0.003 | 100% | 17% | 3 |
 | revolved_torus | 18 | 1.000 | 0% | 56% | 10 |
-| rotated_pockets | 36 | 0.808 | 1% | 0% | 0 |
-| round_boss | 36 | 0.292 | 42% | 6% | 2 |
-| round_slot_blind | 18 | 0.557 | 8% | 0% | 0 |
-| round_slot_through | 36 | 0.443 | 36% | 17% | 6 |
-| square_slots | 36 | 0.790 | 1% | 0% | 0 |
-| stepped_block | 36 | 0.695 | 2% | 3% | 1 |
-| straight_fillet | 72 | 0.149 | 51% | 1% | 1 |
-| thin_walls | 36 | 0.636 | 2% | 8% | 3 |
-| through_bore | 18 | 0.665 | 10% | 17% | 3 |
-| through_cuts | 36 | 0.712 | 3% | 0% | 0 |
-| **all families** | 1776 | 0.420 | 33% | 25% | 440 |
+| rotated_pockets | 36 | 0.808 | 9% | 0% | 0 |
+| round_boss | 36 | 0.292 | 96% | 6% | 2 |
+| round_slot_blind | 18 | 0.557 | 89% | 0% | 0 |
+| round_slot_through | 36 | 0.443 | 94% | 17% | 6 |
+| square_slots | 36 | 0.790 | 9% | 0% | 0 |
+| stepped_block | 36 | 0.695 | 19% | 3% | 1 |
+| straight_fillet | 72 | 0.149 | 97% | 1% | 1 |
+| thin_walls | 36 | 0.636 | 40% | 8% | 3 |
+| through_bore | 18 | 0.665 | 27% | 17% | 3 |
+| through_cuts | 36 | 0.712 | 26% | 0% | 0 |
+| **all families** | 1776 | 0.420 | 68% | 25% | 440 |
 
 skipped as inapplicable: 0
 harness failures (excluded): 24 (18 ground-truth preparation, 6 degradation)
@@ -486,8 +488,8 @@ harness failures (excluded): 24 (18 ground-truth preparation, 6 degradation)
 
 On the **clean rows** (8016 scored cells per converter) unmesh's mean F1 is
 0.615, against faceted 0.000, freecad-refine 0.294 and stl2step 0.429. Its
-faceted share is 36%, against faceted's 100%, freecad-refine's 58% and
-stl2step's 50%. On the **noise rows** (1776 cells) unmesh is 0.420 and 33%,
+faceted share is 49%, against faceted's 100%, freecad-refine's 58% and
+stl2step's 50%. On the **noise rows** (1776 cells) unmesh is 0.420 and 68%,
 against faceted 0.000 and 100%, freecad-refine 0.000 and 39%, stl2step 0.062 and
 34%. unmesh's clean failure rate is 9% (728 timeouts), below freecad-refine's 26%
 (1456 timeouts) and stl2step's 33% (2507); on noise rows it is 25% (440) against
@@ -500,11 +502,19 @@ truth they emit planes, which count as faceted — freecad-refine `revolved_dome
 100%, `circular_fillet` 99%, `through_bore` 86%; stl2step `revolved_dome` 100%,
 `circular_fillet` 100%, `through_bore` 84% — so a near-zero F1 on curved truth
 comes with a near-100% share. unmesh sits between, recovering curved surfaces on
-most cells and falling back to facets on hard ones (`revolved_torus` 14%,
-`polygon_prism` 24%, `revolved_dome` 35%). A single correctly typed base plane no
+most cells and falling back to facets on hard ones (`revolved_torus` 25%,
+`polygon_prism` 31%, `revolved_dome` 51%). A single correctly typed base plane no
 longer hides a dome written as thousands of planes: the freecad-refine
 `revolved_dome` identity cell with one analytic and 7588 faceted regions reads as
 100%, where the old per-cell flag read 0%.
+
+unmesh's writer fell back to a faceted solid on 2491 of its 8624 ok cells (29%):
+1608 of 7288 clean cells (22%) and 883 of 1336 noise cells (66%). The fallbacks
+cluster on the noise operators `noise_isotropic` (370) and `noise_normal` (369),
+then `flipped_facets` (276), `slicer-repair` (263), `far_translation` (252) and
+`meshmixer-edit` (170); by family they lead with `imported` (493), `complex_thin`
+(240) and `complex_assembly` (230). These runs predate #154, #157, #162 and #163,
+and the external converters never set `fallback`.
 
 By **family group** (cell-pooled by the corpus `strata.category`, where the
 bores, `counterbore` and `countersink` fall under `curved` and `planar_chamfer`
