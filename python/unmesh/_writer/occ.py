@@ -136,12 +136,20 @@ def is_valid(shape) -> bool:
     return bool(BRepCheck_Analyzer(shape).IsValid())
 
 
+def _reshaped_faces(context, face):
+    faces = _faces_of(context.Apply(face))
+    return faces or [face]
+
+
 def _orient_shell(shell, mapping=None):
     fix = ShapeFix_Shell(shell)
     fix.Perform()
     if mapping is not None:
         ctx = fix.Context()
-        mapping[:] = [(r, TopoDS.Face_s(ctx.Apply(f))) for r, f in mapping]
+        if ctx is not None:
+            mapping[:] = [
+                (region, mapped) for region, f in mapping for mapped in _reshaped_faces(ctx, f)
+            ]
     return fix.Shell()
 
 
