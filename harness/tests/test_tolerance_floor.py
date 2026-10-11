@@ -89,13 +89,15 @@ def test_float64_conversion_is_translation_invariant(family, seed, steps, lin, a
 
 def test_float32_moved_stays_close_to_the_origin():
     # The noisy case is the reviewer's: origin sigma 3.597e-4 / 50 regions,
-    # moved 3.600e-4 / 49.
+    # moved 3.600e-4 / 49 on Linux (47 / 40 on macOS). The region count of
+    # this over-segmented noisy part varies by platform; main collapses it to
+    # 18-19 when moved, which the 20% band still catches.
     origin = _as_float32(_part("straight_fillet", 1, NOISE, *COARSE))
     moved = _as_float32(_part("straight_fillet", 1, NOISE, *COARSE) + OFFSET)
     tol_o, _, regions_o = _summary(origin)
     tol_m, _, regions_m = _summary(moved)
 
-    assert abs(regions_m - regions_o) <= 2
+    assert abs(regions_m - regions_o) <= max(2, 0.2 * regions_o)
     assert tol_m == pytest.approx(tol_o, rel=0.05)
     assert tol_m >= _f32_ulp(float(np.abs(moved).max()))
 
