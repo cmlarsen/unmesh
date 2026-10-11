@@ -85,6 +85,27 @@ const ROUNDING_MIN_DISTINCT: usize = 64;
 /// `%.{d}e` and of `x * 10^p` arithmetic, and is far below any real step.
 const ROUNDING_ULPS: f64 = 4.0;
 
+/// A decimal model's last digit (the digit at the model's step position) must
+/// take at least this many of the ten possible values, each holding at least
+/// `ROUNDING_MIN_DIGIT_SHARE` of the distinct coordinates. Rounded data has an
+/// essentially uniform last digit; design data sitting on a coarser grid, or
+/// shifted by a constant fractional offset, leaves the digit degenerate (an
+/// 0.1 mm grid reads 0 in the hundredths place, an integer-mm plate on a .37
+/// offset reads only 7). Requiring most of the digit's values to appear
+/// rejects those without rejecting genuinely rounded data.
+const ROUNDING_MIN_DIGIT_VALUES: usize = 8;
+
+/// The share of distinct coordinates a single last-digit value needs to count
+/// towards `ROUNDING_MIN_DIGIT_VALUES`.
+const ROUNDING_MIN_DIGIT_SHARE: f64 = 0.02;
+
+/// An f32 or rescaled-f32 model must have the lowest mantissa bit of the value
+/// zero for at least this share and one for at least this share. Real
+/// float32-quantized data has that bit essentially uniform; design data whose
+/// coordinates are exactly representable on a grid coarser than two f32 ulps
+/// leaves the bit always zero, so this rejects a coarse grid dressed as f32.
+const ROUNDING_MIN_F32_BIT_SHARE: f64 = 0.25;
+
 /// Multiple of a data-fitted rounding step the floor covers. The step is the
 /// grid the coordinates sit on exactly, so the coordinate rounding error is at
 /// most half a step; the full step covers that with a factor of two in hand, so
@@ -181,6 +202,54 @@ fn ulps_close(x: f64, y: f64) -> bool {
     u > 0.0 && (x - y).abs() <= ROUNDING_ULPS * u
 }
 
+/// The last digit an `d`-significant-digit model would print for `v`, i.e. the
+/// digit at the model's step position (zero for `v == 0`, which has no decade).
+fn sig_last_digit(v: f64, d: u32) -> usize {
+    if v == 0.0 {
+        return 0;
+    }
+    let scale = 10f64.powi(d as i32 - 1 - decade(v));
+    ((v * scale).round() as i64).rem_euclid(10) as usize
+}
+
+/// The digit a `p`-decimal-place model would print for `v` in the last place.
+fn fixed_last_digit(v: f64, p: u32) -> usize {
+    let scale = 10f64.powi(p as i32);
+    ((v * scale).round() as i64).rem_euclid(10) as usize
+}
+
+/// Whether the last digit of every distinct coordinate under a model is
+/// populated: at least `ROUNDING_MIN_DIGIT_VALUES` of the ten digit values
+/// each hold at least `ROUNDING_MIN_DIGIT_SHARE` of the coordinates. The
+/// per-axis values are pooled, as the match share is: a rounding grid is a
+/// property of the whole mesh, and pooling gives every axis the same votes.
+fn last_digit_populated(vals: &[f64], digit: impl Fn(f64) -> usize) -> bool {
+    let n = vals.len() as f64;
+    let mut counts = [0usize; 10];
+    for &v in vals {
+        counts[digit(v)] += 1;
+    }
+    counts
+        .iter()
+        .filter(|&&c| c as f64 / n >= ROUNDING_MIN_DIGIT_SHARE)
+        .count()
+        >= ROUNDING_MIN_DIGIT_VALUES
+}
+
+/// Whether the lowest mantissa bit of `f32(v / scale)` is zero for at least
+/// `ROUNDING_MIN_F32_BIT_SHARE` and one for at least that share of the
+/// coordinates. `scale` is 1 for the plain all-f32 model and the unit factor
+/// for a rescaled one.
+fn f32_low_bit_mixed(vals: &[f64], scale: f64) -> bool {
+    let n = vals.len() as f64;
+    let ones = vals
+        .iter()
+        .filter(|&&v| ((v / scale) as f32).to_bits() & 1 == 1)
+        .count() as f64;
+    let share = ones / n;
+    (ROUNDING_MIN_F32_BIT_SHARE..=1.0 - ROUNDING_MIN_F32_BIT_SHARE).contains(&share)
+}
+
 /// The coordinate rounding step the tolerance floor covers, estimated from the
 /// coordinates themselves by testing explicit rounding models.
 ///
@@ -189,12 +258,18 @@ fn ulps_close(x: f64, y: f64) -> bool {
 /// pooled) is tested against a short list of models: a unit-rescaled f32 mesh,
 /// a decimal mesh rounded to 6..9 significant digits, or one rounded to 2..6
 /// decimal places. A model is accepted only with at least
-/// `ROUNDING_MIN_DISTINCT` distinct values and `ROUNDING_MIN_SHARE` of them
-/// reproduced exactly; the coarsest accepted model (the largest step at the
-/// largest coordinate) is the coordinate precision. A float64 CAD mesh matches
-/// none, so no step is found and the floor is the diagonal term alone. The
-/// step is scaled by `ROUNDING_STEP_FACTOR` and capped at `ROUNDING_CAP_REL`
-/// of the diagonal, so the floor never exceeds the initial tolerance.
+/// `ROUNDING_MIN_DISTINCT` distinct values, `ROUNDING_MIN_SHARE` of them
+/// reproduced exactly, and a populated last digit: the digit at the model's
+/// step position takes `ROUNDING_MIN_DIGIT_VALUES` values at
+/// `ROUNDING_MIN_DIGIT_SHARE` each (f32 models, whose "digit" is the lowest
+/// mantissa bit, need it mixed as `ROUNDING_MIN_F32_BIT_SHARE`). The last-digit
+/// gate is what keeps a design mesh on a round grid from matching a coarser
+/// model exactly although nothing was rounded. The coarsest accepted model (the
+/// largest step at the largest coordinate) is the coordinate precision. A
+/// float64 CAD mesh matches none, so no step is found and the floor is the
+/// diagonal term alone. The step is scaled by `ROUNDING_STEP_FACTOR` and capped
+/// at `ROUNDING_CAP_REL` of the diagonal, so the floor never exceeds the
+/// initial tolerance.
 pub fn coordinate_rounding_step(soup: &TriangleSoup) -> f64 {
     let mut max_abs = 0.0f64;
     let mut lo = [f64::INFINITY; 3];
@@ -231,21 +306,27 @@ pub fn coordinate_rounding_step(soup: &TriangleSoup) -> f64 {
     let mut best = 0.0f64;
     // Only reached for a mesh that is not all-f32: one stray beyond the early
     // return's allowance leaves a few coordinates off the f32 grid.
-    if share(&|v| (v as f32) as f64 == v) >= ROUNDING_MIN_SHARE {
+    if share(&|v| (v as f32) as f64 == v) >= ROUNDING_MIN_SHARE && f32_low_bit_mixed(&vals, 1.0) {
         best = best.max(f32_ulp(max_abs));
     }
     for &s in &SCALED_F32 {
-        if share(&|v| ulps_close(((v / s) as f32) as f64 * s, v)) >= ROUNDING_MIN_SHARE {
+        if share(&|v| ulps_close(((v / s) as f32) as f64 * s, v)) >= ROUNDING_MIN_SHARE
+            && f32_low_bit_mixed(&vals, s)
+        {
             best = best.max(s * f32_ulp(max_abs / s));
         }
     }
     for &d in &SIG_DIGITS {
-        if share(&|v| ulps_close(v, round_sig(v, d))) >= ROUNDING_MIN_SHARE {
+        if share(&|v| ulps_close(v, round_sig(v, d))) >= ROUNDING_MIN_SHARE
+            && last_digit_populated(&vals, |v| sig_last_digit(v, d))
+        {
             best = best.max(sig_step(max_abs, d));
         }
     }
     for &p in &FIXED_DECIMALS {
-        if share(&|v| ulps_close(v, round_fixed(v, p))) >= ROUNDING_MIN_SHARE {
+        if share(&|v| ulps_close(v, round_fixed(v, p))) >= ROUNDING_MIN_SHARE
+            && last_digit_populated(&vals, |v| fixed_last_digit(v, p))
+        {
             best = best.max(10f64.powi(-(p as i32)));
         }
     }
@@ -694,6 +775,119 @@ mod tests {
             .collect();
         let step = coordinate_rounding_step(&soup(&pts));
         assert_eq!(step, 0.0, "spurious step {step}");
+    }
+
+    /// Points on a `step` grid clustered every millimetre, so the tolerance cap
+    /// cannot bind, walking every one of the ten last digits within a cluster.
+    fn clustered_grid(step: f64) -> Vec<[f64; 3]> {
+        let mut pts = Vec::new();
+        for k in 0..40 {
+            for d in 0..10 {
+                let base = 1000.0 + k as f64;
+                let off = d as f64 * step;
+                pts.push([
+                    base + off,
+                    1000.0 + 0.5 * k as f64 + off,
+                    1000.0 + 0.25 * k as f64 + off,
+                ]);
+            }
+        }
+        pts
+    }
+
+    #[test]
+    fn six_and_seven_significant_digits_are_found() {
+        // 6 significant digits (`%g`) at max_abs in [1000, 10000) has step
+        // 1e-2, 7 (`%.6e`) has 1e-3; both are also fixed-decimal grids of the
+        // same step, and their last digit is uniform.
+        for (step, d) in [(1e-2, 6u32), (1e-3, 7u32)] {
+            let pts = clustered_grid(step);
+            let (max_abs, _) = extent(&pts);
+            assert_eq!(sig_step(max_abs, d), step, "fixture at {d} digits");
+            let got = coordinate_rounding_step(&soup(&pts));
+            assert!(
+                (got - step).abs() < 1e-12,
+                "{d} significant digits: step={got} expected={step}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_to_six_decimal_places_are_found() {
+        for p in 2..=6u32 {
+            let step = 10f64.powi(-(p as i32));
+            let pts = clustered_grid(step);
+            let got = coordinate_rounding_step(&soup(&pts));
+            assert!(
+                (got - step).abs() < 1e-12,
+                "{p} decimals: step={got} expected={step}"
+            );
+        }
+    }
+
+    /// A design mesh on a round grid carries no rounding; no model may match
+    /// its last digit even though a coarse model reproduces it exactly.
+    fn assert_no_decimal_model(pts: &[[f64; 3]], label: &str) {
+        assert!(
+            pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
+            "{label}: fixture must not be all-f32"
+        );
+        let step = coordinate_rounding_step(&soup(pts));
+        assert_eq!(step, 0.0, "{label}: spurious step {step}");
+    }
+
+    #[test]
+    fn a_tenth_millimetre_design_grid_has_no_model() {
+        let pts: Vec<[f64; 3]> = (0..400)
+            .map(|i| {
+                let k = (i / 10) as f64;
+                let d = (i % 10) as f64;
+                [k + 0.1 * d, 0.5 * k + 0.1 * d, 0.25 * k + 0.1 * d]
+            })
+            .collect();
+        assert_no_decimal_model(&pts, "0.1 mm grid");
+    }
+
+    #[test]
+    fn an_integer_millimetre_grid_at_a_fractional_offset_has_no_model() {
+        // 1000.37, -2000.11, 500.29: every coordinate is two-decimal, so the
+        // hundredths model reproduces it exactly while its last digit is the
+        // constant 7, 1 or 9.
+        let pts: Vec<[f64; 3]> = (0..400)
+            .map(|k| {
+                let k = k as f64;
+                [1000.37 + k, -2000.11 + k, 500.29 + k]
+            })
+            .collect();
+        assert_no_decimal_model(&pts, "integer mm at a fractional offset");
+    }
+
+    #[test]
+    fn a_half_millimetre_design_grid_has_no_model() {
+        // 0.5 mm spacing at a fractional offset: every coordinate is two
+        // decimals, but the hundredths digit is the constant 7, 1 or 9.
+        let pts: Vec<[f64; 3]> = (0..400)
+            .map(|k| {
+                let k = k as f64 * 0.5;
+                [1000.37 + k, -2000.11 + k, 500.29 + k]
+            })
+            .collect();
+        assert_no_decimal_model(&pts, "0.5 mm grid");
+    }
+
+    #[test]
+    fn an_eighth_inch_design_grid_has_no_model() {
+        // Every coordinate a whole multiple of 1/8 inch (3.175 mm): the
+        // thousandths model reproduces it exactly, but its last digit is only
+        // ever 0 or 5.
+        let i = 25.4 / 8.0;
+        let pts: Vec<[f64; 3]> = (0..400)
+            .map(|k| {
+                let k = k as f64 * i;
+                [1050.0 + k, 500.0 + k, k]
+            })
+            .collect();
+        assert_no_decimal_model(&pts, "1/8 inch grid");
     }
 
     #[test]

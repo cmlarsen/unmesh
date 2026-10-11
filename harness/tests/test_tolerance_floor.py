@@ -187,3 +187,88 @@ def test_mixed_input_is_stable():
     assert kinds_a == kinds_b
     assert regions_a == regions_b
     assert tol_a == pytest.approx(tol_b, rel=1e-9)
+
+
+def _plate(L, W, H, pocket, nx, ny, pitch_x, pitch_y, x0, y0, depth, holes=0, r=2.0):
+    # One boolean with every pocket and hole as a tool: the same geometry as
+    # cutting them one by one, but about two orders of magnitude faster.
+    from build123d import Box, Cylinder, Pos
+
+    tools = [
+        Pos(x0 + i * pitch_x + pocket[0] / 2, y0 + j * pitch_y + pocket[1] / 2, H - depth / 2)
+        * Box(pocket[0], pocket[1], depth)
+        for i in range(nx)
+        for j in range(ny)
+    ]
+    tools += [Pos(x0 / 2, y0 + k * pitch_y + 2.5, H / 2) * Cylinder(r, H) for k in range(holes)]
+    return Pos(L / 2, W / 2, H / 2) * Box(L, W, H) - tools
+
+
+def _plate_tris(solid):
+    return np.asarray(tessellate(solid, LIN, ANG).tris, dtype=np.float64)
+
+
+_INCH = 25.4 / 8
+_FRAC = np.array([1000.37, -2000.11, 500.29])
+# The reviewer's round-number plates: design geometry on a coarse grid, not
+# rounded data. main's tolerance at the origin is `1e-6 * diag`, i.e. no
+# rounding model at all; the offset move must not inflate it.
+_PLATES = {
+    "p01": (
+        _plate(130.3, 90.7, 12.1, (3.3, 2.7), 20, 16, 6.1, 5.3, 4.9, 3.7, 3.3),
+        np.zeros(3),
+        1.5922e-4,
+        1606,
+    ),
+    "pint": (
+        _plate(130, 90, 12, (3, 2), 20, 16, 6, 5, 5, 4, 3),
+        _FRAC,
+        1.5857e-4,
+        1606,
+    ),
+    "p05": (
+        _plate(130.5, 90.5, 12.5, (3.5, 2.5), 20, 16, 6.0, 5.5, 4.5, 3.5, 3.5),
+        _FRAC,
+        1.5930e-4,
+        1606,
+    ),
+    "pinch": (
+        _plate(
+            44 * _INCH,
+            30 * _INCH,
+            4 * _INCH,
+            (1 * _INCH, 1 * _INCH),
+            20,
+            14,
+            2 * _INCH,
+            2 * _INCH,
+            2 * _INCH,
+            2 * _INCH,
+            1 * _INCH,
+        ),
+        X1050,
+        1.6956e-4,
+        1406,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PLATES))
+def test_round_number_design_plates_keep_their_origin_tolerance(name):
+    # A 0.1 mm grid at the origin, an integer-mm and a 0.5 mm grid at
+    # (1000.37, -2000.11, 500.29) and a 1/8-inch grid at x+1050 are exact
+    # design geometry with nothing rounded. The coarsest accepted model used to
+    # be a two-fixed-decimals (or thousandths) grid, whose last digit is
+    # degenerate, raising the tolerance 6-60x. The last-digit gate rejects
+    # those models, so the moved plate keeps the origin's `1e-6 * diag` floor
+    # (main's origin tolerance) for every offset.
+    solid, offset, origin_tol, origin_regions = _PLATES[name]
+    tris = _plate_tris(solid)
+    tol_o, kinds_o, regions_o = _summary(tris)
+    assert tol_o == pytest.approx(origin_tol, rel=5e-3), name
+    assert abs(regions_o - origin_regions) <= 2, name
+
+    tol_m, kinds_m, regions_m = _summary(tris + offset)
+    assert kinds_m == kinds_o, name
+    assert regions_m == regions_o, name
+    assert tol_m == pytest.approx(tol_o, rel=1e-9), name
