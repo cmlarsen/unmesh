@@ -122,34 +122,16 @@ fn coplanar_share(nbr: &[[u32; 3]], info: &[segment::TriInfo]) -> f64 {
 }
 
 /// The smallest linear tolerance an auto-derived tolerance uses: `MIN_TOL_REL`
-/// of the bounding-box diagonal, or, when the input coordinates are
-/// float32-quantized, one float32 ulp at the largest `|coordinate|` (see
-/// `weld::f32_ulp` and `Welded::quant_abs`). A binary STL stores every
-/// coordinate rounded to the float32 grid, whose step grows with `|p|`
-/// (about 6e-5 mm at 1000 mm), so a
-/// float32 part far from the origin carries that much coordinate error and the
-/// floor has to cover it. The term is zero for float64 input, and for a part
-/// near the origin the diagonal term dominates, so the floor does not move
-/// with translation.
+/// of the bounding-box diagonal, or the input's coordinate rounding step
+/// (`Welded::quant_abs`, see `weld::coordinate_rounding_step`), whichever is
+/// larger. A binary STL stores every coordinate rounded to the f32 grid (about
+/// 6e-5 mm at 1000 mm) and a decimal or unit-rescaled mesh to its own grid, so
+/// a part far from the origin carries that much coordinate error and the floor
+/// has to cover it. The step is zero for float64 CAD, and for a part near the
+/// origin the diagonal term dominates, so the floor does not move with
+/// translation.
 fn floor(diag: f64, quant_abs: f64) -> f64 {
     (MIN_TOL_REL * diag).max(quant_abs)
-}
-
-/// Removes the vertex-noise share of `est` that float32 quantization alone
-/// explains. A coordinate rounded to the float32 grid is off by up to half an
-/// ulp, i.e. uniform over one ulp, so it contributes `quant_abs^2 / 12` to the
-/// variance a surface-normal residual sees; subtracting it in quadrature keeps a
-/// clean float32 part far from the origin from reading `quant_abs / sqrt(12)`
-/// as noise. Only done when `NOISE_FACTOR` times that quantization std could
-/// raise the tolerance above the diagonal floor: below it the floor already caps
-/// the tolerance, so the estimate (and a near-origin part's IR) is left
-/// untouched.
-fn despeckle_sigma(est: f64, quant_abs: f64, diag: f64) -> f64 {
-    let quant_std = quant_abs / 12.0f64.sqrt();
-    if quant_std <= 0.0 || NOISE_FACTOR * quant_std <= MIN_TOL_REL * diag {
-        return est;
-    }
-    (est * est - quant_std * quant_std).max(0.0).sqrt()
 }
 
 /// Whether the input carries vertex noise: its estimate `est` must clear the
@@ -356,10 +338,9 @@ fn finish(
     let mut noisy = false;
     if auto_tol {
         let fl = floor(w.diag, w.quant_abs);
-        if let Some(raw) =
+        if let Some(est) =
             noise::estimate_sigma(&w.vc, &w.faces, &shells.topo.nbr, info, &shells.eligible)
         {
-            let est = despeckle_sigma(raw, w.quant_abs, w.diag);
             noisy = noisy_mesh(coplanar_share(&shells.topo.nbr, info), est, fl, w.diag);
             tol = tol.min((NOISE_FACTOR * est).max(fl));
             sigma = est.min(tol / NOISE_FACTOR);

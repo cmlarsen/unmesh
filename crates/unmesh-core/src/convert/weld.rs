@@ -43,8 +43,9 @@ pub struct Welded {
     pub orig: Vec<Point>,
     pub center: V3,
     pub diag: f64,
-    /// The float32-quantization step the tolerance floor covers: one f32 ulp at
-    /// the largest `|coordinate|` when the input is float32-quantized, else 0.
+    /// The coordinate rounding step the tolerance floor covers, estimated from
+    /// the coordinates (one f32 ulp for an all-f32 mesh, the detected decimal
+    /// or rescaled grid otherwise, 0 for float64 CAD).
     pub quant_abs: f64,
     pub unique_vertices: u32,
     pub merge_dev: f64,
@@ -67,17 +68,136 @@ pub fn f32_ulp(x: f64) -> f64 {
     2f64.powi(exp - 127 - 23)
 }
 
-/// Whether every input coordinate is exactly representable as f32. A mesh read
-/// from a binary STL (whose coordinates are stored as f32) satisfies this, so
-/// the tolerance floor may cover the quantization it carries; a float64 mesh
-/// generally does not, so the floor must not move with its distance from the
-/// origin.
-fn float32_quantized(soup: &TriangleSoup) -> bool {
-    soup.triangles
+/// The largest candidate divisor of the smallest coordinate gap tried when
+/// fitting a rounding step (see `axis_rounding_step`).
+const STEP_DIVISORS: u64 = 8192;
+
+/// Safety factor on a rounding step estimated from the data. A binary grid
+/// doubles its step at a binade boundary, so coordinates that cross one can
+/// under-report the step at the largest coordinate by up to two; the factor
+/// covers that. An all-f32 mesh knows its step exactly (`f32_ulp`) and is not
+/// scaled.
+const ROUNDING_STEP_FACTOR: f64 = 2.0;
+
+/// Whether the coordinates are exactly representable as f32, allowing a stray
+/// vertex not to be. A binary STL's coordinates always are, so such a mesh is
+/// on the f32 grid and its step is `f32_ulp` at the largest coordinate; one
+/// coordinate nudged off the grid must not move it off that determination.
+fn all_float32_exact(soup: &TriangleSoup) -> bool {
+    let mut total = 0usize;
+    let mut off = 0usize;
+    for t in &soup.triangles {
+        for p in t {
+            for &c in p {
+                total += 1;
+                if (c as f32) as f64 != c {
+                    off += 1;
+                }
+            }
+        }
+    }
+    off <= 1 + total / 1000
+}
+
+/// Whether `d` (positive coordinate differences from the first distinct value)
+/// are all within a quarter of `step` of an integer multiple of `step`, the
+/// test for `step` being the coordinate rounding grid. The quarter tolerates
+/// the float64 representation error of a decimal or scaled grid (about
+/// `1e-16 * |x|`), far below a real step.
+fn multiples_of(d: &[f64], step: f64, abstol: f64) -> bool {
+    let tol = (0.25 * step).max(abstol);
+    d.iter().all(|&x| {
+        let q = (x / step).round();
+        (x - q * step).abs() <= tol
+    })
+}
+
+/// The coordinate rounding step of one axis, from the sorted distinct
+/// coordinates `coords` whose magnitude is at least half the mesh's largest
+/// coordinate. The smallest positive gap is a multiple of the step, so the
+/// step is the coarsest divisor of that gap for which every difference is an
+/// integer multiple: the first divisor that fits, scanning from the smallest
+/// gap down. Finer divisors can keep fitting when every difference happens to
+/// be an even multiple, so the finest fit is not the grid; and below the
+/// float64 noise floor (`abstol`) every divisor fits, so the scan stops there.
+fn axis_rounding_step(coords: &[f64], max_abs: f64) -> f64 {
+    let v0 = coords[0];
+    let d: Vec<f64> = coords[1..]
         .iter()
-        .flatten()
-        .flatten()
-        .all(|&c| (c as f32) as f64 == c)
+        .map(|&v| v - v0)
+        .filter(|&x| x > 0.0)
+        .collect();
+    if d.len() < 2 {
+        return 0.0;
+    }
+    let gap = d.iter().copied().fold(f64::INFINITY, f64::min);
+    if !gap.is_finite() || gap <= 0.0 {
+        return 0.0;
+    }
+    let abstol = (1e-11 * max_abs).max(1e-15);
+    let smin = 64.0 * abstol;
+    for k in 1..=STEP_DIVISORS {
+        let s = gap / k as f64;
+        if s < smin {
+            break;
+        }
+        if multiples_of(&d, s, abstol) {
+            return s;
+        }
+    }
+    0.0
+}
+
+/// The coordinate rounding step the tolerance floor covers, estimated from the
+/// coordinates themselves. An all-f32 mesh is on the f32 grid, so the step is
+/// one f32 ulp at the largest coordinate, exactly. Otherwise each axis is
+/// tested for a rounding grid (a decimal STL's 7 significant digits, a metre-
+/// or inch-rescaled f32 mesh); the largest axis step, scaled by
+/// `ROUNDING_STEP_FACTOR`, is the coordinate precision. Float64 CAD
+/// coordinates are not on any grid, so no step is found and the floor is the
+/// diagonal term alone. A step coarser than the term the always-on floor used
+/// (`5e-7 * max_abs`) is rejected: such a "grid" is the geometry's own vertex
+/// spacing (or the two f64 coordinates of a coarse mesh), not coordinate
+/// rounding, and must not make the floor follow translation. The result is
+/// capped there as well, so the floor never exceeds that always-on term.
+pub fn coordinate_rounding_step(soup: &TriangleSoup) -> f64 {
+    let mut max_abs = 0.0f64;
+    for t in &soup.triangles {
+        for p in t {
+            for &c in p {
+                max_abs = max_abs.max(c.abs());
+            }
+        }
+    }
+    if max_abs == 0.0 {
+        return 0.0;
+    }
+    if all_float32_exact(soup) {
+        return f32_ulp(max_abs);
+    }
+    let cap = 5e-7 * max_abs;
+    let mut best = 0.0f64;
+    for axis in 0..3 {
+        let mut coords: Vec<f64> = soup
+            .triangles
+            .iter()
+            .flatten()
+            .map(|p| p[axis])
+            .filter(|c| c.abs() >= 0.5 * max_abs)
+            .collect();
+        coords.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        coords.dedup();
+        if coords.len() < 8 {
+            continue;
+        }
+        let step = axis_rounding_step(&coords, max_abs);
+        // A step coarser than the term the always-on floor used is the
+        // geometry's own vertex spacing, not coordinate rounding: reject it.
+        if step > 0.0 && step <= cap {
+            best = best.max(step);
+        }
+    }
+    (ROUNDING_STEP_FACTOR * best).min(cap)
 }
 
 pub fn run(
@@ -298,18 +418,7 @@ pub fn run(
     }
     let center: V3 = scale(add(lo, hi), 0.5);
     let diag = norm(sub(hi, lo));
-    let quant_abs = if float32_quantized(soup) {
-        let max_abs = soup
-            .triangles
-            .iter()
-            .flatten()
-            .flatten()
-            .map(|x| x.abs())
-            .fold(0.0, f64::max);
-        f32_ulp(max_abs)
-    } else {
-        0.0
-    };
+    let quant_abs = coordinate_rounding_step(soup);
     let orig: Vec<Point> = vertices;
     let vc: Vec<V3> = orig.iter().map(|p| sub(*p, center)).collect();
 
@@ -344,12 +453,60 @@ mod tests {
         assert_eq!(f32_ulp(1024.0), 2f64.powi(10 - 23));
     }
 
+    fn soup(points: &[[f64; 3]]) -> TriangleSoup {
+        let triangles = points
+            .windows(3)
+            .map(|w| [w[0], w[1], w[2]])
+            .collect::<Vec<_>>();
+        TriangleSoup { triangles }
+    }
+
     #[test]
-    fn float32_quantized_needs_every_coordinate_f32_exact() {
-        let soup = |c: [f64; 3]| TriangleSoup {
-            triangles: vec![[c, [c[0], c[1], 0.0], [0.0, 0.0, 1.0]]],
-        };
-        assert!(float32_quantized(&soup([1000.0, -0.5, 0.25])));
-        assert!(!float32_quantized(&soup([0.1, 1000.0, 0.25])));
+    fn all_f32_coordinates_give_the_f32_step() {
+        let pts: Vec<[f64; 3]> = (0..12)
+            .map(|i| [1000.0 + i as f64, 1500.0, 2000.0])
+            .collect();
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert_eq!(step, f32_ulp(2011.0));
+    }
+
+    #[test]
+    fn decimal_grid_is_found_without_f32_coordinates() {
+        let mut pts: Vec<[f64; 3]> = (0..12)
+            .map(|i| [5000.0 + i as f64 * 0.001, 5000.0, 5000.0])
+            .collect();
+        assert!(
+            pts.iter().flatten().any(|&c| (c as f32) as f64 != c),
+            "the fixture must not be all-f32"
+        );
+        // The per-axis detector finds the raw 1e-3 digit step.
+        let coords: Vec<f64> = pts.iter().map(|p| p[0]).collect();
+        let raw = axis_rounding_step(&coords, 5000.011);
+        assert!((raw - 0.001).abs() < 1e-9, "raw={raw}");
+
+        // The floor's step is doubled to cover a binade crossing.
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!((step - 0.002).abs() < 1e-9, "step={step}");
+
+        // A single coordinate nudged off the grid must not change the step.
+        pts[5][0] += 1e-9;
+        let step2 = coordinate_rounding_step(&soup(&pts));
+        assert!((step2 - 0.002).abs() < 1e-9, "step2={step2}");
+    }
+
+    #[test]
+    fn float64_coordinates_have_no_grid() {
+        let pts: Vec<[f64; 3]> = (0..12)
+            .map(|i| {
+                let t = i as f64 * 0.7;
+                [
+                    1000.0 + t,
+                    1000.0 + t * t * 0.013 + t,
+                    1000.0 + (t * 2.3).sin() * 50.0,
+                ]
+            })
+            .collect();
+        let step = coordinate_rounding_step(&soup(&pts));
+        assert!(step < 1e-6, "spurious step {step}");
     }
 }
