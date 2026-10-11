@@ -22,6 +22,7 @@ def _write_report(wr) -> dict:
         "valid": wr.valid,
         "fallback": wr.fallback,
         "fallback_reason": wr.fallback_reason,
+        "fallback_code": wr.fallback_code,
         "solids": wr.solids,
         "issues": list(wr.issues),
         "faceted_regions": wr.faceted_regions,

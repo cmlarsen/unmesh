@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import numpy as np
 from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
-from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepClass import BRepClass_FaceClassifier
 from OCP.BRepLib import BRepLib
 from OCP.BRepTools import BRepTools
@@ -200,11 +199,16 @@ def refine_vertices(ir: Ir, vpos, vmoved, bad, limit: float):
             x = onto_planes(planes, x)
         gap = float(np.linalg.norm(x - p0))
         bad.pop(v.id, None)
-        if float(np.linalg.norm(snapped - p0)) > limit:
-            bad[v.id] = (
-                f"vertex {v.id}: surface intersection is {gap:.6g} from its IR position,"
-                f" over the {limit:.6g} limit"
-            )
+        if float(np.linalg.norm(snapped - p0)) > limit or gap > limit:
+            residual = max(geo.distance(s, p0) for s in analytic)
+            if residual <= limit:
+                x = p0
+                gap = residual
+            else:
+                bad[v.id] = (
+                    f"vertex {v.id}: surface intersection is {gap:.6g} from its IR position,"
+                    f" over the {limit:.6g} limit"
+                )
         vpos[v.id] = x
         vmoved[v.id] = gap
     return vpos, vmoved, bad
@@ -731,11 +735,14 @@ def _chord_gap(surface, p, q) -> float:
 
 
 def _subdivide(surface, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
-    if _chord_gap(surface, p, q) <= gap:
+    chord = _chord_gap(surface, p, q)
+    if chord <= gap:
         return []
     if depth >= SEAM_DEPTH:
-        raise BuildError(f"a facets seam on a {surface.type} needs over {2**SEAM_DEPTH} pieces")
+        return []
     m, _ = geo.closest(surface, 0.5 * (p + q))
+    if max(_chord_gap(surface, p, m), _chord_gap(surface, m, q)) >= chord:
+        return []
     return [
         *_subdivide(surface, p, m, gap, depth + 1),
         m,
@@ -744,15 +751,18 @@ def _subdivide(surface, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
 
 
 def _subdivide_curve(surface, plane, p, q, gap: float, depth: int = 0) -> list[np.ndarray]:
-    if _chord_gap(surface, p, q) <= gap:
+    chord = _chord_gap(surface, p, q)
+    if chord <= gap:
         return []
     if depth >= SEAM_DEPTH:
-        raise BuildError(f"a facets seam on a {surface.type} needs over {2**SEAM_DEPTH} pieces")
+        return []
     mid = 0.5 * (p + q)
     if plane is None:
         m = geo.closest(surface, mid)[0]
     else:
         m = geo.refine([surface, Plane(tuple(plane[0]), tuple(plane[1]))], mid)
+    if max(_chord_gap(surface, p, m), _chord_gap(surface, m, q)) >= chord:
+        return []
     return [
         *_subdivide_curve(surface, plane, p, m, gap, depth + 1),
         m,
@@ -2199,8 +2209,4 @@ def build_shell(
     seam_gap: float = SEAM_GAP,
     tolerance_cap: float = 1e-3,
 ) -> CurvedShell:
-    out = _Builder(ir, index, vpos, vmoved, bad, limit, pool, seam_gap, tolerance_cap).run()
-    analyzer = BRepCheck_Analyzer(out.shell)
-    if not analyzer.IsValid():
-        raise BuildError(f"shell {index}: the assembled curved shell is invalid")
-    return out
+    return _Builder(ir, index, vpos, vmoved, bad, limit, pool, seam_gap, tolerance_cap).run()

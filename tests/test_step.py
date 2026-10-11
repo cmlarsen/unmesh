@@ -222,6 +222,33 @@ def test_flipped_mesh_winding_still_builds_faceted(tmp_path):
     assert occ.volume_of(occ.read_step(path)) == pytest.approx(abs(signed_volume(tris)), rel=1e-9)
 
 
+def test_mixed_input_winding_is_volume_checked_outward(tmp_path):
+    ir = load("box")
+    tris = mesh_from_ir(ir)
+    tris[3] = tris[3][::-1]
+    path = tmp_path / "w.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.fallback is None and report.valid
+    assert report.shells[0].volume == pytest.approx(VOLUMES["box"], rel=1e-9)
+
+
+def test_fallback_reason_and_code_are_reported(tmp_path):
+    ir, bad = shifted_box()
+    report = step.write(bad, tmp_path / "f.step", mesh=mesh_from_ir(ir))
+    assert report.fallback == "faceted"
+    assert report.fallback_reason
+    assert report.fallback_code
+
+
+def test_fallback_code_names_the_failed_check():
+    assert step._fallback_code([], True) == "facets_share"
+    assert step._fallback_code(["non-positive volume 0"], False) == "non_positive_volume"
+    assert step._fallback_code(["analytic volume 2 differs from mesh volume 1"], False) == "volume"
+    assert step._fallback_code(["sewing produced 2 shells, expected 1"], False) == "sewing"
+    assert step._fallback_code(["the written face's flux about its centre is 1"], False) == "flux"
+    assert step._fallback_code(["something unexpected"], False) == "build"
+
+
 def test_plate_with_bore_is_written_analytic(tmp_path):
     report = step.write(load("plate_with_bore"), tmp_path / "p.step")
     assert report.valid and report.verified and report.fallback is None

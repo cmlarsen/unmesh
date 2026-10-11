@@ -117,3 +117,18 @@ def test_complex_assembly_features_in_world_frame(seed):
 def test_complex_smoke_oracle_validates(family):
     mesh = tessellate(generate(family, 0).solid, 0.01, 0.2)
     assert validate(build_oracle_ir(mesh)) == []
+
+
+@pytest.mark.slow
+def test_complex_float32_input_writes_analytic(tmp_path):
+    pytest.importorskip("OCP")
+    import numpy as np
+
+    import unmesh
+    import unmesh.step
+
+    mesh = tessellate(generate("complex_mixed", 0).solid, 0.01, 0.2)
+    tris = np.asarray(mesh.tris, dtype=np.float64).astype(np.float32).astype(np.float64)
+    ir, _ = unmesh.convert(tris)
+    report = unmesh.step.write(ir, tmp_path / "complex.step", mesh=tris)
+    assert report.valid and report.fallback is None, report.fallback_reason

@@ -224,6 +224,8 @@ def _score(
     write = (report or {}).get("write") or {}
     record["writer_valid"] = write.get("valid")
     record["fallback"] = write.get("fallback") is not None
+    record["fallback_code"] = write.get("fallback_code")
+    record["fallback_reason"] = write.get("fallback_reason")
     reported = _finite((report or {}).get("max_deviation"))
     mark = time.perf_counter()
     if ir_json is None:

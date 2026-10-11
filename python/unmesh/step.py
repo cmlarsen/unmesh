@@ -112,6 +112,7 @@ class WriteReport:
     faces: list[FaceReport] = field(default_factory=list)
     fallback: Literal["faceted"] | None = None
     fallback_reason: str | None = None
+    fallback_code: str | None = None
     shells: list[ShellReport] = field(default_factory=list)
     seams: list[SeamReport] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
@@ -473,6 +474,58 @@ def _signed_volume(t: np.ndarray) -> float:
     return float(np.einsum("ij,ij->", a, np.cross(b, c)) / 6.0)
 
 
+def _oriented_mesh(ir: Ir, tris: np.ndarray) -> np.ndarray:
+    from unmesh import weld
+
+    out = np.array(tris, dtype=float, copy=True)
+    _, faces, source, _ = weld(tris, ir.tolerances.vertex_merge)
+    faces = np.asarray(faces, dtype=np.int64)
+    source = np.asarray(source, dtype=np.int64)
+    edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for i in range(len(faces)):
+        a, b, c = (int(v) for v in faces[i])
+        for u, v in ((a, b), (b, c), (c, a)):
+            key = (u, v) if u < v else (v, u)
+            edges.setdefault(key, []).append((i, 1 if u < v else -1))
+    if all(len(members) == 2 for members in edges.values()):
+        sign = np.zeros(len(faces), dtype=np.int64)
+        for start in range(len(faces)):
+            if sign[start] != 0:
+                continue
+            sign[start] = 1
+            stack = [start]
+            while stack:
+                i = stack.pop()
+                a, b, c = (int(v) for v in faces[i])
+                for u, v in ((a, b), (b, c), (c, a)):
+                    key = (u, v) if u < v else (v, u)
+                    d = 1 if u < v else -1
+                    pair = edges[key]
+                    j, dj = pair[0] if pair[1][0] == i else pair[1]
+                    if sign[j] == 0:
+                        sign[j] = -sign[i] * d * dj
+                        stack.append(j)
+        flip = source[sign < 0]
+        out[flip] = out[flip][:, ::-1]
+        return out
+    from unmesh._writer import geometry as geo
+
+    for region in ir.regions:
+        ids = np.asarray(region.triangles, dtype=np.int64)
+        if not len(ids) or region.surface.type == "facets":
+            continue
+        t = out[ids]
+        normal = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+        if region.surface.type == "plane":
+            outward = np.tile(np.asarray(region.surface.normal, dtype=float), (len(t), 1))
+        else:
+            outward = np.array([geo.outward(region.surface, p) for p in t.mean(axis=1)])
+        flip = np.einsum("ij,ij->i", normal, outward) < 0
+        if flip.any():
+            out[ids[flip]] = t[flip][:, ::-1]
+    return out
+
+
 def _orient_closed(
     vertices: np.ndarray, raw: dict[int, np.ndarray], expect: dict[int, bool]
 ) -> dict[int, np.ndarray]:
@@ -763,16 +816,20 @@ def write(
         groups, seams = _analytic(ir, options, occ, topology)
     if tris is not None:
         limit = topology.deviation_limit(ir, options.max_deviation)
+        oriented = _oriented_mesh(ir, tris)
         for g in groups:
             if not whole:
                 _check_patches(ir, g, tris, options.max_seam_gap, limit)
             if g.valid and g.kind == "solid":
-                _check_input_volume(ir, g, tris, occ)
+                _check_input_volume(ir, g, oriented, occ)
     fallback = None
     reason = None
+    code = None
     vertices = None
-    if not all(g.valid for g in groups):
-        reason = "; ".join(f"shell {g.outer}: {'; '.join(g.issues)}" for g in groups if not g.valid)
+    failed = [g for g in groups if not g.valid]
+    if failed:
+        reason = "; ".join(f"shell {g.outer}: {'; '.join(g.issues)}" for g in failed)
+        code = _fallback_code([issue for g in failed for issue in g.issues], whole)
         if mesh is not None:
             groups, vertices = _faceted(ir, tris, topology, faceted)
             fallback = "faceted"
@@ -814,6 +871,7 @@ def write(
         faces=faces,
         fallback=fallback,
         fallback_reason=reason if fallback else None,
+        fallback_code=code if fallback else None,
         shells=shell_reports,
         seams=seams,
         issues=issues,
@@ -863,3 +921,33 @@ def _faceted_share(ir: Ir) -> float:
     total = sum(len(r.triangles) for r in ir.regions)
     facets = sum(len(r.triangles) for r in ir.regions if _is_facets(ir, r.id))
     return facets / total if total else 0.0
+
+
+_FALLBACK_CODES: tuple[tuple[str, str], ...] = (
+    ("facets regions hold", "facets_share"),
+    ("non-positive volume", "non_positive_volume"),
+    ("could not be triangulated for the flux", "flux_untriangulated"),
+    ("flux about its centre is not finite", "flux_nonfinite"),
+    ("flux about its centre", "flux"),
+    ("differs from mesh volume", "volume"),
+    ("mesh has fewer triangles", "input_short"),
+    ("a facets patch vertex is", "patch_move"),
+    ("a seam split point is", "seam_split"),
+    ("does not match the input mesh", "patch_mismatch"),
+    ("shape tolerance", "shape_tolerance"),
+    ("BRepCheck_Analyzer reports the shape invalid", "brepcheck"),
+    ("no non-degenerate triangles", "degenerate"),
+    ("a cavity shell is open", "cavity_open"),
+    ("sewing produced", "sewing"),
+    ("could not close a boundary wire", "sewing"),
+)
+
+
+def _fallback_code(issues: list[str], whole: bool) -> str:
+    if whole:
+        return "facets_share"
+    text = " | ".join(issues)
+    for needle, code in _FALLBACK_CODES:
+        if needle in text:
+            return code
+    return "build"
