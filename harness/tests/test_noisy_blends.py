@@ -52,6 +52,31 @@ def draft_block(deg):
     return extrude(make_face(Plane.XZ * profile), amount=-30)
 
 
+def draft_boss(deg, r=8.0, hc=4.0, hk=6.0):
+    from build123d import Align, Cone, Cylinder, Pos
+
+    t = math.tan(math.radians(deg))
+    base = Cylinder(r, hc, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    top = Pos(0, 0, hc) * Cone(r, r - hk * t, hk, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return base + top
+
+
+@pytest.mark.slow
+def test_noisy_shallow_draft_never_emits_a_wrong_cone():
+    """A 0.2 degree boss draft under 1 um noise (seed 4) is below the noise
+    resolution: growth must not lock in a wrong cone. Main kept a 0.0396 degree
+    cone over 184 triangles here; the gate drops it."""
+    part = draft_boss(0.2, r=12.0, hc=4.0, hk=12.0)
+    mesh = tessellate(part, LIN, ANG)
+    cell = degrade.chain(mesh, [("noise_normal", 0.02)], 4)
+    ir, _ = unmesh.convert(np.asarray(cell.tris))
+    for region in ir.regions:
+        surface = region.to_dict().get("surface") or {}
+        if surface.get("type") == "cone":
+            angle = abs(math.degrees(surface["half_angle"]))
+            assert angle >= 0.1, (angle, surface)
+
+
 def test_clean_shallow_draft_keeps_floor_and_regions():
     tris = np.asarray(tessellate(draft_block(0.2), LIN, ANG).tris)
     verts = tris.reshape(-1, 3)

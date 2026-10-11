@@ -1051,6 +1051,46 @@ pub fn fit_cone_ungated(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) ->
     ))
 }
 
+/// The sum of squared vertex residuals of a single-surface fit, unweighted so
+/// the noise `sigma` sets its scale: under the null that the points are a
+/// noisy cylinder, adding the cone's one extra parameter drops this by about
+/// `sigma^2`, whatever the point count.
+pub fn residual_ss(fit: &Single, pts: &[(V3, f64)]) -> f64 {
+    let m = Member {
+        pts: Vec::new(),
+        kind: fit.0,
+        slot: 0,
+    };
+    pts.iter()
+        .map(|&(p, _)| {
+            let r = point_residual(&fit.1, &fit.2, &m, p);
+            r * r
+        })
+        .sum()
+}
+
+/// The best cylinder fit of the points, refined from the initial estimate
+/// whatever its residual (no gate): the yardstick a cone candidate must beat
+/// to be believed under noise.
+pub fn fit_cylinder_ungated(pts: &[(V3, f64)], tris: &[Tri], tol: f64) -> Option<Single> {
+    let (axis, r) = init_cylinder(pts, tris)?;
+    let m = [Member {
+        pts: pts.to_vec(),
+        kind: Kind::Cylinder,
+        slot: 0,
+    }];
+    let j = fit_joint(&m, axis, vec![r], &[false], false, tol);
+    let (rms, max) = j.fit[0];
+    (max.is_finite() && j.shape[0] > 0.0).then_some((
+        Kind::Cylinder,
+        j.axis,
+        j.shape,
+        rms,
+        max,
+        false,
+    ))
+}
+
 /// `fit_single`, skipping the refinement of any initial estimate whose
 /// largest vertex residual exceeds `gate` (the estimates are exact on exact
 /// chord facets, so a large residual means the region is not that surface).

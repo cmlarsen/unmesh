@@ -30,6 +30,11 @@ const DOUBLY_AREA: f64 = 4.0;
 const DOUBLY_RATIO: f64 = 0.01;
 const PASSES: usize = 3;
 const WIDEN_REL: f64 = 0.1;
+/// The F-statistic a cone must clear over the best cylinder: the cone spends
+/// one extra degree of freedom (its half-angle), and the ratio of the
+/// residual it removes to the residual per remaining degree of freedom must
+/// beat the one-sided 95% point (about 3.84), a little higher to be safe.
+const CONE_F: f64 = 4.0;
 
 /// A growth round's regions, which of them become facets, whether it
 /// changed anything, and whether another round could.
@@ -519,6 +524,28 @@ fn widen_seed(
     (chain, fit)
 }
 
+/// Whether a cone candidate explains the points significantly better than the
+/// best cylinder: an F-test on the one extra parameter (the half-angle). On
+/// clean input the fallback cone is exact and trusted; under noise a short
+/// shallow band fits a wrong cone about as well as the cylinder it is, the
+/// cone's half-angle only absorbing the noise, and growth from it locks the
+/// wrong angle in. The cone's six parameters leave `n - 6` residual degrees of
+/// freedom, and the ratio of the residual it removes to the residual per
+/// remaining degree of freedom must clear `CONE_F`, so a draft below the noise
+/// resolution keeps the cylinder.
+fn cone_wins(pts: &[(V3, f64)], tris: &[Tri], cone: &Single, tol: f64, noisy: bool) -> bool {
+    if !noisy {
+        return true;
+    }
+    let Some(cyl) = curved::fit_cylinder_ungated(pts, tris, tol) else {
+        return true;
+    };
+    let rss_cone = curved::residual_ss(cone, pts);
+    let gain = curved::residual_ss(&cyl, pts) - rss_cone;
+    let dof = (pts.len() as f64 - 6.0).max(1.0);
+    gain / (rss_cone / dof) > CONE_F
+}
+
 fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], wide: bool, tol: f64) -> Result<Single, f64> {
     let (pts, tris) = pool.union(chain);
     let q = curved::fit_quick(&pts, &tris, tol, INIT_GATE * tol);
@@ -532,7 +559,10 @@ fn seed_fit(pool: &mut Pool<'_>, chain: &[u32], wide: bool, tol: f64) -> Result<
                             .iter()
                             .any(|&r| pool.regions[r as usize].rms > WIDEN_REL * tol))) =>
         {
-            curved::fit_cone_ungated(&pts, &tris, tol, INIT_GATE * tol).ok_or(init)?
+            match curved::fit_cone_ungated(&pts, &tris, tol, INIT_GATE * tol) {
+                Some(c) if cone_wins(&pts, &tris, &c, tol, pool.noisy) => c,
+                _ => return Err(init),
+            }
         }
         Err(e) => return Err(e),
     };
@@ -878,6 +908,7 @@ fn merge_groups(
                         return None;
                     }
                     let (tp, tt) = (thin(&pts), thin(&tris));
+                    let noisy = pool.noisy;
                     let holds = |f: &Single| {
                         curved::max_residual(f.0, &f.1, &f.2, &pts) <= tol
                             && pool.all_fit(&members, f, tol).is_some()
@@ -885,7 +916,9 @@ fn merge_groups(
                     curved::fit_single_gated(&tp, &tt, tol, INIT_GATE * tol)
                         .filter(holds)
                         .or_else(|| {
-                            curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol).filter(holds)
+                            curved::fit_cone_ungated(&tp, &tt, tol, INIT_GATE * tol)
+                                .filter(|c| cone_wins(&tp, &tt, c, tol, noisy))
+                                .filter(holds)
                         })
                 });
             let Some(lead) = lead else {
@@ -2338,6 +2371,94 @@ mod tests {
         };
         let out = merge_two(&soup, side, exact);
         assert_eq!(out.len(), 2);
+    }
+
+    /// A tessellated cone band of half-angle `alpha` about +z, apex at the
+    /// origin, from height `h0` to `h1`, `around` columns and `rings` rows,
+    /// every vertex jittered by up to `noise` on a fixed pseudo-random
+    /// sequence. Triangles carry the normal of their jittered corners.
+    fn cone_band(
+        alpha: f64,
+        around: usize,
+        rings: usize,
+        h0: f64,
+        h1: f64,
+        noise: f64,
+    ) -> (Vec<(V3, f64)>, Vec<super::Tri>) {
+        use super::super::linalg::{add, cross, norm, scale, sub, unit};
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut jitter = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+        };
+        let mut pts = Vec::new();
+        let mut rows: Vec<Vec<usize>> = Vec::new();
+        for j in 0..=rings {
+            let h = h0 + (h1 - h0) * j as f64 / rings as f64;
+            let r = h * alpha.tan();
+            let mut row = Vec::new();
+            for i in 0..around {
+                let t = std::f64::consts::TAU * i as f64 / around as f64;
+                row.push(pts.len());
+                pts.push((
+                    [
+                        r * t.cos() + noise * jitter(),
+                        r * t.sin() + noise * jitter(),
+                        h + noise * jitter(),
+                    ],
+                    1.0,
+                ));
+            }
+            rows.push(row);
+        }
+        let mut tris = Vec::new();
+        for j in 0..rings {
+            for i in 0..around {
+                let i1 = (i + 1) % around;
+                for tri in [
+                    [rows[j][i], rows[j][i1], rows[j + 1][i1]],
+                    [rows[j][i], rows[j + 1][i1], rows[j + 1][i]],
+                ] {
+                    let (a, b, c) = (pts[tri[0]].0, pts[tri[1]].0, pts[tri[2]].0);
+                    let n = cross(sub(b, a), sub(c, a));
+                    tris.push(super::Tri {
+                        normal: unit(n),
+                        area: 0.5 * norm(n),
+                        centroid: scale(add(add(a, b), c), 1.0 / 3.0),
+                    });
+                }
+            }
+        }
+        (pts, tris)
+    }
+
+    /// A 2 degree draft over 16 mm is resolved, fitted as a cone within a
+    /// tenth of a degree, and accepted. A 0.02 degree draft over 0.5 mm under
+    /// 1 um of noise still lets `fit_cone_ungated` return a cone that fits
+    /// within tolerance, but it explains the points no better than the
+    /// cylinder it nearly is, so the gate rejects it.
+    #[test]
+    fn cone_is_kept_only_when_the_draft_is_resolvable() {
+        let tol = 3e-3;
+        let (pts, tris) = cone_band(2f64.to_radians(), 48, 10, 4.0, 20.0, 2e-4);
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+            .expect("a 2 degree draft fits a cone");
+        assert!(
+            (cone.2[1].to_degrees() - 2.0).abs() < 0.1,
+            "angle {}",
+            cone.2[1].to_degrees()
+        );
+        assert!(super::cone_wins(&pts, &tris, &cone, tol, true));
+
+        let (pts, tris) = cone_band(0.02f64.to_radians(), 12, 2, 6.0, 6.5, 2e-3);
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+            .expect("a shallow band still fits a cone");
+        assert!(
+            !super::cone_wins(&pts, &tris, &cone, tol, true),
+            "a 0.02 degree draft over 0.5 mm under 1 um noise is below resolution"
+        );
     }
 
     #[test]
