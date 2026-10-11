@@ -119,3 +119,16 @@ def test_an_occt_failure_falls_back_and_names_its_type(error, code, monkeypatch,
     assert report.fallback == "faceted"
     assert report.fallback_code == code
     assert type(error).__name__ in report.fallback_reason
+
+
+def test_a_numeric_failure_in_the_writer_still_falls_back(monkeypatch, tmp_path):
+    ir, tris = cube()
+
+    def boom(*args, **kwargs):
+        raise ValueError("singular")
+
+    monkeypatch.setattr(occ, "build_plan_shell", boom)
+    report = step.write(ir, tmp_path / "cube.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "build"
+    assert "ValueError: singular" in report.fallback_reason

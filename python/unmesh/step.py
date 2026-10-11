@@ -215,8 +215,7 @@ def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
     _check(g, occ, options.max_shape_tolerance, valid)
 
 
-def _occt_failure(exc: BaseException) -> bool:
-    return type(exc).__module__.split(".", 1)[0] == "OCP"
+_PROGRAMMING_ERRORS = (AttributeError, NameError, TypeError)
 
 
 def _analytic(ir: Ir, options: WriteOptions, occ, topology):
@@ -286,7 +285,7 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
         except topology.BuildError as e:
             g.issues.append(str(e))
         except Exception as e:
-            if not _occt_failure(e):
+            if isinstance(e, _PROGRAMMING_ERRORS):
                 raise
             g.issues.append(f"{type(e).__name__}: {e}")
     return groups, seams
