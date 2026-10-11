@@ -156,6 +156,26 @@ def test_non_manifold_open_shell_reports_its_edges(tmp_path):
     assert report.shells[0].non_manifold_edges > 0
 
 
+def test_non_manifold_facets_shell_is_not_sewn(tmp_path):
+    a = np.array([0.0, 0.0, 0.0])
+    b = np.array([2.0, 0.0, 0.0])
+    tris = np.array(
+        [
+            [a, b, [0.0, 1.0, 0.0]],
+            [a, b, [0.0, 0.0, 1.0]],
+            [a, b, [0.0, -1.0, 0.0]],
+            [a, b, [0.0, 0.0, -1.0]],
+        ]
+    )
+    ir, _ = unmesh.convert(tris)
+    assert len(ir.shells) == 1 and not ir.shells[0].closed
+    assert all(ir.regions[r].surface.type == "facets" for r in ir.shells[0].regions)
+    report = step.write(ir, tmp_path / "nm.step", mesh=tris)
+    assert report.fallback is None
+    assert report.open_shells == [0]
+    assert report.non_manifold_edges > 0
+
+
 def test_mixed_facets_seam_gaps_recorded(tmp_path):
     report = step.write(load("mixed_facets"), tmp_path / "m.step")
     assert report.valid

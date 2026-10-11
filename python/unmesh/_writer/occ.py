@@ -344,7 +344,17 @@ def face_fluxes(
 def build_plan_shell(plan: ShellPlan):
     pool = _Pool()
     faces = [(f.region, _face(pool, f)) for f in plan.faces]
-    shell, mapping = build_sewn_shell(faces)
+    try:
+        shell, mapping = build_sewn_shell(faces)
+    except BuildError:
+        if not (plan.faces and all(f.surface_type == "facets" for f in plan.faces)):
+            raise
+        shell = TopoDS_Shell()
+        builder = BRep_Builder()
+        builder.MakeShell(shell)
+        for _, f in faces:
+            builder.Add(shell, f)
+        return shell, faces
     shell = _orient_shell(shell, mapping)
     return shell, mapping
 
