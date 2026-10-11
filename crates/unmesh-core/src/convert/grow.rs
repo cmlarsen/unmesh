@@ -5,6 +5,7 @@ use std::collections::{BinaryHeap, VecDeque};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::curved::{self, Axis, Kind, Member, Single, Tri};
+use super::dsu::Dsu;
 use super::fit::{Region, collect_verts, region_pairs};
 use super::linalg::{V3, add, dot, scale, sub};
 use super::segment::TriInfo;
@@ -30,6 +31,13 @@ const DOUBLY_AREA: f64 = 4.0;
 const DOUBLY_RATIO: f64 = 0.01;
 const PASSES: usize = 3;
 const WIDEN_REL: f64 = 0.1;
+/// A group whose largest vertex residual is below this fraction of the noise
+/// scale (the tolerance on clean input, the noise `sigma` otherwise) lies on
+/// its fitted surface to the precision of the coordinates: it is that surface,
+/// not a slice of a doubly-curved one that merely fits within tolerance. A
+/// real facet of a sphere or a torus misses its fitted cylinder or cone by a
+/// geometric fraction of the tolerance, never by the last bits of a double.
+const EXACT_FIT_REL: f64 = 1e-6;
 /// The F-statistic a cone must clear over the best cylinder: the cone spends
 /// one extra degree of freedom (its half-angle), and the ratio of the
 /// residual it removes to the residual per remaining degree of freedom must
@@ -878,6 +886,26 @@ fn merge_groups(
         }
         pairs.sort_unstable();
         pairs.dedup();
+        let adjacency = pairs.clone();
+        // Two pieces of one face that are not edge-adjacent still carry
+        // together the azimuth a shallow cone needs to be determined, which no
+        // adjacent pair of its fragments does. Candidate them too, within a
+        // connected component so unrelated faces are never considered.
+        if groups.len() <= 64 {
+            let mut comp = Dsu::new(groups.len());
+            for &(a, b) in &adjacency {
+                comp.union(a, b);
+            }
+            for gi in 0..groups.len() {
+                for h in gi + 1..groups.len() {
+                    if comp.find(gi as u32) == comp.find(h as u32) {
+                        pairs.push((gi as u32, h as u32));
+                    }
+                }
+            }
+            pairs.sort_unstable();
+            pairs.dedup();
+        }
         let mut merged = false;
         for (a, b) in pairs {
             let (a, b) = (find(&mut root, a) as usize, find(&mut root, b) as usize);
@@ -925,6 +953,20 @@ fn merge_groups(
                 failed.insert(key);
                 continue;
             };
+            // A non-adjacent pair is only ever one face when that face is the
+            // cone an adjacent pair of its fragments cannot pin down; two
+            // non-adjacent pieces of an ordinary cylinder or sphere carry no
+            // information an adjacent merge does not, and merging them early
+            // would only reorder regions.
+            let adjacent = groups[a].members.iter().any(|&r| {
+                near[r as usize]
+                    .iter()
+                    .any(|&x| groups[b].members.contains(&x))
+            });
+            if !adjacent && !matches!(lead.0, Kind::Cone { .. }) {
+                failed.insert(key);
+                continue;
+            }
             let pts = if doubly(lead.0) { thin(&pts) } else { pts };
             let fit = curved::refit_quick(&pts, lead.0, lead.1, &lead.2, tol)
                 .filter(|f| pool.all_fit(&members, f, tol).is_some())
@@ -1742,6 +1784,9 @@ fn slices(
         .iter()
         .enumerate()
         .map(|(gi, grp)| {
+            if grp.fit.4 <= EXACT_FIT_REL * pool.sigma {
+                return false;
+            }
             let smooth_to: Vec<u32> = grp
                 .members
                 .iter()
@@ -2459,6 +2504,26 @@ mod tests {
             !super::cone_wins(&pts, &tris, &cone, tol, true),
             "a 0.02 degree draft over 0.5 mm under 1 um noise is below resolution"
         );
+    }
+
+    /// A 0.2 degree draft is too shallow for the normal-line cone estimate,
+    /// whose apex solve is ill-conditioned thousands of radii from the surface;
+    /// the axial-radius regression places it exactly, so the band is recovered
+    /// to the last digit rather than falling through to facets (issue #165).
+    #[test]
+    fn a_shallow_draft_is_recovered_exactly() {
+        let alpha = 0.2f64.to_radians();
+        let h = 8.0 / alpha.tan();
+        let (pts, tris) = cone_band(alpha, 72, 5, h - 3.0, h + 3.0, 0.0);
+        let tol = 5e-4;
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol)
+            .expect("a 0.2 degree draft fits a cone");
+        assert!(
+            (cone.2[1].to_degrees() - 0.2).abs() < 1e-6,
+            "angle {}",
+            cone.2[1].to_degrees()
+        );
+        assert!(cone.4 <= tol, "max {}", cone.4);
     }
 
     #[test]

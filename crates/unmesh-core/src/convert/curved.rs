@@ -6,6 +6,11 @@ use super::surface::{Surface, radial};
 const AXIS_STEP: f64 = 1e-7;
 pub const LM_ITERS: usize = 40;
 pub const QUICK_ITERS: usize = 10;
+/// A cone is only estimated from its axial-radius regression once it has at
+/// least a seed chain's worth of vertices; below that the regression is
+/// underdetermined and a shallow cone is better left to the normal-line
+/// estimate (and, if that fails, to the facet fallback).
+const CONE_STABLE_MIN: usize = 48;
 const ROW_GAP: f64 = 0.05;
 pub const IRLS_ROUNDS: usize = 3;
 pub const MAX_GROUP: usize = 16;
@@ -434,6 +439,61 @@ pub fn init_cone(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> {
     if !(alpha > 0.0 && alpha < std::f64::consts::FRAC_PI_2) {
         return None;
     }
+    Some((Axis { a, c: apex }, alpha))
+}
+
+/// A second cone estimate for the shallow drafts `init_cone` cannot place: a
+/// shallow cone's apex is thousands of radii away, so intersecting the normal
+/// lines that meet there is hopelessly ill-conditioned, and a normal error of a
+/// fraction of a degree moves the apex by hundreds of units and the half-angle
+/// with it. The axis from the normal scatter is still sound (the normals all
+/// lie on a cone of half-angle `pi/2 - alpha` about it); the radius then
+/// regresses on the axial coordinate, an exact line for a cone of any
+/// half-angle and well-conditioned over any real axial span.
+pub fn init_cone_stable(pts: &[(V3, f64)], tris: &[Tri]) -> Option<(Axis, f64)> {
+    let (vals, vecs, _) = normal_scatter(tris, false)?;
+    if vals[1].is_nan() || vals[1] <= 1e-10 * vals[2].max(f64::MIN_POSITIVE) {
+        return None;
+    }
+    let mut a = unit(vecs[0]);
+    let mut sw = 0.0;
+    let mut o = [0.0; 3];
+    for &(p, w) in pts {
+        sw += w;
+        o = add(o, scale(p, w));
+    }
+    if sw <= 0.0 {
+        return None;
+    }
+    o = scale(o, 1.0 / sw);
+    let (mut sh, mut sr, mut shh, mut shr) = (0.0, 0.0, 0.0, 0.0);
+    for &(p, w) in pts {
+        let q = sub(p, o);
+        let h = dot(q, a);
+        let rho = norm(sub(q, scale(a, h)));
+        sh += w * h;
+        sr += w * rho;
+        shh += w * h * h;
+        shr += w * h * rho;
+    }
+    let denom = sw * shh - sh * sh;
+    if denom <= 1e-24 * sw * shh {
+        return None;
+    }
+    let mut b = (sw * shr - sh * sr) / denom;
+    let aa = (sr - b * sh) / sw;
+    if b < 0.0 {
+        a = scale(a, -1.0);
+        b = -b;
+    }
+    if !b.is_finite() || b <= 0.0 {
+        return None;
+    }
+    let alpha = b.atan();
+    if !(alpha > 0.0 && alpha < std::f64::consts::FRAC_PI_2) {
+        return None;
+    }
+    let apex = add(o, scale(a, -aa / b));
     Some((Axis { a, c: apex }, alpha))
 }
 
@@ -1019,36 +1079,40 @@ pub fn fit_quick(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Result
 /// under noise that estimate can start far off on a narrow band that a cone
 /// still fits.
 pub fn fit_cone_ungated(pts: &[(V3, f64)], tris: &[Tri], tol: f64, gate: f64) -> Option<Single> {
-    let (axis, alpha) = init_cone(pts, tris)?;
-    let m = [Member {
-        pts: pts.to_vec(),
-        kind: Kind::Cone { sign: 1.0 },
-        slot: 0,
-    }];
-    let free = [false, false];
-    let q = fit_joint_with(
-        &m,
-        axis,
-        vec![0.0, alpha],
-        &free,
-        false,
-        tol,
-        1,
-        QUICK_ITERS,
-    );
-    if q.fit[0].1 > gate {
-        return None;
+    let inits = [
+        init_cone(pts, tris),
+        (pts.len() >= CONE_STABLE_MIN)
+            .then(|| init_cone_stable(pts, tris))
+            .flatten(),
+    ];
+    for init in inits.into_iter().flatten() {
+        let (axis, alpha) = init;
+        let m = [Member {
+            pts: pts.to_vec(),
+            kind: Kind::Cone { sign: 1.0 },
+            slot: 0,
+        }];
+        let free = [false, false];
+        let q = fit_joint_with(
+            &m,
+            axis,
+            vec![0.0, alpha],
+            &free,
+            false,
+            tol,
+            1,
+            QUICK_ITERS,
+        );
+        if q.fit[0].1 > gate {
+            continue;
+        }
+        let j = fit_joint(&m, q.axis, q.shape, &free, false, tol);
+        let (rms, max) = j.fit[0];
+        if max <= tol && valid_shape(&j.shape, &m[0]) {
+            return Some((Kind::Cone { sign: 1.0 }, j.axis, j.shape, rms, max, false));
+        }
     }
-    let j = fit_joint(&m, q.axis, q.shape, &free, false, tol);
-    let (rms, max) = j.fit[0];
-    (max <= tol && valid_shape(&j.shape, &m[0])).then_some((
-        Kind::Cone { sign: 1.0 },
-        j.axis,
-        j.shape,
-        rms,
-        max,
-        false,
-    ))
+    None
 }
 
 /// The sum of squared vertex residuals of a single-surface fit, unweighted so

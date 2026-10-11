@@ -77,6 +77,46 @@ def test_noisy_shallow_draft_never_emits_a_wrong_cone():
             assert angle >= 0.1, (angle, surface)
 
 
+def draft_bore(deg, r=8.0, hc=4.0, hk=6.0):
+    from build123d import Align, Box, Cone, Cylinder, Pos
+
+    t = math.tan(math.radians(deg))
+    hole = Cylinder(r, hc, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    hole += Pos(0, 0, hc) * Cone(r, r + hk * t, hk, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return Box(4 * r, 4 * r, hc + hk, align=(Align.CENTER, Align.CENTER, Align.MIN)) - hole
+
+
+def draft_cone_angles(shape):
+    mesh = tessellate(shape, LIN, ANG)
+    ir, _ = unmesh.convert(np.asarray(mesh.tris))
+    return [
+        abs(math.degrees(surface["half_angle"]))
+        for region in ir.regions
+        if (surface := region.to_dict().get("surface") or {}).get("type") == "cone"
+    ]
+
+
+@pytest.mark.parametrize("shape", ["boss", "bore"])
+def test_clean_shallow_draft_is_an_exact_cone(shape):
+    """A clean 0.2 degree boss or bore draft is an exact cone, not facets: the
+    individual facets all lie on a cylinder within tolerance, so the cone is
+    only found by regressing the radius on the axis over enough of the face."""
+    part = draft_boss(0.2) if shape == "boss" else draft_bore(0.2)
+    angles = draft_cone_angles(part)
+    assert any(abs(a - 0.2) <= 1e-6 for a in angles), angles
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("shape", ["boss", "bore"])
+def test_clean_shallow_draft_sweep(shape):
+    """No clean draft in 0.1-0.5 degrees in steps of 0.01 falls through."""
+    for i in range(41):
+        delta = round(0.1 + 0.01 * i, 2)
+        part = draft_boss(delta) if shape == "boss" else draft_bore(delta)
+        angles = draft_cone_angles(part)
+        assert any(abs(a - delta) <= 1e-6 for a in angles), (shape, delta, angles)
+
+
 def test_clean_shallow_draft_keeps_floor_and_regions():
     tris = np.asarray(tessellate(draft_block(0.2), LIN, ANG).tris)
     verts = tris.reshape(-1, 3)
