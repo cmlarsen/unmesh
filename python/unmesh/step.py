@@ -215,6 +215,9 @@ def _finish_group(g: _Group, occ, outer_shell, cavities, options) -> None:
     _check(g, occ, options.max_shape_tolerance, valid)
 
 
+_PROGRAMMING_ERRORS = (AttributeError, NameError, TypeError)
+
+
 def _analytic(ir: Ir, options: WriteOptions, occ, topology):
     groups: list[_Group] = []
     seams: list[SeamReport] = []
@@ -282,6 +285,8 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
         except topology.BuildError as e:
             g.issues.append(str(e))
         except Exception as e:
+            if isinstance(e, _PROGRAMMING_ERRORS):
+                raise
             g.issues.append(f"{type(e).__name__}: {e}")
     return groups, seams
 
@@ -931,6 +936,7 @@ _FALLBACK_CODES: tuple[tuple[str, str], ...] = (
     ("winds against the outward normal", "region_winding"),
     ("winds with the outward normal", "region_winding"),
     ("Standard_TypeMismatch", "occt_type_mismatch"),
+    ("Standard_", "occt_exception"),
     ("degenerate boundary loop", "degenerate_loop"),
     ("facets regions hold", "facets_share"),
     ("non-positive volume", "non_positive_volume"),
