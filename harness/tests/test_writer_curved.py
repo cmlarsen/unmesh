@@ -235,3 +235,18 @@ def test_far_translation_keeps_ir_vertex_position(tmp_path):
     ir, _ = unmesh.convert(tris)
     report = step.write(ir, tmp_path / "far.step", mesh=tris)
     assert report.valid and report.fallback is None, report.fallback_reason
+
+
+@pytest.mark.slow
+def test_far_translation_writes_analytic_above_the_deviation_cap(tmp_path):
+    from unmesh_harness import degrade
+
+    mesh = tessellate(generate("straight_fillet", 1).solid, *DEFLECTION)
+    deg = degrade.chain(mesh, [("far_translation", 1.0)], 2)
+    stl = tmp_path / "far.stl"
+    deg.write_stl(stl)
+    tris = unmesh.read_stl(stl)
+    ir, _ = unmesh.convert(tris)
+    assert ir.tolerances.linear > step.WriteOptions().max_deviation
+    report = step.write(ir, tmp_path / "far.step", mesh=tris)
+    assert report.valid and report.fallback is None, report.fallback_reason

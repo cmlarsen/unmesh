@@ -11,10 +11,19 @@ VERTEX_PULL = 1e-8
 DEVIATION_FACTOR = 5.0
 RECORDED_MOVE_FACTOR = 10.0
 KEY_SCALE = 1e7
+# Absolute ceiling on the writer's move, four float32 ulps at 1 km. The
+# converter's linear tolerance already follows the input's coordinate rounding
+# (one float32 ulp, 2**-4 mm at 1e6 mm), so following it to five times covers
+# the vertex error quantization leaves behind. The ceiling is a backstop: beyond
+# ~0.25 mm a move is a real modelling error, not a quantized coordinate.
+DEVIATION_CEILING = 0.25
 
 
 def deviation_limit(ir: Ir, cap: float) -> float:
-    return min(DEVIATION_FACTOR * ir.tolerances.linear, cap)
+    limit = DEVIATION_FACTOR * ir.tolerances.linear
+    if ir.tolerances.linear <= cap:
+        return min(limit, cap)
+    return min(limit, max(cap, DEVIATION_CEILING))
 
 
 def _key(p) -> tuple[int, int, int]:

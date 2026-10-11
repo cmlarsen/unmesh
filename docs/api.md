@@ -107,7 +107,7 @@ it is missing. `unmesh.step` is also reachable as an attribute of `unmesh`.
 `options` is a `WriteOptions`:
 
 - `max_shape_tolerance` (default `1e-3`): the largest OCCT shape tolerance a written shell may need before the writer falls back.
-- `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)`. A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
+- `max_deviation` (default `5e-3`, absolute, in mesh units): the cap on how far the writer may move geometry. The limit used is `min(5 * ir.tolerances.linear, max_deviation)` while the IR's linear tolerance is at or below `max_deviation`. When the tolerance is above it (quantized or far-translated input, where one float32 ulp dominates the fit), the cap would reject geometry the converter itself measured as within tolerance, so the limit follows the tolerance, bounded by `DEVIATION_CEILING` (0.25 mm, four float32 ulps at 1 km, the largest coordinate the far-translation degrade rounds at). A vertex further than that from its IR position, or a boundary point further than that from the built edge, fails the shell.
 - `max_seam_gap` (default `1e-4`, absolute): the largest distance a straight seam edge between a `facets` patch and a curved face may keep from the curved surface. Patch boundary chords are subdivided until every piece is within it.
 - `readback_memory_mb` (default `2048`) and `readback_timeout_s` (default `120`): the memory cap and timeout of the OCCT read-back process (see below).
 

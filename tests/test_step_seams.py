@@ -195,7 +195,7 @@ def test_a_patch_vertex_off_the_mesh_is_measured_and_beyond_the_limit_falls_back
     _bulge(ir, region, distance)
     report = step.write(ir, tmp_path / "bulge.step", mesh=tris)
     assert report.valid and report.verified
-    limit = min(5 * ir.tolerances.linear, step.WriteOptions().max_deviation)
+    limit = topology.deviation_limit(ir, step.WriteOptions().max_deviation)
     if family == "countersink":
         assert report.fallback == "faceted"
         assert f"region {region}: boundary point" in report.fallback_reason
@@ -329,12 +329,14 @@ def _forged_boundary_move():
 
 def test_a_move_the_ir_claims_beyond_ten_times_tolerance_falls_back(tmp_path, monkeypatch):
     ir, tris, region = _forged_boundary_move()
+    ir.tolerances.linear = 1e-3
     report = step.write(ir, tmp_path / "forged.step", mesh=tris)
     assert report.fallback == "faceted", report.fallback_reason
     assert f"region {region}: a facets patch vertex is" in report.fallback_reason
     assert "beyond the IR's recorded move" in report.fallback_reason
 
     ir, tris, _ = _forged_boundary_move()
+    ir.tolerances.linear = 1e-3
     monkeypatch.setattr(topology, "RECORDED_MOVE_FACTOR", 1e9)
     assert step.write(ir, tmp_path / "unclamped.step", mesh=tris).fallback is None
 

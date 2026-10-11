@@ -484,6 +484,31 @@ def test_deviation_cap_is_enforced(tmp_path):
     assert any("limit" in i for i in report.issues)
 
 
+def test_deviation_limit_stays_capped_when_tolerance_is_below_the_cap():
+    from unmesh._writer import topology
+
+    cap = step.WriteOptions().max_deviation
+    ir = load("box")
+    ir.tolerances.linear = cap  # five times this would exceed the cap
+    assert topology.deviation_limit(ir, cap) == pytest.approx(cap)
+    ir.tolerances.linear = cap / 5  # five times this is exactly the cap
+    assert topology.deviation_limit(ir, cap) == pytest.approx(cap)
+    ir.tolerances.linear = cap / 50  # five times this is below the cap
+    assert topology.deviation_limit(ir, cap) == pytest.approx(cap / 10)
+
+
+def test_deviation_limit_follows_a_tolerance_above_the_cap():
+    from unmesh._writer import topology
+
+    cap = step.WriteOptions().max_deviation
+    ir = load("box")
+    ir.tolerances.linear = 2 * cap
+    limit = topology.deviation_limit(ir, cap)
+    assert cap < limit <= topology.DEVIATION_CEILING
+    ir.tolerances.linear = topology.DEVIATION_CEILING  # the ceiling binds
+    assert topology.deviation_limit(ir, cap) == pytest.approx(topology.DEVIATION_CEILING)
+
+
 def test_no_mesh_and_one_bad_shell_writes_nothing(tmp_path):
     ir = load("two_bodies")
     bad = copy.deepcopy(ir)
