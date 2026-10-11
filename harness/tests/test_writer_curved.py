@@ -221,3 +221,17 @@ def test_noisy_through_bore_mixed_write_within_budget(tmp_path):
     assert report.valid and report.fallback is None, report.issues
     assert report.faceted_regions > 0, "the part must exercise the mixed-solid writer"
     assert seconds <= MIXED_WRITE_BUDGET_S * MIXED_WRITE_CI_FACTOR, (seconds, len(tris))
+
+
+@pytest.mark.slow
+def test_far_translation_keeps_ir_vertex_position(tmp_path):
+    from unmesh_harness import degrade
+
+    mesh = tessellate(generate("countersink", 0).solid, *DEFLECTION)
+    deg = degrade.chain(mesh, [("far_translation", 0.5)], 0)
+    stl = tmp_path / "far.stl"
+    deg.write_stl(stl)
+    tris = unmesh.read_stl(stl)
+    ir, _ = unmesh.convert(tris)
+    report = step.write(ir, tmp_path / "far.step", mesh=tris)
+    assert report.valid and report.fallback is None, report.fallback_reason

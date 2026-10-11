@@ -97,10 +97,15 @@ def vertex_positions(ir: Ir, limit: float):
             x = p0
         gap = float(np.linalg.norm(x - p0))
         if gap > limit:
-            bad[v.id] = (
-                f"vertex {v.id}: plane intersection is {gap:.6g} from its IR position,"
-                f" over the {limit:.6g} limit"
-            )
+            residual = float(np.abs(n @ p0 - d).max())
+            if residual <= limit:
+                x = p0
+                gap = residual
+            else:
+                bad[v.id] = (
+                    f"vertex {v.id}: plane intersection is {gap:.6g} from its IR position,"
+                    f" over the {limit:.6g} limit"
+                )
         out.append(x)
         moved.append(gap)
     return out, moved, bad

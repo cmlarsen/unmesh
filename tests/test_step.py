@@ -222,6 +222,212 @@ def test_flipped_mesh_winding_still_builds_faceted(tmp_path):
     assert occ.volume_of(occ.read_step(path)) == pytest.approx(abs(signed_volume(tris)), rel=1e-9)
 
 
+def test_mixed_input_winding_is_volume_checked_outward(tmp_path):
+    ir = load("box")
+    tris = mesh_from_ir(ir)
+    tris[3] = tris[3][::-1]
+    path = tmp_path / "w.step"
+    report = step.write(ir, path, mesh=tris)
+    assert report.fallback is None and report.valid
+    assert report.shells[0].volume == pytest.approx(VOLUMES["box"], rel=1e-9)
+
+
+def test_fallback_reason_and_code_are_reported(tmp_path):
+    ir, bad = shifted_box()
+    report = step.write(bad, tmp_path / "f.step", mesh=mesh_from_ir(ir))
+    assert report.fallback == "faceted"
+    assert report.fallback_reason
+    assert report.fallback_code == "vertex_intersection"
+
+
+def test_fallback_code_names_the_failed_check():
+    assert step._fallback_code([], True) == "facets_share"
+    assert step._fallback_code(["non-positive volume 0"], False) == "non_positive_volume"
+    assert step._fallback_code(["analytic volume 2 differs from mesh volume 1"], False) == "volume"
+    assert step._fallback_code(["sewing produced 2 shells, expected 1"], False) == "sewing"
+    assert step._fallback_code(["the written face's flux about its centre is 1"], False) == "flux"
+    assert (
+        step._fallback_code(
+            ["vertex 3: surface intersection is 1 from its IR position, over the 0.005 limit"],
+            False,
+        )
+        == "vertex_intersection"
+    )
+    assert (
+        step._fallback_code(
+            ["region 2: the built face is not on the IR's side of its boundary with region 1"],
+            False,
+        )
+        == "face_side"
+    )
+    assert (
+        step._fallback_code(
+            ["regions 1/2: projected boundary curve is 1 off the surfaces, over the 0.005 limit"],
+            False,
+        )
+        == "boundary_curve"
+    )
+    assert (
+        step._fallback_code(["region 5: outer loop winds against the outward normal"], False)
+        == "region_winding"
+    )
+    assert (
+        step._fallback_code(["Standard_TypeMismatch: TopoDS::Face"], False) == "occt_type_mismatch"
+    )
+    assert step._fallback_code(["region 0: degenerate boundary loop"], False) == "degenerate_loop"
+    assert step._fallback_code(["region 37: a seam split folds a facets triangle"], False) == (
+        "seam_split"
+    )
+    assert step._fallback_code(["something unexpected"], False) == "build"
+
+
+def test_fallback_code_follows_the_first_issue_not_the_table():
+    vertex = "vertex 0: surface intersection is 1 from its IR position, over the 0.005 limit"
+    volume = "analytic volume 2 differs from mesh volume 1"
+    assert step._fallback_code([vertex, volume], False) == "vertex_intersection"
+    assert step._fallback_code([volume, vertex], False) == "volume"
+
+
+def test_fallback_code_degenerate_boundary_loop(tmp_path, monkeypatch):
+    from unmesh._writer import topology
+
+    ir = load("box")
+    monkeypatch.setattr(
+        topology,
+        "_chain_loops",
+        lambda segments, normal, region: [[np.zeros(3), np.ones(3)]],
+    )
+    report = step.write(ir, tmp_path / "d.step", mesh=mesh_from_ir(ir))
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "degenerate_loop"
+
+
+def test_fallback_code_region_winding(tmp_path):
+    ir = load("box")
+    bad = copy.deepcopy(ir)
+    for r in bad.regions:
+        if isinstance(r.surface, Plane) and r.surface.normal == (0.0, 0.0, 1.0):
+            r.surface.normal = (0.0, 0.0, -1.0)
+    report = step.write(bad, tmp_path / "r.step", mesh=mesh_from_ir(ir))
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "region_winding"
+
+
+def curved_mesh(shape, deflection=(0.01, 0.2)):
+    tris = np.asarray(labels.tessellate(shape, *deflection).tris, dtype=float)
+    ir, _ = unmesh.convert(tris)
+    return ir, tris
+
+
+def test_fallback_code_face_side(tmp_path, monkeypatch):
+    import build123d as bd
+
+    from unmesh._writer import curved
+
+    ir, tris = curved_mesh(bd.Cylinder(5, 10) + bd.Pos(0, 0, 5) * bd.Sphere(5))
+    real = curved._Builder.curved_face
+
+    def flipped(self, r, s, loops):
+        if s.type == "sphere":
+            loops = [[curved._reverse_segment(seg) for seg in reversed(lp)] for lp in loops]
+        return real(self, r, s, loops)
+
+    monkeypatch.setattr(curved._Builder, "curved_face", flipped)
+    report = step.write(ir, tmp_path / "s.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "face_side"
+
+
+def test_fallback_code_boundary_curve(tmp_path, monkeypatch):
+    import build123d as bd
+
+    from unmesh._writer import curved
+
+    shape = bd.Box(30, 20, 6) - bd.Pos(15, 10, 3) * bd.Cylinder(4, 20)
+    ir, tris = curved_mesh(shape)
+    monkeypatch.setattr(curved, "intersection_curves", lambda a, b: [])
+    monkeypatch.setattr(curved, "projected_curve", lambda *a, **k: (None, 1.0))
+    report = step.write(ir, tmp_path / "b.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "boundary_curve"
+
+
+def test_fallback_code_occt_type_mismatch(tmp_path, monkeypatch):
+    import build123d as bd
+    from OCP.Standard import Standard_TypeMismatch
+
+    from unmesh._writer import curved
+
+    ir, tris = curved_mesh(bd.Cylinder(5, 10) + bd.Pos(0, 0, 5) * bd.Sphere(5))
+
+    def boom(*args, **kwargs):
+        raise Standard_TypeMismatch("TopoDS::Face")
+
+    monkeypatch.setattr(curved, "geom_surface", boom)
+    report = step.write(ir, tmp_path / "m.step", mesh=tris)
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "occt_type_mismatch"
+
+
+def welded_edge_uses(tris, merge):
+    from unmesh import weld
+
+    _, faces, _, _ = weld(tris, merge)
+    uses: dict[tuple[int, int], int] = {}
+    for a, b, c in np.asarray(faces, dtype=np.int64):
+        for u, v in ((a, b), (b, c), (c, a)):
+            key = (int(min(u, v)), int(max(u, v)))
+            uses[key] = uses.get(key, 0) + 1
+    return uses
+
+
+def bore_nonmanifold_mesh():
+    import build123d as bd
+
+    shape = bd.Box(30, 20, 6) - bd.Pos(15, 10, 3) * bd.Cylinder(4, 20)
+    ir, tris = curved_mesh(shape)
+    a, b, c = tris[0]
+    stray = np.array([[a, b, c + np.array([0.0, 0.0, 7.0])]])
+    return shape, ir, tris, np.concatenate([tris, stray])
+
+
+def test_nonmanifold_bore_orients_per_region_and_its_flip_falls_back(tmp_path):
+    shape, ir, _, mesh = bore_nonmanifold_mesh()
+    assert any(r.surface.type == "cylinder" for r in ir.regions)
+    uses = welded_edge_uses(mesh, ir.tolerances.vertex_merge)
+    assert max(uses.values()) > 2, "the stray triangle must make the weld graph non-manifold"
+    report = step.write(ir, tmp_path / "nm.step", mesh=mesh)
+    assert report.fallback is None and report.valid
+    assert report.shells[0].volume == pytest.approx(shape.volume, rel=1e-9)
+    bad = copy.deepcopy(ir)
+    next(r for r in bad.regions if r.surface.type == "cylinder").surface.orientation = "same"
+    fell = step.write(bad, tmp_path / "flip.step", mesh=mesh)
+    assert fell.fallback == "faceted"
+
+
+def test_a_curved_shell_that_fails_brepcheck_is_healed(tmp_path, monkeypatch):
+    import build123d as bd
+
+    shape = bd.Sphere(5) - bd.Pos(0, 0, -10) * bd.Box(30, 30, 20)
+    ir, tris = curved_mesh(shape)
+    real_valid, real_fix = occ.is_valid, occ.fix_shape
+    calls = {"valid": 0, "fix": 0}
+
+    def valid(s):
+        calls["valid"] += 1
+        return False if calls["valid"] == 1 else real_valid(s)
+
+    def fix(s):
+        calls["fix"] += 1
+        return real_fix(s)
+
+    monkeypatch.setattr(occ, "is_valid", valid)
+    monkeypatch.setattr(occ, "fix_shape", fix)
+    report = step.write(ir, tmp_path / "h.step", mesh=tris)
+    assert calls["fix"] == 1
+    assert report.valid and report.fallback is None
+
+
 def test_plate_with_bore_is_written_analytic(tmp_path):
     report = step.write(load("plate_with_bore"), tmp_path / "p.step")
     assert report.valid and report.verified and report.fallback is None
