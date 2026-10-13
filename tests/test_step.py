@@ -153,6 +153,7 @@ def test_non_manifold_open_shell_reports_its_edges(tmp_path):
     report = step.write(ir, tmp_path / "nm.step", mesh=tris)
     assert report.open_shells == [0]
     assert report.non_manifold_edges > 0
+    assert not report.valid
     assert report.shells[0].non_manifold_edges > 0
 
 
@@ -174,6 +175,7 @@ def test_non_manifold_facets_shell_is_not_sewn(tmp_path):
     assert report.fallback is None
     assert report.open_shells == [0]
     assert report.non_manifold_edges > 0
+    assert not report.valid
 
 
 def test_mixed_facets_seam_gaps_recorded(tmp_path):
