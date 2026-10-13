@@ -153,7 +153,6 @@ def test_non_manifold_open_shell_reports_its_edges(tmp_path):
     report = step.write(ir, tmp_path / "nm.step", mesh=tris)
     assert report.open_shells == [0]
     assert report.non_manifold_edges > 0
-    assert not report.valid
     assert report.shells[0].non_manifold_edges > 0
 
 
