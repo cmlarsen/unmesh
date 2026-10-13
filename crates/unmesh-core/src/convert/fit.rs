@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 
 use super::dsu::Dsu;
-use super::linalg::{V3, dot, scale, sub, sym_eigen, unit};
+use super::linalg::{V3, dot, outer_add, scale, sub, sym_eigen, unit};
 use super::segment::{self, TriInfo};
 use super::surface::Surface;
 use super::topology::{CompKind, NONE, Topology};
@@ -439,6 +439,46 @@ fn curved(s: &Surface) -> bool {
     s.is_analytic() && s.as_plane().is_none()
 }
 
+/// A plane region whose vertices are (near-)collinear. The fit is exact for a
+/// sliver, but the normal is set by rounding-level bow rather than by any two
+/// separated in-plane directions, so it is numerically meaningless: the plane's
+/// second in-plane spread is negligible against its first. Growth can leave one
+/// sliver triangle ungrouped on an otherwise flat face; emitted alone it has no
+/// dependable outward direction and the writer cannot wind a loop against it
+/// (issue #174). The threshold is extreme enough that any real face — even a
+/// hairline strip — is well-conditioned, since it takes a better than 1000:1
+/// aspect ratio.
+const SLIVER_RATIO: f64 = 1e-6;
+
+fn sliver_plane(vc: &[V3], r: &Region) -> bool {
+    if r.surface.as_plane().is_none() {
+        return false;
+    }
+    if r.verts.len() < 3 {
+        return true;
+    }
+    let mut c = [0.0; 3];
+    let mut sw = 0.0;
+    for &(vi, w) in &r.verts {
+        let p = vc[vi as usize];
+        for a in 0..3 {
+            c[a] += w * p[a];
+        }
+        sw += w;
+    }
+    if sw <= 0.0 {
+        return true;
+    }
+    c = scale(c, 1.0 / sw);
+    let mut cov = [[0.0; 3]; 3];
+    for &(vi, w) in &r.verts {
+        let q = sub(vc[vi as usize], c);
+        outer_add(&mut cov, q, q, w / sw);
+    }
+    let (vals, _) = sym_eigen(cov);
+    vals[1] <= SLIVER_RATIO * vals[2]
+}
+
 /// Gives a remnant of at most `REMNANT_FACES` triangles that is not itself
 /// curved to an adjacent curved region whose surface passes within `tol` of
 /// every one of its vertices and whose largest chord sagitta, plus the
@@ -448,6 +488,11 @@ fn curved(s: &Surface) -> bool {
 /// surface (a D-flat) has its corners on it too, but its sagitta is the flat's
 /// depth, far beyond the tessellation's, so it stays a plane. The curved
 /// surface is kept; its residual takes the remnant's vertex distances.
+///
+/// A *sliver* plane remnant (`sliver_plane`) is also given to an adjacent
+/// well-conditioned plane it lies in: its own normal is meaningless, but the
+/// neighbour's is not, and keeping the triangle analytic there avoids emitting
+/// a plane the writer cannot orient.
 pub fn absorb_remnants(
     vc: &[V3],
     faces: &[[u32; 3]],
@@ -464,6 +509,7 @@ pub fn absorb_remnants(
             if n == 0 || n > REMNANT_FACES || curved(&regions[r].surface) {
                 continue;
             }
+            let sliver = sliver_plane(vc, &regions[r]);
             let mut cands: Vec<u32> = regions[r]
                 .faces
                 .iter()
@@ -473,7 +519,9 @@ pub fn absorb_remnants(
                 .filter(|&l| l != NONE && l as usize != r)
                 .filter(|&l| {
                     let c = &regions[l as usize];
-                    curved(&c.surface) && c.max <= tol
+                    c.max <= tol
+                        && (curved(&c.surface)
+                            || (sliver && c.surface.as_plane().is_some() && !sliver_plane(vc, c)))
                 })
                 .collect();
             cands.sort_unstable();
@@ -992,5 +1040,91 @@ mod tests {
         for (fi, &l) in label2.iter().enumerate() {
             assert!(regions[l as usize].faces.contains(&(fi as u32)));
         }
+    }
+
+    fn plane_region(verts: Vec<(u32, f64)>) -> Region {
+        Region {
+            faces: vec![0],
+            surface: Surface::Plane {
+                normal: [0.0, 0.0, 1.0],
+                offset: 0.0,
+            },
+            area: 1.0,
+            width: 0.0,
+            verts,
+            rms: 0.0,
+            max: 0.0,
+            sag: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_plane_is_ill_conditioned_only_when_its_vertices_are_collinear() {
+        let sliver = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [20.0, 0.01, 0.0]];
+        let well_shaped = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]];
+        let v = vec![(0, 1.0), (1, 1.0), (2, 1.0)];
+        assert!(sliver_plane(&sliver, &plane_region(v.clone())));
+        assert!(!sliver_plane(&well_shaped, &plane_region(v)));
+    }
+
+    #[test]
+    fn a_sliver_plane_remnant_is_absorbed_into_an_adjacent_plane() {
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [5.0007, 4.9993, 0.0],
+        ];
+        let f = vec![[0, 1, 2], [1, 3, 2]];
+        let info = tri_info(&v, &f);
+        let nbr = vec![[NONE, 1, NONE], [NONE, NONE, 0]];
+        let label = vec![0u32, 1u32];
+        let mut scratch = Scratch::new(v.len());
+        let mut regions = build_regions(&v, &f, &info, &label, 2, 1e-3, &mut scratch);
+        assert!(sliver_plane(&v, &regions[1]));
+        let mut label = label;
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
+        assert_eq!(label, vec![0, 0]);
+    }
+
+    #[test]
+    fn a_sliver_is_not_absorbed_into_another_sliver_plane() {
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [20.0, 1e-5, 0.0],
+            [-10.0, -1e-5, 0.0],
+        ];
+        let f = vec![[0, 1, 2], [0, 1, 3]];
+        let info = tri_info(&v, &f);
+        let nbr = vec![[NONE, NONE, 1], [NONE, NONE, 0]];
+        let mut label = vec![0u32, 1u32];
+        let mut scratch = Scratch::new(v.len());
+        let mut regions = build_regions(&v, &f, &info, &label, 2, 1e-3, &mut scratch);
+        assert!(sliver_plane(&v, &regions[0]));
+        assert!(sliver_plane(&v, &regions[1]));
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
+        assert_eq!(label, vec![0, 1]);
+    }
+
+    #[test]
+    fn a_small_well_conditioned_plane_is_not_absorbed_into_a_plane() {
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ];
+        let f = vec![[0, 1, 2], [0, 1, 3]];
+        let info = tri_info(&v, &f);
+        let nbr = vec![[NONE, NONE, 1], [NONE, NONE, 0]];
+        let mut label = vec![0u32, 1u32];
+        let mut scratch = Scratch::new(v.len());
+        let mut regions = build_regions(&v, &f, &info, &label, 2, 1e-3, &mut scratch);
+        assert!(!sliver_plane(&v, &regions[0]));
+        assert!(!sliver_plane(&v, &regions[1]));
+        assert!(regions.iter().all(|r| r.max <= 1e-3));
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
+        assert_eq!(label, vec![0, 1]);
     }
 }

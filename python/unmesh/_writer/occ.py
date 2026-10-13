@@ -240,6 +240,19 @@ def face_tolerances(shape, mapping, context=None) -> dict[int, float]:
     return out
 
 
+def region_face_counts(shape, mapping, context=None) -> dict[int, int]:
+    final = _face_index(shape)
+    seen: dict[int, dict[int, list]] = {}
+    for region, g in mapping:
+        if context is not None:
+            g = context.Apply(g)
+        match = _same_face(final, g)
+        bucket = seen.setdefault(region, {}).setdefault(hash(match), [])
+        if not any(match.IsSame(h) for h in bucket):
+            bucket.append(match)
+    return {region: sum(len(b) for b in buckets.values()) for region, buckets in seen.items()}
+
+
 @dataclass
 class FaceFlux:
     flux: float = 0.0

@@ -293,6 +293,10 @@ def test_fallback_code_names_the_failed_check():
         == "region_winding"
     )
     assert (
+        step._fallback_code(["region 5: the writer built 2 faces for one region"], False)
+        == "region_split"
+    )
+    assert (
         step._fallback_code(["Standard_TypeMismatch: TopoDS::Face"], False) == "occt_type_mismatch"
     )
     assert step._fallback_code(["region 0: degenerate boundary loop"], False) == "degenerate_loop"
@@ -332,6 +336,32 @@ def test_fallback_code_region_winding(tmp_path):
     report = step.write(bad, tmp_path / "r.step", mesh=mesh_from_ir(ir))
     assert report.fallback == "faceted"
     assert report.fallback_code == "region_winding"
+
+
+def test_fallback_code_region_split(tmp_path, monkeypatch):
+    ir = load("box")
+    real = occ._orient_shell
+
+    def split(shell, mapping=None):
+        shell = real(shell, mapping)
+        if mapping and len(mapping) > 1:
+            region, _ = mapping[0]
+            mapping.append((region, mapping[1][1]))
+        return shell
+
+    monkeypatch.setattr(occ, "_orient_shell", split)
+    report = step.write(ir, tmp_path / "s.step", mesh=mesh_from_ir(ir))
+    assert report.fallback == "faceted"
+    assert report.fallback_code == "region_split"
+    assert "region 0" in report.fallback_reason
+    assert "2 faces" in report.fallback_reason
+
+
+def test_a_facets_region_mapping_to_many_faces_does_not_fall_back(tmp_path):
+    ir = load("mixed_facets")
+    assert sum(len(r.surface.faces) for r in ir.regions if isinstance(r.surface, Facets)) > 1
+    report = step.write(ir, tmp_path / "m.step")
+    assert report.fallback is None and report.valid
 
 
 def curved_mesh(shape, deflection=(0.01, 0.2)):
