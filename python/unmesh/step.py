@@ -280,6 +280,16 @@ def _analytic(ir: Ir, options: WriteOptions, occ, topology):
                 FaceReport(r, ir.regions[r].surface.type, t, moved[r], dev[r])
                 for r, t in sorted(tols.items())
             ]
+            split = sorted(
+                (r, n)
+                for r, n in occ.region_face_counts(g.shape, g.mapping, g.context).items()
+                if n > 1 and not _is_facets(ir, r)
+            )
+            if split:
+                g.valid = False
+                g.issues.extend(
+                    f"region {r}: the writer built {n} faces for one region" for r, n in split
+                )
             g.moved = max(moved.values(), default=0.0)
             g.deviation = max(dev.values(), default=0.0)
         except topology.BuildError as e:
@@ -935,6 +945,7 @@ _FALLBACK_CODES: tuple[tuple[str, str], ...] = (
     ("projected boundary curve is", "boundary_curve"),
     ("winds against the outward normal", "region_winding"),
     ("winds with the outward normal", "region_winding"),
+    ("the writer built", "region_split"),
     ("Standard_TypeMismatch", "occt_type_mismatch"),
     ("Standard_", "occt_exception"),
     ("degenerate boundary loop", "degenerate_loop"),

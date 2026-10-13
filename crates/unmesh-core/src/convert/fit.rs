@@ -1086,4 +1086,45 @@ mod tests {
         absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
         assert_eq!(label, vec![0, 0]);
     }
+
+    #[test]
+    fn a_sliver_is_not_absorbed_into_another_sliver_plane() {
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [20.0, 1e-5, 0.0],
+            [-10.0, -1e-5, 0.0],
+        ];
+        let f = vec![[0, 1, 2], [0, 1, 3]];
+        let info = tri_info(&v, &f);
+        let nbr = vec![[NONE, NONE, 1], [NONE, NONE, 0]];
+        let mut label = vec![0u32, 1u32];
+        let mut scratch = Scratch::new(v.len());
+        let mut regions = build_regions(&v, &f, &info, &label, 2, 1e-3, &mut scratch);
+        assert!(sliver_plane(&v, &regions[0]));
+        assert!(sliver_plane(&v, &regions[1]));
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
+        assert_eq!(label, vec![0, 1]);
+    }
+
+    #[test]
+    fn a_small_well_conditioned_plane_is_not_absorbed_into_a_plane() {
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ];
+        let f = vec![[0, 1, 2], [0, 1, 3]];
+        let info = tri_info(&v, &f);
+        let nbr = vec![[NONE, NONE, 1], [NONE, NONE, 0]];
+        let mut label = vec![0u32, 1u32];
+        let mut scratch = Scratch::new(v.len());
+        let mut regions = build_regions(&v, &f, &info, &label, 2, 1e-3, &mut scratch);
+        assert!(!sliver_plane(&v, &regions[0]));
+        assert!(!sliver_plane(&v, &regions[1]));
+        assert!(regions.iter().all(|r| r.max <= 1e-3));
+        absorb_remnants(&v, &f, &nbr, &info, &mut label, &mut regions, 1e-3);
+        assert_eq!(label, vec![0, 1]);
+    }
 }
