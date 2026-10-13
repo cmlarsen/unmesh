@@ -558,8 +558,10 @@ fn widen_seed(
 fn cone_wins(pts: &[(V3, f64)], tris: &[Tri], cone: &Single, tol: f64, noisy: bool) -> bool {
     // A cone steeper than the confusion angle is a cone whatever a cylinder
     // does; only near-cylinder cones need the cylinder comparison, which is a
-    // full fit.
-    if cone.2[1].to_degrees() >= CONE_GATE_MAX_DEG {
+    // full fit. Under noise every cone is F-tested: a steep fit of a band that
+    // crosses a blend has a cylinder that explains it nearly as well, and the
+    // angle gate would let it through.
+    if !noisy && cone.2[1].to_degrees() >= CONE_GATE_MAX_DEG {
         return true;
     }
     let Some(cyl) = curved::fit_cylinder_ungated(pts, tris, tol) else {
@@ -897,7 +899,7 @@ fn fit_radius_at(f: &Single, h: f64) -> Option<f64> {
 /// their radii where the axes meet agree. A shallow cone's fragments all fit
 /// cylinders of nearly the same radius about nearly the same axis; unrelated
 /// coaxial cylinders of different radii, or oblique ones, fail.
-fn cone_pair_candidate(a: &Single, b: &Single, _tol: f64) -> bool {
+fn cone_pair_candidate(a: &Single, b: &Single) -> bool {
     if !matches!(a.0, Kind::Cylinder | Kind::Cone { .. })
         || !matches!(b.0, Kind::Cylinder | Kind::Cone { .. })
     {
@@ -913,6 +915,13 @@ fn cone_pair_candidate(a: &Single, b: &Single, _tol: f64) -> bool {
         return false;
     };
     dist <= COAX_DIST_REL * (ra + rb) && (ra - rb).abs() <= COAX_RAD_REL * (ra + rb)
+}
+
+/// Drops every cached non-adjacent rejection that names a group that just
+/// merged: the merged group's stored fit changed, so a rejection of a pair
+/// involving it is stale and must be reconsidered.
+fn clear_nonadj(cache: &mut FxHashSet<(u32, u32)>, big: u32, small: u32) {
+    cache.retain(|&(x, y)| x != big && y != big && x != small && y != small);
 }
 
 /// Joins adjacent groups whose union still fits one surface, starting from
@@ -999,7 +1008,7 @@ fn merge_groups(
                 if nonadj_failed.contains(&(a as u32, b as u32)) {
                     continue;
                 }
-                if !cone_pair_candidate(&groups[a].fit, &groups[b].fit, tol) {
+                if !cone_pair_candidate(&groups[a].fit, &groups[b].fit) {
                     nonadj_failed.insert((a as u32, b as u32));
                     continue;
                 }
@@ -1077,9 +1086,7 @@ fn merge_groups(
                 version[big] += 1;
                 // The merged group's stored fit changed, so any non-adjacent
                 // rejection involving it is stale and must be reconsidered.
-                nonadj_failed.retain(|&(x, y)| {
-                    x != big as u32 && y != big as u32 && x != small as u32 && y != small as u32
-                });
+                clear_nonadj(&mut nonadj_failed, big as u32, small as u32);
                 merged = true;
                 changed = true;
             }
@@ -2540,6 +2547,255 @@ mod tests {
         assert!((out[0].1.2[0] - 10.0).abs() < 1e-6, "{:?}", out[0].1.2);
     }
 
+    /// Runs `merge_groups` end to end over `soup`, labelling every triangle by
+    /// its centroid (`group_of`, `None` leaving it ungrouped) into `groups_n`
+    /// groups each fitted by `fit_of`; adjacency comes from the real shared
+    /// edges.
+    fn merge_groups_of(
+        soup: &TriangleSoup,
+        groups_n: usize,
+        group_of: impl Fn(V3, V3) -> Option<usize>,
+        fit_of: impl Fn(usize, &[(V3, f64)], &[super::Tri], f64) -> super::Single,
+    ) -> Vec<(usize, super::Single)> {
+        let (w, shells, info, _, _, _) =
+            super::super::prepare(soup, &ConvertOptions::default()).unwrap();
+        let tol = 5e-4;
+        let nbr = &shells.topo.nbr;
+        let mut label = vec![super::NONE; w.faces.len()];
+        for (f, t) in w.faces.iter().enumerate() {
+            let c = super::scale(
+                super::add(
+                    super::add(w.vc[t[0] as usize], w.vc[t[1] as usize]),
+                    w.vc[t[2] as usize],
+                ),
+                1.0 / 3.0,
+            );
+            if let Some(g) = group_of(c, info[f].normal) {
+                label[f] = g as u32;
+            }
+        }
+        let mut scratch = super::super::fit::Scratch::new(w.vc.len());
+        let mut regions = super::super::fit::build_regions(
+            &w.vc,
+            &w.faces,
+            &info,
+            &label,
+            groups_n,
+            tol,
+            &mut scratch,
+        );
+        for region in regions.iter_mut() {
+            region.surface = super::Surface::Facets;
+        }
+        let mut pool = super::Pool {
+            vc: &w.vc,
+            faces: &w.faces,
+            info: &info,
+            regions: &regions,
+            preset: vec![true; regions.len()],
+            refused: std::cell::Cell::new(0),
+            sigma: 0.0,
+            noisy: false,
+            mark: vec![0; w.vc.len()],
+            pos: vec![0; w.vc.len()],
+            token: 0,
+        };
+        let mut members: Vec<Vec<u32>> = vec![Vec::new(); groups_n];
+        for r in 0..regions.len() as u32 {
+            if let Some(&f) = regions[r as usize].faces.first() {
+                members[label[f as usize] as usize].push(r);
+            }
+        }
+        let mut owner = vec![super::NONE; regions.len()];
+        let groups: Vec<super::Group> = members
+            .into_iter()
+            .enumerate()
+            .map(|(gi, m)| {
+                for &r in &m {
+                    owner[r as usize] = gi as u32;
+                }
+                let (pts, tris) = pool.union(&m);
+                super::Group {
+                    fit: fit_of(gi, &pts, &tris, tol),
+                    members: m,
+                    preset: false,
+                }
+            })
+            .collect();
+        let mut face_region = vec![super::NONE; w.faces.len()];
+        for (ri, reg) in regions.iter().enumerate() {
+            for &f in &reg.faces {
+                face_region[f as usize] = ri as u32;
+            }
+        }
+        let mut near: Vec<Vec<u32>> = vec![Vec::new(); regions.len()];
+        for (f, nb) in nbr.iter().enumerate() {
+            let a = face_region[f];
+            if a == super::NONE {
+                continue;
+            }
+            for &g in nb {
+                if g == super::NONE {
+                    continue;
+                }
+                let b = face_region[g as usize];
+                if b != super::NONE && b != a {
+                    near[a as usize].push(b);
+                    near[b as usize].push(a);
+                }
+            }
+        }
+        for n in near.iter_mut() {
+            n.sort_unstable();
+            n.dedup();
+        }
+        let (groups, _) = super::merge_groups(&mut pool, &near, groups, &owner, tol);
+        groups
+            .into_iter()
+            .map(|g| (g.members.len(), g.fit))
+            .collect()
+    }
+
+    /// A shallow (0.25 degree) cone frustum's side is cut into two azimuthal
+    /// arcs that are not edge-adjacent (an ungrouped arc between them) yet lie
+    /// on one cone; each arc is adjacent to the flat caps, whose union with an
+    /// arc fits neither a cone nor a cylinder. Every adjacent merge fails, so
+    /// only the non-adjacent pass — which fits the union of the two arcs with
+    /// the stable radius regression a shallow draft needs — can recover the
+    /// cone. This runs `merge_groups` end to end on the non-adjacent path.
+    #[test]
+    fn merge_groups_joins_non_adjacent_shallow_cone_arcs() {
+        let h = 6.0;
+        let alpha = 0.25f64.to_radians();
+        let r = 20.0;
+        let dr = h * alpha.tan();
+        let profile: Vec<(f64, f64)> = (0..=4)
+            .map(|k| (r + dr * k as f64 / 4.0, h * k as f64 / 4.0))
+            .collect();
+        let soup = revolved(&profile, 48, false, &Frame::identity());
+        let cyl = |_: usize, _: &[(V3, f64)], _: &[super::Tri], _: f64| {
+            (
+                super::Kind::Cylinder,
+                super::Axis {
+                    a: [0.0, 0.0, 1.0],
+                    c: [0.0, 0.0, 0.0],
+                },
+                vec![r],
+                0.0,
+                0.0,
+                false,
+            )
+        };
+        let two_arcs = |c: V3, n: V3| {
+            if n[2].abs() > 0.9 {
+                Some(2)
+            } else {
+                let az = c[1].atan2(c[0]).rem_euclid(std::f64::consts::TAU);
+                let pi = std::f64::consts::PI;
+                if az < 0.1 || az > std::f64::consts::TAU - 0.1 || (az - pi).abs() < 0.1 {
+                    None
+                } else if az < pi {
+                    Some(0)
+                } else {
+                    Some(1)
+                }
+            }
+        };
+        let out = merge_groups_of(&soup, 3, two_arcs, cyl);
+        assert_eq!(
+            out.len(),
+            2,
+            "the two arcs join, the caps stay apart: {:?}",
+            out.iter().map(|g| g.0).collect::<Vec<_>>()
+        );
+        assert!(
+            out.iter()
+                .any(|g| g.0 == 2 && matches!(g.1.0, super::Kind::Cone { .. })),
+            "the two arcs must join as one cone: {:?}",
+            out.iter().map(|g| (g.0, g.1.0)).collect::<Vec<_>>()
+        );
+    }
+
+    /// When a group merges, a non-adjacent rejection cached for it is stale:
+    /// the merged group's stored fit changed. A and D carry deliberately wrong
+    /// stored fits, so the non-adjacent pairs B-A and B-D are gated off and
+    /// cached in the first pass; A and D are edge-adjacent, so their union is
+    /// refitted into one cone later in that pass, changing A's stored fit.
+    /// Only clearing the stale rejections lets B be refitted against that cone
+    /// in the next pass and joined. The group order matters: A-D must be the
+    /// last pair of the pass, or B would be retried under a reordered cache key
+    /// within the same pass and the clear would be untested.
+    #[test]
+    fn merge_groups_reclears_a_rejected_pair_when_a_group_merges() {
+        let h = 6.0;
+        let alpha = 0.25f64.to_radians();
+        let r = 20.0;
+        let dr = h * alpha.tan();
+        let profile: Vec<(f64, f64)> = (0..=4)
+            .map(|k| (r + dr * k as f64 / 4.0, h * k as f64 / 4.0))
+            .collect();
+        let soup = revolved(&profile, 48, false, &Frame::identity());
+        let cyl = |radius: f64| {
+            (
+                super::Kind::Cylinder,
+                super::Axis {
+                    a: [0.0, 0.0, 1.0],
+                    c: [0.0, 0.0, 0.0],
+                },
+                vec![radius],
+                0.0,
+                0.0,
+                false,
+            )
+        };
+        let fit_of = |gi: usize, _: &[(V3, f64)], _: &[super::Tri], _: f64| {
+            if gi == 0 || gi == 3 {
+                cyl(r)
+            } else {
+                cyl(100.0)
+            }
+        };
+        let arcs = |c: V3, n: V3| {
+            if n[2].abs() > 0.9 {
+                return Some(3);
+            }
+            let az = c[1].atan2(c[0]).rem_euclid(std::f64::consts::TAU);
+            let deg = f64::to_radians;
+            if (deg(225.0)..deg(315.0)).contains(&az) {
+                Some(0)
+            } else if az < deg(90.0) {
+                Some(1)
+            } else if az < deg(180.0) {
+                Some(2)
+            } else {
+                None
+            }
+        };
+        let out = merge_groups_of(&soup, 4, arcs, fit_of);
+        let shape =
+            |out: &[(usize, super::Single)]| out.iter().map(|g| (g.0, g.1.0)).collect::<Vec<_>>();
+        let joined = out
+            .iter()
+            .find(|g| g.0 == 3)
+            .unwrap_or_else(|| panic!("the three arcs must join: {:?}", shape(&out)));
+        assert!(
+            matches!(joined.1.0, super::Kind::Cone { .. }),
+            "the three arcs must join as one cone: {:?}",
+            shape(&out)
+        );
+    }
+
+    /// When two groups merge, every cached non-adjacent rejection naming
+    /// either of them is dropped, so a pair whose stored fit the merge changed
+    /// is refitted; rejections of other pairs stand.
+    #[test]
+    fn a_merge_clears_rejected_pairs_involving_its_groups() {
+        let mut cache: super::FxHashSet<(u32, u32)> =
+            [(0, 1), (0, 2), (1, 3), (4, 5)].into_iter().collect();
+        super::clear_nonadj(&mut cache, 0, 2);
+        assert_eq!(cache, [(1, 3), (4, 5)].into_iter().collect());
+    }
+
     #[test]
     fn cylinder_and_cone_groups_stay_apart() {
         let soup = revolved(
@@ -2744,22 +3000,18 @@ mod tests {
         assert!(super::cone_pair_candidate(
             &cyl(8.0, [0.0; 3], z),
             &cyl(8.0, [0.02, 0.0, 0.0], z),
-            1e-4
         ));
         assert!(!super::cone_pair_candidate(
             &cyl(8.0, [0.0; 3], z),
             &cyl(20.0, [0.0; 3], z),
-            1e-4
         ));
         assert!(!super::cone_pair_candidate(
             &cyl(8.0, [0.0; 3], z),
             &cyl(8.0, [0.5, 0.0, 0.0], z),
-            1e-4
         ));
         assert!(!super::cone_pair_candidate(
             &cyl(8.0, [0.0; 3], z),
             &cyl(8.0, [0.0; 3], unit([0.2, 0.0, 1.0])),
-            1e-4
         ));
     }
 
@@ -2777,16 +3029,51 @@ mod tests {
             .expect("a 0.2 degree draft fits a cone");
         assert!(super::cone_wins(&pts, &tris, &cone, tol, false));
 
+        let beta = 0.02f64.to_radians();
+        let hb = 8.0 / beta.tan();
+        let (pts, tris) = cone_band(beta, 72, 3, hb - 0.25, hb + 0.25, 0.0);
+        let cone = super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
+            .expect("a near-cylinder band still fits a cone");
+        assert!(
+            cone.2[1].to_degrees() < super::CONE_GATE_MAX_DEG,
+            "the near-cylinder cone is shallow, angle {}",
+            cone.2[1].to_degrees()
+        );
+        assert!(
+            !super::cone_wins(&pts, &tris, &cone, tol, false),
+            "a clean near-cylinder band must not become a cone, angle {}",
+            cone.2[1].to_degrees()
+        );
+    }
+
+    /// The angle gate trusts a steep cone on clean input, but under noise a
+    /// steep fit of a cylinder fragment must still pass the F-test: a band
+    /// that crosses a blend can fit a steep cone whose cylinder explains the
+    /// points just as well, and the gate would admit it unchecked. This is the
+    /// `imported-0013` 11.4 degree cone of #176.
+    #[test]
+    fn a_noisy_steep_cone_on_a_cylinder_is_still_f_tested() {
+        let tol = 5e-4;
         let (pts, tris) = cyl_band(1.25, 72, 5, 0.0, 5.0, 0.0);
-        if let Some(cone) =
-            super::curved::fit_cone_ungated(&pts, &tris, tol, super::INIT_GATE * tol, true)
-        {
-            assert!(
-                !super::cone_wins(&pts, &tris, &cone, tol, false),
-                "a clean cylinder fragment must not become a cone, angle {}",
-                cone.2[1].to_degrees()
-            );
-        }
+        let alpha = 0.2f64;
+        let apex_z = -1.25 / alpha.tan();
+        let steep = (
+            super::Kind::Cone { sign: 1.0 },
+            super::Axis {
+                a: [0.0, 0.0, 1.0],
+                c: [0.0, 0.0, apex_z],
+            },
+            vec![0.0, alpha],
+            0.0,
+            0.0,
+            false,
+        );
+        assert!(steep.2[1].to_degrees() >= super::CONE_GATE_MAX_DEG);
+        assert!(super::cone_wins(&pts, &tris, &steep, tol, false));
+        assert!(
+            !super::cone_wins(&pts, &tris, &steep, tol, true),
+            "a steep cone that a cylinder explains under noise must be rejected"
+        );
     }
 
     /// The non-adjacent candidacy is quadratic in a component's groups, so the
@@ -2811,7 +3098,7 @@ mod tests {
         let mut rejected = 0;
         for i in 0..fits.len() {
             for j in i + 1..fits.len() {
-                if !super::cone_pair_candidate(&fits[i], &fits[j], 1e-4) {
+                if !super::cone_pair_candidate(&fits[i], &fits[j]) {
                     rejected += 1;
                 }
             }
